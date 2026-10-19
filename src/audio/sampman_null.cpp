@@ -1,5 +1,5 @@
 #include "common.h"
-#if !defined(AUDIO_OAL) &&  !defined(AUDIO_MSS)
+#if !defined(AUDIO_OAL) &&  !defined(AUDIO_MSS) && !defined(AUDIO_PS3)
 #include "sampman.h"
 #include "AudioManager.h"
 
@@ -7,6 +7,7 @@ cSampleManager SampleManager;
 bool8 _bSampmanInitialised = FALSE;
 
 uint32 BankStartOffset[MAX_SFX_BANKS];
+int gBankStartOffset[67];	// AudioLogic.cpp (engine sounds), set by the real sample managers
 uint32     nNumMP3s;
 
 cSampleManager::cSampleManager(void)

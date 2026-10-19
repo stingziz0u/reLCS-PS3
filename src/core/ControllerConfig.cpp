@@ -43,7 +43,7 @@ void CControllerConfigManager::MakeControllerActionsBlank()
 	}
 }
 
-#ifdef RW_GL3
+#ifdef RE3_GLFW_INPUT
 int MapIdToButtonId(int mapId) {
 	switch (mapId) {
 		case GLFW_GAMEPAD_BUTTON_A: // Cross
@@ -97,7 +97,7 @@ int32 CControllerConfigManager::GetJoyButtonJustDown()
 		if (m_NewState.rgbButtons[i] & 0x80 && !(m_OldState.rgbButtons[i] & 0x80))
 			return i + 1;
 	}
-#elif defined RW_GL3
+#elif defined RE3_GLFW_INPUT
 	if (m_NewState.isGamepad) {
 		for (int32 i = 0; i < MAX_BUTTONS; i++) {
 			if (m_NewState.mappedButtons[i] && !(m_OldState.mappedButtons[i]))
@@ -369,6 +369,49 @@ void CControllerConfigManager::InitDefaultControlConfigJoyPad(uint32 buttons)
 #else
 	#define IF_BTN_IN_RANGE(n) \
 		case n:
+#endif
+
+#ifdef __PS3__
+	// DualShock 3: Vice City PS2's Setup 1. The ids are MapIdToButtonId's
+	// (1 Circle, 2 Cross, 3 Square, 4 Triangle, 5 L2, 6 R2, 7 L1, 8 R1,
+	// 9 Select, 10 L3, 11 R3, 12 Start, 13-16 D-pad up/right/down/left), each
+	// bound to the actions that AffectControllerStateOn_ButtonDown_* turn
+	// into that same button of the virtual PS2 pad; CPad (setup 1-4) does
+	// the rest, as on the PS2.
+	for (int32 i = 0; i < MAX_CONTROLLERACTIONS; i++)
+		ClearSettingsAssociatedWithAction((e_ControllerAction)i, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(PED_FIREWEAPON,                     1, JOYSTICK);
+#ifdef BIND_VEHICLE_FIREWEAPON
+	SetControllerKeyAssociatedWithAction(VEHICLE_FIREWEAPON,                 1, JOYSTICK);
+#endif
+	SetControllerKeyAssociatedWithAction(VEHICLE_ACCELERATE,                 2, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(PED_SPRINT,                         2, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(PED_SNIPER_ZOOM_OUT,                2, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(VEHICLE_BRAKE,                      3, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(PED_JUMPING,                        3, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(PED_SNIPER_ZOOM_IN,                 3, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(VEHICLE_ENTER_EXIT,                 4, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(PED_CYCLE_WEAPON_LEFT,              5, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(PED_CYCLE_TARGET_LEFT,              5, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(VEHICLE_LOOKLEFT,                   5, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(PED_CYCLE_WEAPON_RIGHT,             6, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(PED_CYCLE_TARGET_RIGHT,             6, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(VEHICLE_LOOKRIGHT,                  6, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(PED_ANSWER_PHONE,                   7, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(PED_CENTER_CAMERA_BEHIND_PLAYER,    7, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(VEHICLE_CHANGE_RADIO_STATION,       7, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(PED_LOCK_TARGET,                    8, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(VEHICLE_HANDBRAKE,                  8, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(CAMERA_CHANGE_VIEW_ALL_SITUATIONS,  9, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(VEHICLE_HORN,                      10, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(PED_DUCK,                          10, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(PED_LOOKBEHIND,                    11, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(TOGGLE_SUBMISSIONS,                11, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(GO_FORWARD,                        13, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(GO_RIGHT,                          14, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(GO_BACK,                           15, JOYSTICK);
+	SetControllerKeyAssociatedWithAction(GO_LEFT,                           16, JOYSTICK);
+	return;
 #endif
 
 	// Now we use SDL Game Controller DB
@@ -2802,7 +2845,7 @@ void CControllerConfigManager::UpdateJoyButtonState(int32 padnumber)
 		else
 			m_aButtonStates[i] = false;
 	}
-#elif defined RW_GL3
+#elif defined RE3_GLFW_INPUT
 	if (m_NewState.isGamepad) {
 		for (int32 i = 0; i < MAX_BUTTONS; i++) {
 			if (i == GLFW_GAMEPAD_BUTTON_GUIDE)

@@ -111,6 +111,11 @@ Image::setPixels(uint8 *pixels)
 	this->flags |= 1;
 }
 
+// DXT blocks are little-endian; read them byte by byte (big-endian safe)
+static inline uint32 dxtLE16(const uint8 *p) { return p[0] | p[1]<<8; }
+static inline uint32 dxtLE32(const uint8 *p) { return p[0] | p[1]<<8 | p[2]<<16 | (uint32)p[3]<<24; }
+static inline uint64 dxtLE64(const uint8 *p) { return (uint64)dxtLE32(p) | (uint64)dxtLE32(p+4)<<32; }
+
 void
 decompressDXT1(uint8 *adst, int32 w, int32 h, uint8 *src)
 {
@@ -122,8 +127,8 @@ decompressDXT1(uint8 *adst, int32 w, int32 h, uint8 *src)
 	uint8 (*dst)[4] = (uint8(*)[4])adst;
 	for(int32 j = 0; j < w*h/2; j += 8){
 		/* calculate colors */
-		uint32 col0 = *((uint16*)&src[j+0]);
-		uint32 col1 = *((uint16*)&src[j+2]);
+		uint32 col0 = dxtLE16(&src[j+0]);
+		uint32 col1 = dxtLE16(&src[j+2]);
 		c[0][0] = ((col0>>11) & 0x1F)*0xFF/0x1F;
 		c[0][1] = ((col0>> 5) & 0x3F)*0xFF/0x3F;
 		c[0][2] = ( col0      & 0x1F)*0xFF/0x1F;
@@ -156,7 +161,7 @@ decompressDXT1(uint8 *adst, int32 w, int32 h, uint8 *src)
 		}
 
 		/* make index list */
-		uint32 indices = *((uint32*)&src[j+4]);
+		uint32 indices = dxtLE32(&src[j+4]);
 		for(int32 k = 0; k < 16; k++){
 			idx[k] = indices & 0x3;
 			indices >>= 2;
@@ -190,8 +195,8 @@ decompressDXT3(uint8 *adst, int32 w, int32 h, uint8 *src)
 	uint8 (*dst)[4] = (uint8(*)[4])adst;
 	for(int32 j = 0; j < w*h; j += 16){
 		/* calculate colors */
-		uint32 col0 = *((uint16*)&src[j+8]);
-		uint32 col1 = *((uint16*)&src[j+10]);
+		uint32 col0 = dxtLE16(&src[j+8]);
+		uint32 col1 = dxtLE16(&src[j+10]);
 		c[0][0] = ((col0>>11) & 0x1F)*0xFF/0x1F;
 		c[0][1] = ((col0>> 5) & 0x3F)*0xFF/0x3F;
 		c[0][2] = ( col0      & 0x1F)*0xFF/0x1F;
@@ -209,12 +214,12 @@ decompressDXT3(uint8 *adst, int32 w, int32 h, uint8 *src)
 		c[3][2] = (1*c[0][2] + 2*c[1][2])/3;
 
 		/* make index list */
-		uint32 indices = *((uint32*)&src[j+12]);
+		uint32 indices = dxtLE32(&src[j+12]);
 		for(int32 k = 0; k < 16; k++){
 			idx[k] = indices & 0x3;
 			indices >>= 2;
 		}
-		uint64 alphas = *((uint64*)&src[j+0]);
+		uint64 alphas = dxtLE64(&src[j+0]);
 		for(int32 k = 0; k < 16; k++){
 			a[k] = (alphas & 0xF)*17;
 			alphas >>= 4;
@@ -249,8 +254,8 @@ decompressDXT5(uint8 *adst, int32 w, int32 h, uint8 *src)
 	uint8 (*dst)[4] = (uint8(*)[4])adst;
 	for(int32 j = 0; j < w*h; j += 16){
 		/* calculate colors */
-		uint32 col0 = *((uint16*)&src[j+8]);
-		uint32 col1 = *((uint16*)&src[j+10]);
+		uint32 col0 = dxtLE16(&src[j+8]);
+		uint32 col1 = dxtLE16(&src[j+10]);
 		c[0][0] = ((col0>>11) & 0x1F)*0xFF/0x1F;
 		c[0][1] = ((col0>> 5) & 0x3F)*0xFF/0x3F;
 		c[0][2] = ( col0      & 0x1F)*0xFF/0x1F;
@@ -295,13 +300,13 @@ decompressDXT5(uint8 *adst, int32 w, int32 h, uint8 *src)
 		}
 
 		/* make index list */
-		uint32 indices = *((uint32*)&src[j+12]);
+		uint32 indices = dxtLE32(&src[j+12]);
 		for(int32 k = 0; k < 16; k++){
 			idx[k] = indices & 0x3;
 			indices >>= 2;
 		}
 		// only 6 indices
-		uint64 alphas = *((uint64*)&src[j+2]);
+		uint64 alphas = dxtLE64(&src[j+2]);
 		for(int32 k = 0; k < 16; k++){
 			aidx[k] = alphas & 0x7;
 			alphas >>= 3;

@@ -29,13 +29,24 @@ FindPlayerDff(uint32 &offset, uint32 &size)
 
 	file = CFileMgr::OpenFile("models\\gta3.dir", "rb");
 
+#ifdef __PS3__
+	if (file <= 0)
+		return;
+#endif
 	do {
-		if (!CFileMgr::Read(file, (char*)&info, sizeof(CDirectory::DirectoryInfo)))
+		if (!CFileMgr::Read(file, (char*)&info, sizeof(CDirectory::DirectoryInfo))) {
+#ifdef __PS3__
+			CFileMgr::CloseFile(file);	// a leaked handle per skin change runs CFileMgr out of files
+#endif
 			return;
+		}
 	} while (strcasecmp("player.dff", info.name) != 0);
 
-	offset = info.offset;
-	size = info.size;
+	offset = LittleU32(info.offset);	// .dir is little-endian
+	size = LittleU32(info.size);
+#ifdef __PS3__
+	CFileMgr::CloseFile(file);
+#endif
 }
 
 void

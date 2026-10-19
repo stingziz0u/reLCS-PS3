@@ -1,6 +1,10 @@
 #include "common.h"
 
 #include "Weather.h"
+#ifdef __PS3__
+int32 gPS3FxOff;	// autotest rain mode: 1 streaks, 2 drops on the screen, 4 splashes, 8 particles, 16 blur
+#endif
+
 
 #include "Camera.h"
 #include "Clock.h"
@@ -582,6 +586,10 @@ void CWeather::RenderRainStreaks(void)
 {
 	if (CTimer::GetIsCodePaused())
 		return;
+#ifdef __PS3__
+	if (gPS3FxOff & 1)
+		return;
+#endif
 	int base_intensity = (64.0f - CTimeCycle::GetFogReduction()) / 64.0f * int(255 * Rain);
 	if (base_intensity == 0)
 		return;

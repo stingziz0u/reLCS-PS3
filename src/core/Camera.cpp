@@ -69,7 +69,7 @@ enum
 // NB: removed explicit TheCamera from all functions
 
 CCamera TheCamera;
-#ifdef PC_PLAYER_CONTROLS
+#if defined(PC_PLAYER_CONTROLS) && !defined(__PS3__)
 bool CCamera::m_bUseMouse3rdPerson = true;
 #else
 bool CCamera::m_bUseMouse3rdPerson = false;
@@ -324,8 +324,8 @@ CCamera::Process(void)
 		RwCameraSetNearClipPlane(Scene.camera, m_fNearClipScript);
 
 	deltaBeta = newBeta - oldBeta;
-	while(deltaBeta >= PI) deltaBeta -= 2*PI;
-	while(deltaBeta < -PI) deltaBeta += 2*PI;
+	while (PS3_ANGLE_OK(deltaBeta) && deltaBeta >= PI) deltaBeta -= 2*PI;
+	while (PS3_ANGLE_OK(deltaBeta) && deltaBeta < -PI) deltaBeta += 2*PI;
 	if(Abs(deltaBeta) > 0.3f)
 		m_bJust_Switched = true;
 
@@ -1301,8 +1301,8 @@ CCamera::CamControl(void)
 						// Check whether to start aiming in crim-in-front mode
 						if(Cams[ActiveCam].Mode != CCam::MODE_SYPHON){
 							float angleDiff = camAngle - targetAngle;
-							while(angleDiff >= PI) angleDiff -= 2*PI;
-							while(angleDiff < -PI) angleDiff += 2*PI;
+							while (PS3_ANGLE_OK(angleDiff) && angleDiff >= PI) angleDiff -= 2*PI;
+							while (PS3_ANGLE_OK(angleDiff) && angleDiff < -PI) angleDiff += 2*PI;
 							if(Abs(angleDiff) < HALFPI && playerTargetDist < 3.5f && playerToTarget.z > -1.0f)
 								ReqMode = CCam::MODE_SYPHON_CRIM_IN_FRONT;
 						}
@@ -2350,8 +2350,8 @@ CCamera::StartTransition(int16 newMode)
 		else
 			targetBeta = camBeta;
 		deltaBeta = targetBeta - camBeta;
-		while(deltaBeta >= PI) deltaBeta -= 2*PI;
-		while(deltaBeta < -PI) deltaBeta += 2*PI;
+		while (PS3_ANGLE_OK(deltaBeta) && deltaBeta >= PI) deltaBeta -= 2*PI;
+		while (PS3_ANGLE_OK(deltaBeta) && deltaBeta < -PI) deltaBeta += 2*PI;
 		deltaBeta = Abs(deltaBeta);
 
 		door = FindPlayerPed()->m_vehDoor;
@@ -3592,6 +3592,11 @@ CCamera::LoadPathSplines(int file)
 	for(i = 0; i < MAX_NUM_OF_SPLINETYPES; i++)
 		m_arrPathArray[i].m_arr_PathData = new float[CCamPathSplines::MAXPATHLENGTH];
 
+#ifdef __PS3__
+	for(i = 0; i < MAX_NUM_OF_SPLINETYPES; i++)
+		for(j = 0; j < CCamPathSplines::MAXPATHLENGTH; j++)
+			m_arrPathArray[i].m_arr_PathData[j] = 0.0f;
+#endif
 //	Why is this gone?
 //	for(i = 0; i < MAX_NUM_OF_SPLINETYPES; i++)
 //		for(j = 0; j < CCamPathSplines::MAXPATHLENGTH; j++)
@@ -3870,6 +3875,11 @@ CCamera::RenderMotionBlur(void)
 {
 	if(m_BlurType == 0)
 		return;
+#ifdef __PS3__
+	extern int32 gPS3FxOff;
+	if(gPS3FxOff & 16)
+		return;
+#endif
 
 	CMBlur::MotionBlurRender(m_pRwCamera,
 		m_BlurRed, m_BlurGreen, m_BlurBlue,

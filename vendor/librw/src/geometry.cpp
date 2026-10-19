@@ -158,13 +158,18 @@ Geometry::streamRead(Stream *stream)
 		for(int32 i = 0; i < geo->numTexCoordSets; i++)
 			stream->read32(geo->texCoords[i],
 				    2*geo->numVertices*4);
-		for(int32 i = 0; i < geo->numTriangles; i++){
-			uint32 tribuf[2];
-			stream->read32(tribuf, 8);
-			geo->triangles[i].v[0]  = tribuf[0] >> 16;
-			geo->triangles[i].v[1]  = tribuf[0];
-			geo->triangles[i].v[2]  = tribuf[1] >> 16;
-			geo->triangles[i].matId = tribuf[1];
+		// in chunks: one read (and byte swap) per 256 triangles, not per triangle
+		for(int32 i = 0; i < geo->numTriangles; ){
+			uint32 tribuf[2*256];
+			int32 n = geo->numTriangles - i;
+			if(n > 256) n = 256;
+			stream->read32(tribuf, 8*n);
+			for(int32 j = 0; j < n; j++, i++){
+				geo->triangles[i].v[0]  = tribuf[2*j] >> 16;
+				geo->triangles[i].v[1]  = tribuf[2*j];
+				geo->triangles[i].v[2]  = tribuf[2*j+1] >> 16;
+				geo->triangles[i].matId = tribuf[2*j+1];
+			}
 		}
 	}
 

@@ -800,7 +800,7 @@ int8 CRunningScript::ProcessCommands300To399(int32 command)
 		return 0;
 	}
 	default:
-		script_assert(0);
+		script_bad();
 	}
 	return -1;
 }
@@ -1603,7 +1603,7 @@ int8 CRunningScript::ProcessCommands400To499(int32 command)
 		return 0;
 	}
 	default:
-		script_assert(0);
+		script_bad();
 	}
 	return -1;
 }

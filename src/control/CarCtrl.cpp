@@ -16,6 +16,10 @@
 #include "Game.h"
 #include "Garages.h"
 #include "General.h"
+#ifdef __PS3__
+#include "Darkel.h"
+#include "Script.h"
+#endif
 #include "IniFile.h"
 #include "Lines.h"
 #include "ModelIndices.h"
@@ -2860,9 +2864,9 @@ void CCarCtrl::SteerAIHeliTowardsTargetCoors(CAutomobile* pHeli)
 		if (pHeli->m_fHeliOrientation >= 0.0f)
 			fAngleTarget = pHeli->m_fHeliOrientation;
 		fAngleTarget -= pHeli->m_fOrientation;
-		while (fAngleTarget < -PI)
+		while (PS3_ANGLE_OK(fAngleTarget) && fAngleTarget < -PI)
 			fAngleTarget += TWOPI;
-		while (fAngleTarget > PI)
+		while (PS3_ANGLE_OK(fAngleTarget) && fAngleTarget > PI)
 			fAngleTarget -= TWOPI;
 		if (Abs(fAngleTarget) <= 0.4f)
 			ZTurnSpeedTarget = 0.0f;
@@ -2900,7 +2904,7 @@ void CCarCtrl::SteerAIPlaneTowardsTargetCoors(CAutomobile* pPlane)
 	float fForwardZ = (pPlane->AutoPilot.m_vecDestinationCoors.z - pPlane->GetPosition().z) / vecToTarget.Magnitude();
 	fForwardZ = Clamp(fForwardZ, -0.3f, 0.3f);
 	float angle = CGeneral::GetATanOfXY(vecToTarget.x, vecToTarget.y);
-	while (angle > TWOPI)
+	while (PS3_ANGLE_OK(angle) && angle > TWOPI)
 		angle -= TWOPI;
 	float difference = LimitRadianAngle(angle - pPlane->m_fOrientation);
 	float steer = difference > 0.0f ? 0.04f : -0.04f;

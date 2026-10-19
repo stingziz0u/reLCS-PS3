@@ -33,6 +33,7 @@ GeometryListStreamRead1(RwStream *stream, rpGeometryList *geomlist)
 	assert(size == 4);
 	if(RwStreamRead(stream, &numGeoms, 4) != 4)
 		return nil;
+	numGeoms = LittleI32(numGeoms);
 
 	numberGeometrys = numGeoms/2;
 	geomlist->numGeoms = numGeoms;
@@ -100,6 +101,7 @@ ClumpAtomicStreamRead(RwStream *stream, rwFrameList *frmList, rpGeometryList *ge
 	assert(size <= sizeof(rpAtomicBinary));
 	if(RwStreamRead(stream, &a, size) != size)
 		return nil;
+	LittleSwap32(&a, size/4);	// all int32 fields
 
 	atomic = RpAtomicCreate();
 	if(atomic == nil)
@@ -144,10 +146,12 @@ RpClumpGtaStreamRead1(RwStream *stream)
 		assert(size == 12);
 		if(RwStreamRead(stream, &gClumpInfo, 12) != 12)
 			return false;
+		LittleSwap32(&gClumpInfo, 3);
 	}else{
 		assert(size == 4);
 		if(RwStreamRead(stream, &gClumpInfo, 4) != 4)
 			return false;
+		LittleSwap32(&gClumpInfo, 1);
 	}
 
 	if(!RwStreamFindChunk(stream, rwID_FRAMELIST, nil, &version))

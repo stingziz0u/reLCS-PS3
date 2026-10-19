@@ -21,6 +21,14 @@
 #include "SpecialFX.h"
 #include "Font.h"
 #include "SaveBuf.h"
+#ifdef __PS3__
+#include "Pickups.h"
+#include "Darkel.h"
+#include "Game.h"
+#include "ModelIndices.h"
+#include "Text.h"
+#include "ps3_platform.h"
+#endif
 
 float CRadar::m_radarRange;
 sRadarTrace CRadar::ms_RadarTrace[NUMRADARBLIPS];
@@ -576,6 +584,166 @@ void CRadar::Draw3dMarkers()
 	}
 }
 
+#ifdef __PS3__
+// Collectibles on the radar and the pause menu map (Display: HIDDEN PACKAGES
+// ON MAP, RAMPAGES ON MAP), like the "collectibles on radar" mod of San
+// Andreas. They are the game's own pickups, read every frame: one picked up
+// (or a rampage passed) is gone from the list, and so from the map. Drawn
+// here, not as radar blips: nothing of it goes into the save.
+int8 gPS3MapPackages, gPS3MapRampages, gPS3MapJumps, gPS3MapRobberies;
+enum { PS3_LEGEND_PACKAGE = -3, PS3_LEGEND_RAMPAGE = -4, PS3_LEGEND_JUMP = -5, PS3_LEGEND_ROBBERY = -6 };
+static const CRGBA ps3PackageColour(120, 255, 40, 255);	// lime green
+static const CRGBA ps3RampageColour(165, 10, 10, 255);	// blood red
+static const CRGBA ps3JumpColour(255, 130, 0, 255);	// orange
+static const CRGBA ps3RobberyColour(175, 70, 235, 255);	// purple
+
+// Unique jumps and store robberies are in main.scm only (ps3_scmblips.h): a
+// blip per take-off / store while the script's "done" global is still 0.
+// Those globals are saved with the game, so a done one stays gone.
+#include "ps3_scmblips.h"
+
+// main.scm sets each "done" global where the table says, or it isn't the
+// original script (a mod) and these blips stay off. Checked once.
+static bool
+PS3_ScmTableOk(const PS3ScmFlag *f, int n, const char *what)
+{
+	for (int i = 0; i < n; i++) {
+		const uint8 *b = &CTheScripts::ScriptSpace[f[i].setAt];
+		if (f[i].setAt + 7 > CTheScripts::MainScriptSize || b[0] != 4 || b[1] != 0 || b[2] != 2 ||
+		    b[3] != (f[i].global & 0xFF) || b[4] != (f[i].global >> 8) || b[5] != 4 || b[6] != 1) {
+			PS3_Logf("[map] %s: main.scm isn't the original one (entry %d), not shown on the map", what, i + 1);
+			return false;
+		}
+	}
+	PS3_Logf("[map] %s: %d in main.scm", what, n);
+	return true;
+}
+
+static bool
+PS3_ScmDone(const PS3ScmFlag &f)
+{
+	return *(int32*)&CTheScripts::ScriptSpace[f.global] != 0;
+}
+
+static void
+PS3_CollectibleBlip(const CVector &pos, const CRGBA &c, int legend)
+{
+	CVector2D in, out;
+	CRadar::TransformRealWorldPointToRadarSpace(in, pos);
+	CRadar::LimitRadarPoint(in);
+	CRadar::TransformRadarPointToScreenSpace(out, in);
+	// up / down triangles above or below the player, as the game's blips
+	const CVector &me = FindPlayerCentreOfWorld_NoSniperShift();
+	uint8 mode = BLIP_MODE_TRIANGULAR_UP;
+	if (pos.z - me.z <= 2.0f)
+		mode = pos.z - me.z < -4.0f ? BLIP_MODE_TRIANGULAR_DOWN : BLIP_MODE_SQUARE;
+	CRadar::ShowRadarTraceWithHeight(out.x, out.y, 2, c.r, c.g, c.b, 255, mode);
+	if (FrontEndMenuManager.m_bMenuMapActive) {
+		for (int i = 0; i < CRadar::MapLegendCounter; i++)
+			if (CRadar::MapLegendList[i] == legend)
+				return;
+		if (CRadar::MapLegendCounter < NUM_MAP_LEGENDS)
+			CRadar::MapLegendList[CRadar::MapLegendCounter++] = legend;
+	}
+}
+
+// The points of one kind still to do, in turn
+struct PS3CollectibleIter {
+	int kind, i;
+	bool Next(CVector &pos)
+	{
+		static int8 jumpsOk = -1, storesOk = -1;
+		const CVector &me = FindPlayerCentreOfWorld_NoSniperShift();
+		switch (kind) {
+		case 0:
+		case 1:
+			for (; i < NUMPICKUPS; i++) {
+				CPickup &p = CPickups::aPickUps[i];
+				if (p.m_eType == PICKUP_NONE)
+					continue;
+				if (kind == 0 ? p.m_eType != PICKUP_COLLECTABLE1 : p.m_eModelIndex != MI_PICKUP_KILLFRENZY)
+					continue;
+				pos = p.m_vecPos;
+				i++;
+				return true;
+			}
+			return false;
+		case 2:
+			if (jumpsOk < 0)
+				jumpsOk = PS3_ScmTableOk(ps3UsjFlags, ARRAY_SIZE(ps3UsjFlags), "unique jumps");
+			if (!jumpsOk)
+				return false;
+			for (; i < (int)ARRAY_SIZE(ps3UsjPoints); i++) {
+				const PS3ScmPoint &t = ps3UsjPoints[i];
+				if (PS3_ScmDone(ps3UsjFlags[t.n - 1]))
+					continue;
+				pos = CVector(t.x, t.y, t.z > -999.0f ? t.z : me.z);
+				i++;
+				return true;
+			}
+			return false;
+		default:
+			if (storesOk < 0)
+				storesOk = PS3_ScmTableOk(ps3StoreFlags, ARRAY_SIZE(ps3StoreFlags), "store robberies");
+			if (!storesOk)
+				return false;
+			for (; i < (int)ARRAY_SIZE(ps3StorePoints); i++) {
+				const PS3ScmPoint &t = ps3StorePoints[i];
+				if (PS3_ScmDone(ps3StoreFlags[t.n - 1]))
+					continue;
+				pos = CVector(t.x, t.y, t.z);
+				i++;
+				return true;
+			}
+			return false;
+		}
+	}
+};
+
+// On the map all of them; on the radar the ones in its range, or else the
+// nearest of each kind at the radar's edge
+static void
+PS3_DrawCollectibles(void)
+{
+	bool map = FrontEndMenuManager.m_bMenuMapActive;
+	if (CTheScripts::bPlayerIsInTheStatium && map)
+		return;
+	static const int8 *on[4] = { &gPS3MapPackages, &gPS3MapRampages, &gPS3MapJumps, &gPS3MapRobberies };
+	static const CRGBA *colour[4] = { &ps3PackageColour, &ps3RampageColour, &ps3JumpColour, &ps3RobberyColour };
+	static const int legends[4] = { PS3_LEGEND_PACKAGE, PS3_LEGEND_RAMPAGE, PS3_LEGEND_JUMP, PS3_LEGEND_ROBBERY };
+	for (int kind = 0; kind < 4; kind++) {
+		if (!*on[kind])
+			continue;
+		// the game hides the rampages during missions and frenzies
+		if (kind == 1 && (CTheScripts::IsPlayerOnAMission() || CDarkel::FrenzyOnGoing() || !CGame::nastyGame))
+			continue;
+		const CRGBA &c = *colour[kind];
+		CVector pos, nearestPos;
+		float nearestDist = -1.0f;
+		bool inRange = false;
+		PS3CollectibleIter it = { kind, 0 };
+		while (it.Next(pos)) {
+			if (map) {
+				PS3_CollectibleBlip(pos, c, legends[kind]);
+				continue;
+			}
+			CVector2D in;
+			CRadar::TransformRealWorldPointToRadarSpace(in, pos);
+			float d = in.Magnitude();	// 1: the radar's edge
+			if (d <= 1.0f) {
+				PS3_CollectibleBlip(pos, c, legends[kind]);
+				inRange = true;
+			} else if (nearestDist < 0.0f || d < nearestDist) {
+				nearestPos = pos;
+				nearestDist = d;
+			}
+		}
+		if (!map && !inRange && nearestDist >= 0.0f)
+			PS3_CollectibleBlip(nearestPos, c, legends[kind]);
+	}
+}
+#endif
+
 void CRadar::DrawBlips()
 {
 	if (!TheCamera.m_WideScreenOn && CHud::m_Wants_To_Draw_Hud) {
@@ -615,6 +783,10 @@ void CRadar::DrawBlips()
 			TransformRadarPointToScreenSpace(out, in);
 			DrawRadarSprite(RADAR_SPRITE_NORTH, out.x, out.y, 255);
 		}
+
+#ifdef __PS3__
+		PS3_DrawCollectibles();	// under the game's own blips
+#endif
 
 		for(int blipId = 0; blipId < NUMRADARBLIPS; blipId++) {
 			if (!ms_RadarTrace[blipId].m_bInUse)
@@ -909,6 +1081,10 @@ int32 CRadar::GetActualBlipArrayIndex(int32 i)
 {
 	if (i == -1)
 		return -1;
+#ifdef __PS3__
+	else if ((uint16)i >= NUMRADARBLIPS)
+		return -1;	// a stale or bad handle: not past the array
+#endif
 	else if ((i & 0xFFFF0000) >> 16 != ms_RadarTrace[(uint16)i].m_BlipIndex)
 		return -1;
 	else
@@ -1711,6 +1887,17 @@ CRadar::DrawCoordBlip(int32 blipId)
 void
 CRadar::DrawLegend(int32 x, int32 y, int32 sprite)
 {
+#ifdef __PS3__
+	if (sprite <= PS3_LEGEND_PACKAGE && sprite >= PS3_LEGEND_ROBBERY) {
+		static const CRGBA *colour[4] = { &ps3PackageColour, &ps3RampageColour, &ps3JumpColour, &ps3RobberyColour };
+		static const char *key[4] = { "LG_HPK", "LG_RMP", "LG_USJ", "LG_ROB" };
+		int k = PS3_LEGEND_PACKAGE - sprite;
+		CSprite2d::DrawRect(CRect(x + SCREEN_SCALE_X(4.0f), y + SCREEN_SCALE_Y(3.0f), SCREEN_SCALE_X(12.0f) + x, SCREEN_SCALE_Y(12.0f) + y), CRGBA(0, 0, 0, 255));
+		CSprite2d::DrawRect(CRect(x + SCREEN_SCALE_X(5.0f), y + SCREEN_SCALE_Y(4.0f), SCREEN_SCALE_X(11.0f) + x, SCREEN_SCALE_Y(11.0f) + y), *colour[k]);
+		CFont::PrintString(SCREEN_SCALE_X(20.f) + x, SCREEN_SCALE_Y(3.0f) + y, TheText.Get(key[k]));
+		return;
+	}
+#endif
 	if (sprite < 0) {
 		static uint32 lastChange = 0;
 		static int8 blipMode = 0;

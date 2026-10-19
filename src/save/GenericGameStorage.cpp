@@ -105,6 +105,7 @@ do {\
 #define ReadDataFromBlock(msg,load_func)\
 do {\
 	debug(msg);\
+	PS3_CRUMB("load: " #load_func, size);\
 	ReadDataFromBufferPointer(buf, size);\
 	load_func(buf, size);\
 	size = align4bytes(size);\
@@ -116,6 +117,7 @@ do {\
 	size = 0;\
 	buf = work_buff;\
 	reserved = 0;\
+	PS3_CRUMB("save: " #save_func, totalSize);\
 	MakeSpaceForSizeInBufferPointer(presize, buf, postsize);\
 	save_func(buf, &size);\
 	debug(msg"== %i \n", size);\
@@ -143,6 +145,7 @@ GenericSave(int file)
 	CheckSum = 0;
 	buf = work_buff;
 	reserved = 0;
+	PS3_CRUMB("save: simple vars", 0);
 
 	// Save simple vars
 	lastMissionPassed = TheText.Get(CStats::LastMissionPassedName[0] ? CStats::LastMissionPassedName : "ITBEG");
@@ -219,6 +222,7 @@ GenericSave(int file)
 	presize = buf;
 	buf += 4;
 	postsize = buf;
+	PS3_CRUMB("save: CTheScripts::SaveAllScripts", 0);
 	CTheScripts::SaveAllScripts(buf, &size);
 	debug("ScriptSize== %i \n", size);
 	CopySizeAndPreparePointer(presize, buf, postsize, reserved, size);
@@ -299,10 +303,17 @@ GenericLoad()
 	CheckSum = 0;
 	CDate dummy; // unused
 	CPad::ResetCheats();
+	PS3_CRUMB("load: open", 0);
 	if (!ReadInSizeofSaveFileBuffer(file, size))
 		return false;
 	size = align4bytes(size);
+#ifdef __PS3__
+	PS3_CRUMB("load: simple vars and scripts", size);
+	if (!ReadDataFromFile(file, work_buff, size))
+		return false;
+#else
 	ReadDataFromFile(file, work_buff, size);
+#endif
 	buf = (work_buff + 0x40);
 	ReadDataFromBufferPointer(buf, saveSize);
 #ifdef MISSION_REPLAY // a hack to keep compatibility but get new data from save
@@ -453,6 +464,18 @@ ReadDataFromFile(int32 file, uint8 *buf, uint32 size)
 		PcSaveHelper.nErrorCode = SAVESTATUS_ERR_LOAD_OPEN;
 		return false;
 	}
+#ifdef __PS3__
+	// a broken (or PC little-endian) save gives a size that would run past
+	// work_buff and over the memory behind it: refuse it as a read error
+	if (buf >= work_buff && buf < work_buff + sizeof(work_buff) &&
+	    size > (uint32)(work_buff + sizeof(work_buff) - buf)) {
+		PS3_CRUMB("save file: block too big", size);
+		PcSaveHelper.nErrorCode = SAVESTATUS_ERR_LOAD_READ;
+		if (!CloseFile(file))
+			PcSaveHelper.nErrorCode = SAVESTATUS_ERR_LOAD_CLOSE;
+		return false;
+	}
+#endif
 	size_t read_size = CFileMgr::Read(file, (const char*)buf, size);
 	if (CFileMgr::GetErrorReadWrite(file) || read_size != size) {
 		PcSaveHelper.nErrorCode = SAVESTATUS_ERR_LOAD_READ;
@@ -554,6 +577,7 @@ CheckDataNotCorrupt(int32 slot, char *name)
 	int32 blocknum = 0;
 	eLevelName level = LEVEL_GENERIC;
 	CheckSum = 0;
+	PS3_CRUMB("check save: slot", slot);
 	uint32 bytes_processed = 0;
 	sprintf(filename, "%s%i%s", DefaultPCSaveFileName, slot + 1, ".b");
 	int file = CFileMgr::OpenFile(filename, "rb");
@@ -566,6 +590,13 @@ CheckDataNotCorrupt(int32 slot, char *name)
 			CloseFile(file);
 			return false;
 		}
+#ifdef __PS3__
+		PS3_CRUMB("check save: block size", blocksize);
+		if (blocksize < 0) {
+			CloseFile(file);
+			return false;
+		}
+#endif
 		if (blocksize > align4bytes(sizeof(work_buff)))
 			blocksize = sizeof(work_buff) - sizeof(uint32);
 		if (!ReadDataFromFile(file, work_buff, align4bytes(blocksize))) {
@@ -1236,6 +1267,7 @@ bool SaveGameForPause(int type)
 	debug("SaveGameForPause ******************************** %s doSave %d", CStats::LastMissionPassedName, !CTheScripts::bAlreadyRunningAMissionScript);
 	IsQuickSave = type;
 	MissionStartTime = 0;
+	PS3_CRUMB("SaveGameForPause", type);
 	int res = PcSaveHelper.SaveSlot(PAUSE_SAVE_SLOT);
 	PcSaveHelper.PopulateSlotInfo();
 	IsQuickSave = 0;

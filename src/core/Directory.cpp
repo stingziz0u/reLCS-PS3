@@ -22,8 +22,11 @@ CDirectory::ReadDirFile(const char *filename)
 	DirectoryInfo dirinfo;
 
 	fd = CFileMgr::OpenFile(filename, "rb");
-	while(CFileMgr::Read(fd, (char*)&dirinfo, sizeof(dirinfo)))
+	while(CFileMgr::Read(fd, (char*)&dirinfo, sizeof(dirinfo))){
+		dirinfo.offset = LittleU32(dirinfo.offset);
+		dirinfo.size = LittleU32(dirinfo.size);
 		AddItem(dirinfo);
+	}
 	CFileMgr::CloseFile(fd);
 }
 
@@ -33,7 +36,18 @@ CDirectory::WriteDirFile(const char *filename)
 	int fd;
 	size_t n;
 	fd = CFileMgr::OpenFileForWriting(filename);
+#ifdef BIGENDIAN
+	// .dir files are little-endian, like the PC ones
+	n = 0;
+	for(int32 i = 0; i < numEntries; i++){
+		DirectoryInfo le = entries[i];
+		le.offset = LittleU32(le.offset);
+		le.size = LittleU32(le.size);
+		n += CFileMgr::Write(fd, (char*)&le, sizeof(DirectoryInfo));
+	}
+#else
 	n = CFileMgr::Write(fd, (char*)entries, numEntries*sizeof(DirectoryInfo));
+#endif
 	CFileMgr::CloseFile(fd);
 	return n == numEntries*sizeof(DirectoryInfo);
 }

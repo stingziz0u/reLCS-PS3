@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#endif
 
 #include "Script.h"
 #include "ScriptCommands.h"
@@ -24,6 +27,7 @@
 #include "Hud.h"
 #include "Lines.h"
 #include "Messages.h"
+#include "CutsceneMgr.h"
 #include "Pad.h"
 #include "Pickups.h"
 #include "Pools.h"
@@ -663,6 +667,221 @@ bool CStuckCarCheck::HasCarBeenStuckForAWhile(int32 id)
 	return false;
 }
 
+#ifdef __PS3__
+static CRunningScript *pScriptRunning;	// the one ProcessOneCommand is in
+static CRunningScript *pScriptBroken;	// to be stopped (CTheScripts::Process)
+static int32 scriptDummyVar;		// where a broken script's writes go
+
+// the last commands run (any script), for the log when one goes wrong
+struct ScriptTrace { CRunningScript *script; uint16 op; uint32 ip; };
+static ScriptTrace scriptTrace[32];
+static int scriptTraceHead;
+
+void
+ScriptBroken(const char *file, int line)
+{
+	if (pScriptRunning == nil || pScriptBroken == pScriptRunning)
+		return;
+	pScriptBroken = pScriptRunning;
+	char name[9];
+	memcpy(name, pScriptRunning->m_abScriptName, 8);
+	name[8] = '\0';
+	uint32 ip = pScriptRunning->m_nIp;
+	PS3_Logf("[script] %s: invalid bytes at ip %u (%s:%d), the script is stopped", name, ip, file, line);
+	// its last commands, oldest first
+	char buf[256];
+	int n = 0;
+	buf[0] = '\0';
+	for (int i = 0; i < 32; i++) {
+		ScriptTrace &t = scriptTrace[(scriptTraceHead + i) % 32];
+		if (t.script == pScriptRunning && n < 200)
+			n += snprintf(buf + n, sizeof(buf) - n, " %04x@%u", t.op, t.ip);
+	}
+	PS3_Logf("[script]   its last commands (opcode@ip):%s", buf);
+	n = 0;
+	uint32 from = ip >= 24 ? ip - 24 : 0;
+	for (uint32 a = from; a < ip + 24 && a < CTheScripts::MainScriptSize + CTheScripts::LargestMissionScriptSize && n < 200; a++)
+		n += snprintf(buf + n, sizeof(buf) - n, a == ip ? " [%02x]" : " %02x", CTheScripts::ScriptSpace[a]);
+	PS3_Logf("[script]   bytes from %u:%s", from, buf);
+}
+
+// ---- patch 50: what a mission script waits for --------------------------------
+// Vigilante / Brown Thunder (Ren): sometimes no criminals until R3 is
+// pressed again, or none any more from some level on. Every 10 s with a
+// mission running: the commands the mission scripts ran (opcode x count,
+// most first: a script stuck in a loop shows the loop), the cars and peds
+// of the world; and right away the random car queries (the vigilante's
+// criminals) and the models a script waits more than 5 s for.
+static uint16 ps3MissionOps[0x800];
+static uint32 ps3MissionOpsTotal, ps3MissionLogMs;
+static char ps3MissionNames[48];
+
+static void
+PS3_ScriptCountOp(CRunningScript *s, int32 command)
+{
+	if (!s->m_bIsMissionScript)
+		return;
+	if (command >= 0 && command < 0x800 && ps3MissionOps[command] < 0xFFFF)
+		ps3MissionOps[command]++;
+	ps3MissionOpsTotal++;
+	char name[9];
+	memcpy(name, s->m_abScriptName, 8);
+	name[8] = '\0';
+	if (strstr(ps3MissionNames, name) == nil && strlen(ps3MissionNames) + strlen(name) + 2 < sizeof(ps3MissionNames)) {
+		if (ps3MissionNames[0])
+			strcat(ps3MissionNames, " ");
+		strcat(ps3MissionNames, name);
+	}
+}
+
+static void
+PS3_ScriptReport(void)
+{
+	uint32 now = CTimer::GetTimeInMilliseconds();
+	if (ps3MissionLogMs == 0 || now < ps3MissionLogMs) {
+		ps3MissionLogMs = now;
+		return;
+	}
+	if (now - ps3MissionLogMs < 10000)
+		return;
+	ps3MissionLogMs = now;
+	if (ps3MissionOpsTotal) {
+		char line[400];
+		int len = snprintf(line, sizeof(line), "[script] mission (%s) in 10 s: %u commands; most run (opcode x count):",
+		                   ps3MissionNames, ps3MissionOpsTotal);
+		for (int k = 0; k < 12 && len < (int)sizeof(line) - 16; k++) {
+			int best = -1;
+			for (int i = 0; i < 0x800; i++)
+				if (ps3MissionOps[i] && (best < 0 || ps3MissionOps[i] > ps3MissionOps[best]))
+					best = i;
+			if (best < 0)
+				break;
+			len += snprintf(line + len, sizeof(line) - len, " %04x x%u", best, ps3MissionOps[best]);
+			ps3MissionOps[best] = 0;
+		}
+		PS3_Log(line);
+		PS3_Logf("[script]   world: vehicles %d of %d (random %d, mission %d, parked %d, police %d; cap %d, density %.2f), peds %d (mission %u; cap %d), streaming %.1f of %.1f MB, %d models requested",
+		         CPools::GetVehiclePool()->GetNoOfUsedSpaces(), CPools::GetVehiclePool()->GetSize(),
+		         CCarCtrl::NumRandomCars, CCarCtrl::NumMissionCars, CCarCtrl::NumParkedCars, CCarCtrl::NumLawEnforcerCars,
+		         CCarCtrl::MaxNumberOfCarsInUse, CCarCtrl::CarDensityMultiplier,
+		         CPools::GetPedPool()->GetNoOfUsedSpaces(), CPopulation::ms_nTotalMissionPeds, CPopulation::MaxNumberOfPedsInUse,
+		         CStreaming::ms_memoryUsed / 1048576.0f, CStreaming::ms_memoryAvailable / 1048576.0f, CStreaming::ms_numModelsRequested);
+	}
+	memset(ps3MissionOps, 0, sizeof(ps3MissionOps));
+	ps3MissionOpsTotal = 0;
+	ps3MissionNames[0] = '\0';
+}
+
+// GET_RANDOM_CAR_OF_TYPE_IN_AREA (and _NO_SAVE) from a mission: found or
+// not, and how many cars it took (the command marks every random car of
+// the area as a mission car, not only the one it returns). One line a
+// second at most (the scripts ask every frame until there is one).
+void
+PS3_ScriptCarQuery(CRunningScript *s, const char *what, int32 handle, int32 marked, float x1, float y1, float x2, float y2, int32 model)
+{
+	if (!s->m_bIsMissionScript)
+		return;
+	static uint32 lastMs, calls, found;
+	calls++;
+	if (handle >= 0)
+		found++;
+	uint32 now = CTimer::GetTimeInMilliseconds();
+	if (handle < 0 && now - lastMs < 1000 && now >= lastMs)
+		return;
+	lastMs = now;
+	char name[9];
+	memcpy(name, s->m_abScriptName, 8);
+	name[8] = '\0';
+	PS3_Logf("[script] %s %s area (%.0f, %.0f)-(%.0f, %.0f) model %d: %s (car %d, %d cars made mission cars; %u asks, %u found since the last line); vehicles %d, random %d, mission %d",
+	         name, what, x1, y1, x2, y2, model, handle >= 0 ? "found" : "none", handle, marked, calls, found,
+	         CPools::GetVehiclePool()->GetNoOfUsedSpaces(), CCarCtrl::NumRandomCars, CCarCtrl::NumMissionCars);
+	calls = found = 0;
+}
+
+bool gPS3ChaosMission;
+
+// a getter asked about an entity that isn't there: logged, the script goes on
+void
+PS3_ScriptGone(CRunningScript *s, const char *what, int32 handle)
+{
+	char name[9];
+	memcpy(name, s->m_abScriptName, 8);
+	name[8] = '\0';
+	PS3_Logf("[script] %s: %s of handle %d, which isn't there (deleted?): (0, 0, 0), the script goes on", name, what, handle);
+}
+
+// HAS_MODEL_LOADED false for more than 5 s (then every 10 s): the model's
+// streaming state
+void
+PS3_ScriptModelWait(CRunningScript *s, int32 model, bool loaded)
+{
+	static struct { CRunningScript *s; int32 model; uint32 since, logged; } w[8];
+	uint32 now = CTimer::GetTimeInMilliseconds();
+	int slot = -1, free = -1;
+	for (int i = 0; i < 8; i++) {
+		if (w[i].s == s && w[i].model == model) { slot = i; break; }
+		if (w[i].s == nil && free < 0) free = i;
+		else if (w[i].s && now - w[i].since > 60000 && free < 0) free = i;	// stale
+	}
+	if (loaded) {
+		if (slot >= 0) {
+			if (w[slot].logged) {
+				char name[9];
+				memcpy(name, s->m_abScriptName, 8);
+				name[8] = '\0';
+				PS3_Logf("[script] %s: model %d loaded after %.1f s", name, model, (now - w[slot].since) / 1000.0f);
+			}
+			w[slot].s = nil;
+		}
+		return;
+	}
+	if (slot < 0) {
+		if (free < 0)
+			return;
+		w[free].s = s;
+		w[free].model = model;
+		w[free].since = now;
+		w[free].logged = 0;
+		return;
+	}
+	if (now - w[slot].since < 5000 || (w[slot].logged && now - w[slot].logged < 10000))
+		return;
+	w[slot].logged = now;
+	char name[9];
+	memcpy(name, s->m_abScriptName, 8);
+	name[8] = '\0';
+	CStreamingInfo &si = CStreaming::ms_aInfoForModel[model];
+	CBaseModelInfo *mi = model >= 0 && model < MODELINFOSIZE ? CModelInfo::GetModelInfo(model) : nil;
+	PS3_Logf("[script] %s waits %.0f s for model %d (%s): load state %d, flags 0x%x; streaming %.1f of %.1f MB, %d models requested",
+	         name, (now - w[slot].since) / 1000.0f, model, mi ? mi->GetModelName() : "?", si.m_loadState, si.m_flags,
+	         CStreaming::ms_memoryUsed / 1048576.0f, CStreaming::ms_memoryAvailable / 1048576.0f, CStreaming::ms_numModelsRequested);
+}
+
+static inline bool
+GlobalVarOk(uint32 index)
+{
+	// a global is read as an int32/float in place: unaligned floats fault on the PPU
+	if (index >= 8 && index + 4 <= (uint32)CTheScripts::GetSizeOfVariableSpace() && (index & 3) == 0)
+		return true;
+	script_bad();
+	return false;
+}
+
+static inline bool
+LocalVarOk(uint32 index, uint32 count)
+{
+	if (index < count)
+		return true;
+	script_bad();
+	return false;
+}
+#define GLOBAL_OK(i) GlobalVarOk(i)
+#define LOCAL_OK(i) LocalVarOk(i, ARRAY_SIZE(m_anLocalVariables))
+#else
+#define GLOBAL_OK(i) true
+#define LOCAL_OK(i) true
+#endif
+
 void CRunningScript::CollectParameters(uint32* pIp, int16 total, int* pParameters)
 {
 	while (total--){
@@ -798,6 +1017,10 @@ int CTheScripts::GetSaveVarIndex(int var)
 
 void CRunningScript::Init()
 {
+#ifdef __PS3__
+	if (pScriptBroken == this)
+		pScriptBroken = nil;	// a new script in this slot
+#endif
 	sprintf(m_abScriptName, "id%02i", m_nId);
 	next = prev = nil;
 	SetIP(0);
@@ -899,11 +1122,30 @@ bool CTheScripts::Init(bool loaddata)
 	CFileMgr::Read(mainf, (char*)&MainScriptSize, sizeof(MainScriptSize));
 	int nLargestMissionSize = 0;
 	CFileMgr::Read(mainf, (char*)&nLargestMissionSize, sizeof(nLargestMissionSize));
+#ifdef BIGENDIAN
+	// main.scm is little-endian (its header, and the global variables below)
+	MainScriptSize = LittleU32(MainScriptSize);
+	nLargestMissionSize = LittleU32((uint32)nLargestMissionSize);
+#endif
 	if (!cSmallHeap::msInstance.IsLocked())
 		cSmallHeap::msInstance.Lock();
 	ScriptSpace = (uint8*)base::cMainMemoryManager::Instance()->Allocate(MainScriptSize + nLargestMissionSize);
 	memset(ScriptSpace, 0, MainScriptSize + nLargestMissionSize);
 	CFileMgr::Read(mainf, (char*)ScriptSpace, MainScriptSize);
+#ifdef BIGENDIAN
+	// The script code is read byte by byte (Read4BytesFromScript...), but the
+	// global variables (from offset 8 up to the first jump's target) are
+	// accessed as int32/float in place: keep them in host order.
+	{
+		int32 varSpace = GetSizeOfVariableSpace();
+		for (int32 i = 8; i + 4 <= varSpace && (uint32)(i + 4) <= MainScriptSize; i += 4)
+			*(uint32*)&ScriptSpace[i] = LittleU32(*(uint32*)&ScriptSpace[i]);
+	}
+#endif
+#ifdef __PS3__
+	PS3_Logf("[script] main.scm: main part %u bytes, largest mission %d bytes, variables %d bytes",
+	         MainScriptSize, nLargestMissionSize, GetSizeOfVariableSpace());
+#endif
 	gScriptsFile = mainf;
 	CFileMgr::SetDir("");
 	ReadObjectNamesFromScript();
@@ -1015,6 +1257,9 @@ void CTheScripts::Process()
 		return;
 	if (!ScriptSpace)
 		return;
+#ifdef __PS3__
+	PS3_ScriptReport();
+#endif
 	CommandsExecuted = 0;
 	ScriptsUpdated = 0;
 	float timeStep = CTimer::GetTimeStepInMilliseconds();
@@ -1095,6 +1340,23 @@ void CTheScripts::Process()
 		++ScriptsUpdated;
 		script->UpdateTimers(timeStep);
 		script->Process();
+#ifdef __PS3__
+		if (pScriptBroken != nil && pScriptBroken == script) {
+			// as TERMINATE_THIS_SCRIPT, plus what a mission's cleanup does
+			bool mission = script->m_bMissionFlag;
+			script->RemoveScriptFromList(&pActiveScripts);
+			script->AddScriptToList(&pIdleScripts);
+			script->m_bIsActive = false;
+			if (mission) {
+				bAlreadyRunningAMissionScript = false;
+				MissionCleanUp.Process();
+				if (OnAMissionFlag)
+					*(int32*)&ScriptSpace[OnAMissionFlag] = 0;
+			}
+			pScriptBroken = nil;
+		}
+		pScriptRunning = nil;
+#endif
 		script = next;
 		if (script && !script->m_bIsActive)
 			script = nil;
@@ -1152,10 +1414,23 @@ void CRunningScript::Process()
 int8 CRunningScript::ProcessOneCommand()
 {
 	int8 retval = -1;
+#ifdef __PS3__
+	if (pScriptBroken == this)
+		return 1;	// stopped at the end of CTheScripts::Process
+	pScriptRunning = this;
+	scriptTrace[scriptTraceHead].script = this;
+	scriptTrace[scriptTraceHead].ip = m_nIp;
+	scriptTrace[scriptTraceHead].op = CTheScripts::ScriptSpace[m_nIp] | CTheScripts::ScriptSpace[m_nIp + 1] << 8;
+	scriptTraceHead = (scriptTraceHead + 1) % 32;
+#endif
 	++CTheScripts::CommandsExecuted;
 	int32 command = (uint16)CTheScripts::Read2BytesFromScript(&m_nIp);
 	m_bNotFlag = (command & 0x8000);
 	command &= 0x7FFF;
+#ifdef __PS3__
+	PS3_ScriptCountOp(this, command);
+	PS3_ScriptCrumb(m_abScriptName, command, m_nIp - 2);
+#endif
 #ifdef USE_ADVANCED_SCRIPT_DEBUG_OUTPUT
 	LogBeforeProcessingCommand(command);
 #endif
@@ -1915,7 +2190,7 @@ int8 CRunningScript::ProcessCommands0To99(int32 command)
 		*fScriptVar1 -= *(float*)GetPointerToScriptVariable(&m_nIp, VAR_LOCAL);
 		return 0;
 	default:
-		script_assert(0);
+		script_bad();
 		break;
 	}
 	return -1;
@@ -2326,8 +2601,19 @@ int8 CRunningScript::ProcessCommands100To199(int32 command)
 	case COMMAND_GET_CHAR_COORDINATES:
 	{
 		CollectParameters(&m_nIp, 1);
-		CPed* ped = CPools::GetPedPool()->GetAt(GET_INTEGER_PARAM(0));
-		script_assert(ped);
+		CPed* ped = CPools::GetPedPool()->GetAt(ScriptParams[0]);
+#ifdef __PS3__
+		// patch 51: a char that isn't there any more (deleted under the
+		// script, see ClearSpaceForMissionEntity): (0, 0, 0) and the script
+		// goes on (its next IS_CHAR_DEAD says he's gone) instead of stopping
+		if (ped == nil) {
+			PS3_ScriptGone(this, "GET_CHAR_COORDINATES", ScriptParams[0]);
+			ScriptParams[0] = ScriptParams[1] = ScriptParams[2] = 0;
+			StoreParameters(&m_nIp, 3);
+			return 0;
+		}
+#endif
+		script_check(ped);
 		CVehicle* vehicle;
 		CVector pos;
 		/* Seems a bit clumsy but I'll leave original flow */
@@ -2556,9 +2842,17 @@ int8 CRunningScript::ProcessCommands100To199(int32 command)
 	case COMMAND_GET_CAR_COORDINATES:
 	{
 		CollectParameters(&m_nIp, 1);
-		CVehicle* car = CPools::GetVehiclePool()->GetAt(GET_INTEGER_PARAM(0));
-		script_assert(car);
-		SET_VECTOR_PARAM(0, car->GetPosition());
+		CVehicle* car = CPools::GetVehiclePool()->GetAt(ScriptParams[0]);
+#ifdef __PS3__
+		if (car == nil) {	// as GET_CHAR_COORDINATES
+			PS3_ScriptGone(this, "GET_CAR_COORDINATES", ScriptParams[0]);
+			ScriptParams[0] = ScriptParams[1] = ScriptParams[2] = 0;
+			StoreParameters(&m_nIp, 3);
+			return 0;
+		}
+#endif
+		script_check(car);
+		*(CVector*)&ScriptParams[0] = car->GetPosition();
 		StoreParameters(&m_nIp, 3);
 		return 0;
 	}
@@ -2694,7 +2988,7 @@ int8 CRunningScript::ProcessCommands100To199(int32 command)
 	case COMMAND_SPECIAL_5:
 	case COMMAND_SPECIAL_6:
 	case COMMAND_SPECIAL_7:
-		script_assert(0);
+		script_bad();
 		return 0;
 	case COMMAND_PRINT_BIG:
 	{
@@ -2774,7 +3068,7 @@ int8 CRunningScript::ProcessCommands100To199(int32 command)
 		return 0;
 	//case COMMAND_VAR_INT:
 	default:
-		script_assert(0);
+		script_bad();
 		break;
 	}
 	return -1;
@@ -2840,7 +3134,7 @@ int8 CRunningScript::ProcessCommands200To299(int32 command)
 		if (ped->bInVehicle) {
 			pCurrent = ped->m_pMyVehicle;
 		}
-		script_assert(pCurrent); // GetIndex(0) doesn't look good
+		script_check(pCurrent); // GetIndex(0) doesn't look good
 		int handle = CPools::GetVehiclePool()->GetIndex(pCurrent);
 		if (handle != CTheScripts::StoreVehicleIndex && m_bIsMissionScript){
 			CVehicle* pOld = CPools::GetVehiclePool()->GetAt(CTheScripts::StoreVehicleIndex);
@@ -2891,7 +3185,7 @@ int8 CRunningScript::ProcessCommands200To299(int32 command)
 		if (!ped->bInVehicle)
 			return 0; // No value written to output variable
 		CVehicle* pCurrent = ped->m_pMyVehicle;
-		script_assert(pCurrent); // Here pCurrent shouldn't be NULL anyway
+		script_check(pCurrent); // Here pCurrent shouldn't be NULL anyway
 		int handle = CPools::GetVehiclePool()->GetIndex(pCurrent);
 		if (handle != CTheScripts::StoreVehicleIndex && m_bIsMissionScript) {
 			CVehicle* pOld = CPools::GetVehiclePool()->GetAt(CTheScripts::StoreVehicleIndex);
@@ -3352,7 +3646,7 @@ int8 CRunningScript::ProcessCommands200To299(int32 command)
 	}
 	//case COMMAND_MAKE_CHAR_DO_NOTHING:
 	default:
-		script_assert(0);
+		script_bad();
 		break;
 	}
 	return -1;

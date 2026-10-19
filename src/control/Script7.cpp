@@ -1,6 +1,9 @@
 #include "common.h"
 
 #include "Script.h"
+#ifdef __PS3__
+#include "ps3_platform.h"	// PS3_Logf
+#endif
 #include "ScriptCommands.h"
 
 #include "CarCtrl.h"
@@ -277,7 +280,7 @@ int8 CRunningScript::ProcessCommands1200To1299(int32 command)
 		float fAngle = DEGTORAD(GET_FLOAT_PARAM(1) - 90.0f);
 		while (fAngle < 0.0f)
 			fAngle += TWOPI;
-		while (fAngle > TWOPI)
+		while (PS3_ANGLE_OK(fAngle) && fAngle > TWOPI)
 			fAngle -= TWOPI;
 		pHeli->SetHeliOrientation(fAngle);
 		return 0;
@@ -775,7 +778,7 @@ int8 CRunningScript::ProcessCommands1200To1299(int32 command)
 	}
 	//case COMMAND_PRINT_HELP_FOREVER_WITH_NUMBER:
 	default:
-		script_assert(0);
+		script_bad();
 	}
 	return -1;
 }
@@ -1067,7 +1070,10 @@ int8 CRunningScript::ProcessCommands1300To1399(int32 command)
 				continue;
 			handle = CPools::GetVehiclePool()->GetIndex(pVehicle);
 		}
-		SET_INTEGER_PARAM(0, handle);
+#ifdef __PS3__
+		PS3_ScriptCarQuery(this, "GET_RANDOM_CAR_OF_TYPE_IN_AREA_NO_SAVE", handle, 0, infX, infY, supX, supY, ScriptParams[4]);
+#endif
+		ScriptParams[0] = handle;
 		StoreParameters(&m_nIp, 1);
 		return 0;
 	}
@@ -1526,7 +1532,7 @@ int8 CRunningScript::ProcessCommands1300To1399(int32 command)
 	//case COMMAND_FREEZE_OBJECT_POSITION_AND_DONT_LOAD_COLLISION:
 	//case COMMAND_SET_FADE_AND_JUMPCUT_AFTER_RC_EXPLOSION:
 	default:
-		script_assert(0);
+		script_bad();
 	}
 	return -1;
 }

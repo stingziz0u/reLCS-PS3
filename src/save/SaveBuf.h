@@ -28,11 +28,15 @@ SkipSaveBuf(uint8*& buf, uint32 &length, int32 skip)
 #endif
 }
 
+// The save buffer is packed (int16 next to floats...), so a T in it is often
+// not aligned. A plain *(float*)buf becomes lfs/stfs at an odd address, which
+// the PPU does not do in hardware (the game thread dies). memcpy makes gcc use
+// accesses that are fine at any address; on x86 it compiles to the same thing.
 template<typename T>
 inline void
 ReadSaveBuf(T *out, uint8 *&buf)
 {
-	*out = *(T *)buf;
+	memcpy((void*)out, buf, sizeof(T));
 	SkipSaveBuf(buf, sizeof(T));
 }
 
@@ -40,7 +44,7 @@ template<typename T>
 inline void
 ReadSaveBuf(T *out, uint8 *&buf, uint32 &length)
 {
-	*out = *(T *)buf;
+	memcpy((void*)out, buf, sizeof(T));
 	SkipSaveBuf(buf, length, sizeof(T));
 }
 
@@ -49,7 +53,7 @@ inline T *
 WriteSaveBuf(uint8 *&buf, const T &value)
 {
 	T *p = (T*)buf;
-	*p = value;
+	memcpy((void*)buf, (const void*)&value, sizeof(T));
 	SkipSaveBuf(buf, sizeof(T));
 	return p;
 }
@@ -59,7 +63,7 @@ inline T *
 WriteSaveBuf(uint8 *&buf, uint32 &length, const T &value)
 {
 	T *p = (T*)buf;
-	*p = value;
+	memcpy((void*)buf, (const void*)&value, sizeof(T));
 	SkipSaveBuf(buf, length, sizeof(T));
 	return p;
 }

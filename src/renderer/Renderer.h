@@ -31,9 +31,9 @@ class CRenderer
 	static CEntity *ms_aVisibleEntityPtrs[NUMVISIBLEENTITIES];
 	static int32 ms_nNoOfInVisibleEntities;
 	static CEntity *ms_aInVisibleEntityPtrs[NUMINVISIBLEENTITIES];
-#ifdef NEW_RENDERER
 	static int32 ms_nNoOfVisibleVehicles;
 	static CEntity *ms_aVisibleVehiclePtrs[NUMVISIBLEENTITIES];
+#ifdef NEW_RENDERER
 	// for cWorldStream emulation
 	static int32 ms_nNoOfVisibleBuildings;
 	static CEntity *ms_aVisibleBuildingPtrs[NUMVISIBLEENTITIES];

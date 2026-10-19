@@ -11,6 +11,9 @@
 #include "Camera.h"
 #include "World.h"
 #include "ZoneCull.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#endif
 
 cAudioManager AudioManager;
 
@@ -122,7 +125,9 @@ cAudioManager::Service()
 		UpdateReflections();
 #endif
 		ServiceSoundEffects();
+		PS3_CRUMB("audio: MusicManager.Service", MusicManager.GetMusicMode());
 		MusicManager.Service();
+		PS3_CRUMB("audio: done", 0);
 	}
 }
 
@@ -189,6 +194,11 @@ cAudioManager::CreateEntity(eAudioType type, void *entity)
 			return i;
 		}
 	}
+#ifdef __PS3__
+	static int ps3NoSlot;
+	if (ps3NoSlot++ < 8)
+		PS3_Logf("[audio] no free audio entity (all %d used) for type %d", NUM_AUDIOENTITIES, (int)type);
+#endif
 	return AEHANDLE_ERROR_NOFREESLOT;
 }
 
@@ -254,6 +264,19 @@ cAudioManager::PlayOneShot(int32 index, uint16 sound, float vol)
 							entity.m_AudioEvents = 1;
 							m_sAudioScriptObjectManager.m_anScriptObjectEntityIndices[m_sAudioScriptObjectManager.m_nScriptObjectEntityTotal++] = index;
 						}
+#ifdef __PS3__
+						else {
+							// 40 one-shot sounds (bullets on the ground, crates, bins hit)
+							// already this frame: the original kept the entity and its
+							// object for ever, one more audio entity gone each time
+							static int ps3Full;
+							if (ps3Full++ < 8)
+								PS3_Logf("[audio] %d one-shot sounds this frame: sound %d dropped", NUM_SCRIPT_MAX_ENTITIES, sound);
+							delete (cAudioScriptObject *)entity.m_pEntity;
+							entity.m_pEntity = nil;
+							DestroyEntity(index);
+						}
+#endif
 					} else {
 						int32 i = 0;
 						while (TRUE) {
@@ -346,7 +369,7 @@ cAudioManager::ResetTimers(uint32 time)
 		SampleManager.SetMusicFadeVolume(0);
 		MusicManager.ResetMusicAfterReload();
 		m_bIsPlayerShutUp = FALSE;
-#ifdef AUDIO_OAL
+#if defined(AUDIO_OAL) || defined(AUDIO_PS3)
 		SampleManager.Service();
 #endif
 	}
@@ -406,7 +429,7 @@ cAudioManager::Get3DProviderName(uint8 id)
 #else
 	if (!m_bIsInitialised)
 		return nil;
-#ifdef AUDIO_OAL
+#if defined(AUDIO_OAL) || defined(AUDIO_PS3)
 	id = Clamp(id, 0, SampleManager.GetNum3DProvidersAvailable() - 1);
 #else
 	// We don't want that either since it will crash the game, but skipping for now
@@ -565,6 +588,7 @@ cAudioManager::ServiceSoundEffects()
 #endif
 	ProcessSpecial();
 	ClearRequestedQueue();
+	PS3_CRUMB("audio: InterrogateAudioEntities", 0);
 	InterrogateAudioEntities();
 	if (!m_bIsPaused) {
 		m_sPedComments.Process();
@@ -577,8 +601,9 @@ cAudioManager::ServiceSoundEffects()
 #ifdef EXTERNAL_3D_SOUND
 	AdjustSamplesVolume();
 #endif
+	PS3_CRUMB("audio: ProcessActiveQueues", 0);
 	ProcessActiveQueues();
-#ifdef AUDIO_OAL
+#if defined(AUDIO_OAL) || defined(AUDIO_PS3)
 	SampleManager.Service();
 #endif
 	for (int32 i = 0; i < m_sAudioScriptObjectManager.m_nScriptObjectEntityTotal; i++) {

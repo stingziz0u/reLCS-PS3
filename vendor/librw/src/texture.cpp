@@ -17,6 +17,7 @@
 #include "d3d/rwd3d9.h"
 #include "d3d/rwd3dimpl.h"
 #include "gl/rwgl3.h"
+#include "ps3/rwps3.h"
 
 #define PLUGIN_ID 0
 
@@ -340,9 +341,27 @@ Texture::read(const char *name, const char *mask)
 		return tex;
 	}
 	if(TEXTUREGLOBAL(loadTextures)){
+#ifdef RW_PS3
+		// A model asking for a texture its TXD doesn't have (common in
+		// GTA III: LODs, the buoy...) makes readCB look for an image file:
+		// tga, bmp and png, each a handful of lv2 file system calls that
+		// fail (~1 ms each on the HDD), every time the model streams in.
+		// The names that weren't found are remembered.
+		if(ps3::imageMissKnown(name, mask))
+			goto dummytex;
+		uint64 t0 = ps3::texProfNow();
+		tex = Texture::readCB(name, mask);
+		ps3::texProfile.imgLookups++;
+		ps3::texProfile.imgLookupUs += ps3::texProfNow() - t0;
+		if(tex == nil){
+			ps3::imageMissRemember(name, mask);
+			goto dummytex;
+		}
+#else
 		tex = Texture::readCB(name, mask);
 		if(tex == nil)
 			goto dummytex;
+#endif
 	}else dummytex: if(TEXTUREGLOBAL(makeDummies)){
 //printf("missing texture %s %s\n", name ? name : "", mask ? mask : "");
 		tex = Texture::create(nil);
@@ -481,6 +500,10 @@ Texture::streamReadNative(Stream *stream)
 		return xbox::readNativeTexture(stream);
 	if(platform == PLATFORM_GL3)
 		return gl3::readNativeTexture(stream);
+#ifdef RW_PS3
+	if(platform == PLATFORM_PS3)
+		return ps3::readNativeTexture(stream);
+#endif
 	assert(0 && "unsupported platform");
 	return nil;
 }
@@ -498,6 +521,10 @@ Texture::streamWriteNative(Stream *stream)
 		xbox::writeNativeTexture(this, stream);
 	else if(this->raster->platform == PLATFORM_GL3)
 		gl3::writeNativeTexture(this, stream);
+#ifdef RW_PS3
+	else if(this->raster->platform == PLATFORM_PS3)
+		ps3::writeNativeTexture(this, stream);
+#endif
 	else
 		assert(0 && "unsupported platform");
 }
@@ -515,6 +542,10 @@ Texture::streamGetSizeNative(void)
 		return xbox::getSizeNativeTexture(this);
 	if(this->raster->platform == PLATFORM_GL3)
 		return gl3::getSizeNativeTexture(this);
+#ifdef RW_PS3
+	if(this->raster->platform == PLATFORM_PS3)
+		return ps3::getSizeNativeTexture(this);
+#endif
 	assert(0 && "unsupported platform");
 	return 0;
 }

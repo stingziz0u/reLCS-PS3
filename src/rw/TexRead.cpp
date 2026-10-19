@@ -83,6 +83,7 @@ RwTexDictionaryGtaStreamRead(RwStream *stream)
 		return nil;
 	if(RwStreamRead(stream, &numTextures, size) != size)
 		return nil;
+	numTextures = LittleI32(numTextures);
 
 	texDict = RwTexDictionaryCreate();
 	if(texDict == nil)
@@ -118,6 +119,7 @@ RwTexDictionaryGtaStreamRead1(RwStream *stream)
 	assert(size == 4);
 	if(RwStreamRead(stream, &numTextures, size) != size)
 		return nil;
+	numTextures = LittleI32(numTextures);
 
 	texDict = RwTexDictionaryCreate();
 	if(texDict == nil)

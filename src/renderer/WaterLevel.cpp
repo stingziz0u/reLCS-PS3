@@ -137,6 +137,10 @@ CWaterLevel::Initialise(Const char *pWaterDat)
 		CFileMgr::Read(hFile, (char *)aWaterBlockList, sizeof(aWaterBlockList));
 		CFileMgr::Read(hFile, (char *)aWaterFineBlockList, sizeof(aWaterFineBlockList));
 		CFileMgr::CloseFile(hFile);
+		// little-endian file: count, 48 floats, 48 rects of 4 floats
+		ms_nNoOfWaterLevels = LittleI32(ms_nNoOfWaterLevels);
+		LittleSwap32(ms_aWaterZs, ARRAY_SIZE(ms_aWaterZs));
+		LittleSwap32(ms_aWaterRects, sizeof(ms_aWaterRects)/4);
 	}
 #ifndef MASTER
 	else
@@ -261,6 +265,12 @@ CWaterLevel::Initialise(Const char *pWaterDat)
 
 		if (hFile > 0)
 		{
+#ifdef BIGENDIAN
+			// written little-endian like the PC file, swapped back after
+			ms_nNoOfWaterLevels = LittleI32(ms_nNoOfWaterLevels);
+			LittleSwap32(ms_aWaterZs, ARRAY_SIZE(ms_aWaterZs));
+			LittleSwap32(ms_aWaterRects, sizeof(ms_aWaterRects)/4);
+#endif
 			CFileMgr::Write(hFile, (char *)&ms_nNoOfWaterLevels, sizeof(ms_nNoOfWaterLevels));
 			CFileMgr::Write(hFile, (char *)ms_aWaterZs, sizeof(ms_aWaterZs));
 			CFileMgr::Write(hFile, (char *)ms_aWaterRects, sizeof(ms_aWaterRects));
@@ -268,6 +278,11 @@ CWaterLevel::Initialise(Const char *pWaterDat)
 			CFileMgr::Write(hFile, (char *)aWaterFineBlockList, sizeof(aWaterFineBlockList));
 
 			CFileMgr::CloseFile(hFile);
+#ifdef BIGENDIAN
+			ms_nNoOfWaterLevels = LittleI32(ms_nNoOfWaterLevels);
+			LittleSwap32(ms_aWaterZs, ARRAY_SIZE(ms_aWaterZs));
+			LittleSwap32(ms_aWaterRects, sizeof(ms_aWaterRects)/4);
+#endif
 		}
 
 		// collision is streamed in VC

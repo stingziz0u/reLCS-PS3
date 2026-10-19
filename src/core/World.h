@@ -74,7 +74,14 @@ public:
 	static void Remove(CEntity *entity);
 	static void Add(CEntity *entity);
 
-	static CSector *GetSector(int x, int y) { if (x > NUMSECTORS_X - 1 || y > NUMSECTORS_Y - 1) return &ms_aSectors[0][0]; return &ms_aSectors[y][x]; }
+	static CSector *GetSector(int x, int y) {
+#ifdef __PS3__
+		// garbage/NaN coords (negative too) would index far outside the array: clamp
+		return &ms_aSectors[Clamp(y, 0, NUMSECTORS_Y-1)][Clamp(x, 0, NUMSECTORS_X-1)];
+#else
+		if (x > NUMSECTORS_X - 1 || y > NUMSECTORS_Y - 1) return &ms_aSectors[0][0]; return &ms_aSectors[y][x];
+#endif
+	}
 	static CPtrList &GetBigBuildingList(eLevelName i) { return ms_bigBuildingsList[i]; }
 	static CPtrList &GetMovingEntityList(void) { return ms_listMovingEntityPtrs; }
 	static uint16 GetCurrentScanCode(void) { return ms_nCurrentScanCode; }
@@ -128,8 +135,17 @@ public:
 
 	static float GetSectorX(float f) { return ((f - WORLD_MIN_X)/SECTOR_SIZE_X); }
 	static float GetSectorY(float f) { return ((f - WORLD_MIN_Y)/SECTOR_SIZE_Y); }
+#ifdef __PS3__
+	// in the world's range: a NaN or far-off coordinate (the PPU makes them
+	// INT_MIN/INT_MAX) gave sector loops ~2^31 turns, or endless ones (the line
+	// of sight's "for(y = ystart; y >= yend; y--)" with yend INT_MIN). Same
+	// sectors as before for any coordinate: GetSector clamps them the same way
+	static int GetSectorIndexX(float f) { float s = GetSectorX(f); return s >= 0.0f ? (s < NUMSECTORS_X-1 ? (int)s : NUMSECTORS_X-1) : 0; }
+	static int GetSectorIndexY(float f) { float s = GetSectorY(f); return s >= 0.0f ? (s < NUMSECTORS_Y-1 ? (int)s : NUMSECTORS_Y-1) : 0; }
+#else
 	static int GetSectorIndexX(float f) { return (int)GetSectorX(f); }
 	static int GetSectorIndexY(float f) { return (int)GetSectorY(f); }
+#endif
 	static float GetWorldX(int x) { return x*SECTOR_SIZE_X + WORLD_MIN_X; }
 	static float GetWorldY(int y) { return y*SECTOR_SIZE_Y + WORLD_MIN_Y; }
 

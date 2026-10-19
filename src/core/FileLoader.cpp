@@ -189,6 +189,8 @@ CFileLoader::LoadCollisionFile(const char *filename, uint8 colSlot)
 	assert(fd > 0);
 
 	while(CFileMgr::Read(fd, (char*)&header, sizeof(header))){
+		header.ident = LittleU32(header.ident);
+		header.size = LittleU32(header.size);
 		assert(header.ident == 'LLOC');
 		CFileMgr::Read(fd, (char*)work_buff, header.size);
 		memcpy(modelname, work_buff, 24);
@@ -224,7 +226,16 @@ CFileLoader::LoadCollisionFileFirstTime(uint8 *buffer, uint32 size, uint8 colSlo
 	int modelIndex;
 
 	while(size > 8){
+#ifdef BIGENDIAN
+		// streamed .col data (gta3.img) is little-endian like the files
+		ColHeader leHeader;
+		memcpy(&leHeader, buffer, sizeof(leHeader));
+		leHeader.ident = LittleU32(leHeader.ident);
+		leHeader.size = LittleU32(leHeader.size);
+		header = &leHeader;
+#else
 		header = (ColHeader*)buffer;
+#endif
 		modelsize = header->size;
 		if(header->ident != 'LLOC')
 			return size-8 < CDSTREAM_SECTOR_SIZE;
@@ -258,7 +269,16 @@ CFileLoader::LoadCollisionFile(uint8 *buffer, uint32 size, uint8 colSlot)
 	ColHeader *header;
 
 	while(size > 8){
+#ifdef BIGENDIAN
+		// streamed .col data (gta3.img) is little-endian like the files
+		ColHeader leHeader;
+		memcpy(&leHeader, buffer, sizeof(leHeader));
+		leHeader.ident = LittleU32(leHeader.ident);
+		leHeader.size = LittleU32(leHeader.size);
+		header = &leHeader;
+#else
 		header = (ColHeader*)buffer;
+#endif
 		modelsize = header->size;
 		if(header->ident != 'LLOC')
 			return size-8 < CDSTREAM_SECTOR_SIZE;
@@ -286,43 +306,50 @@ CFileLoader::LoadCollisionFile(uint8 *buffer, uint32 size, uint8 colSlot)
 	return true;
 }
 
+// .col files are little-endian and the model data in the buffer is not
+// always aligned: these read them on any host
+static inline float ColF32(const uint8 *p) { float f; memcpy(&f, p, 4); return LittleF32(f); }
+static inline int32 ColI32(const uint8 *p) { int32 i; memcpy(&i, p, 4); return LittleI32(i); }
+static inline int16 ColI16(const uint8 *p) { int16 i; memcpy(&i, p, 2); return LittleI16(i); }
+static inline CVector ColVec(const uint8 *p) { return CVector(ColF32(p), ColF32(p+4), ColF32(p+8)); }
+
 void
 CFileLoader::LoadCollisionModel(uint8 *buf, CColModel &model, char *modelname)
 {
 	int i;
 
-	model.boundingSphere.radius = Max(*(float*)(buf), 0.1f);
-	model.boundingSphere.center.x = *(float*)(buf+4);
-	model.boundingSphere.center.y = *(float*)(buf+8);
-	model.boundingSphere.center.z = *(float*)(buf+12);
-	model.boundingBox.min.x = *(float*)(buf+16);
-	model.boundingBox.min.y = *(float*)(buf+20);
-	model.boundingBox.min.z = *(float*)(buf+24);
-	model.boundingBox.max.x = *(float*)(buf+28);
-	model.boundingBox.max.y = *(float*)(buf+32);
-	model.boundingBox.max.z = *(float*)(buf+36);
-	model.numSpheres = *(int16*)(buf+40);
+	model.boundingSphere.radius = Max(ColF32(buf), 0.1f);
+	model.boundingSphere.center.x = ColF32(buf+4);
+	model.boundingSphere.center.y = ColF32(buf+8);
+	model.boundingSphere.center.z = ColF32(buf+12);
+	model.boundingBox.min.x = ColF32(buf+16);
+	model.boundingBox.min.y = ColF32(buf+20);
+	model.boundingBox.min.z = ColF32(buf+24);
+	model.boundingBox.max.x = ColF32(buf+28);
+	model.boundingBox.max.y = ColF32(buf+32);
+	model.boundingBox.max.z = ColF32(buf+36);
+	model.numSpheres = ColI16(buf+40);
 	buf += 44;
 	if(model.numSpheres > 0){
 		model.spheres = new CColSphere[model.numSpheres];
 		REGISTER_MEMPTR(&model.spheres);
 		for(i = 0; i < model.numSpheres; i++){
-			float radius = *(float*)buf;
+			float radius = ColF32(buf);
 			if(radius > model.boundingSphere.radius)
 				model.boundingSphere.radius = radius + 0.01f;
-			model.spheres[i].Set(radius, *(CVector*)(buf+4), buf[16], buf[17]);
+			model.spheres[i].Set(radius, ColVec(buf+4), buf[16], buf[17]);
 			buf += 20;
 		}
 	}else
 		model.spheres = nil;
 
-	model.numLines = *(int16*)buf;
+	model.numLines = ColI16(buf);
 	buf += 4;
 	if(model.numLines > 0){
 		//model.lines = new CColLine[model.numLines];;
 		REGISTER_MEMPTR(&model.lines);
 		for(i = 0; i < model.numLines; i++){
-			//model.lines[i].Set(*(CVector*)buf, *(CVector*)(buf+12));
+			//model.lines[i].Set(ColVec(buf), ColVec(buf+12));
 			buf += 24;
 		}
 	}else
@@ -330,29 +357,29 @@ CFileLoader::LoadCollisionModel(uint8 *buf, CColModel &model, char *modelname)
 	model.numLines = 0;
 	model.lines = nil;
 
-	model.numBoxes = *(int16*)buf;
+	model.numBoxes = ColI16(buf);
 	buf += 4;
 	if(model.numBoxes > 0){
 		model.boxes = new CColBox[model.numBoxes];
 		REGISTER_MEMPTR(&model.boxes);
 		for(i = 0; i < model.numBoxes; i++){
-			model.boxes[i].Set(*(CVector*)buf, *(CVector*)(buf+12), buf[24], buf[25]);
+			model.boxes[i].Set(ColVec(buf), ColVec(buf+12), buf[24], buf[25]);
 			buf += 28;
 		}
 	}else
 		model.boxes = nil;
 
-	int32 numVertices = *(int16*)buf;
+	int32 numVertices = ColI16(buf);
 	buf += 4;
 	if(numVertices > 0){
 		model.vertices = new CompressedVector[numVertices];
 		REGISTER_MEMPTR(&model.vertices);
 		for(i = 0; i < numVertices; i++){
-			model.vertices[i].Set(*(float*)buf, *(float*)(buf+4), *(float*)(buf+8));
+			model.vertices[i].Set(ColF32(buf), ColF32(buf+4), ColF32(buf+8));
 #if 0
-			if(Abs(*(float*)buf) >= 256.0f ||
-			   Abs(*(float*)(buf+4)) >= 256.0f ||
-			   Abs(*(float*)(buf+8)) >= 256.0f)
+			if(Abs(ColF32(buf)) >= 256.0f ||
+			   Abs(ColF32(buf+4)) >= 256.0f ||
+			   Abs(ColF32(buf+8)) >= 256.0f)
 				printf("%s:Collision volume too big\n", modelname);
 #endif
 			buf += 12;
@@ -360,13 +387,13 @@ CFileLoader::LoadCollisionModel(uint8 *buf, CColModel &model, char *modelname)
 	}else
 		model.vertices = nil;
 
-	model.numTriangles = *(int16*)buf;
+	model.numTriangles = ColI16(buf);
 	buf += 4;
 	if(model.numTriangles > 0){
 		model.triangles = new CColTriangle[model.numTriangles];
 		REGISTER_MEMPTR(&model.triangles);
 		for(i = 0; i < model.numTriangles; i++){
-			model.triangles[i].Set(*(int32*)buf, *(int32*)(buf+4), *(int32*)(buf+8), buf[12]);
+			model.triangles[i].Set(ColI32(buf), ColI32(buf+4), ColI32(buf+8), buf[12]);
 			buf += 16;
 
 			// skip small triangles

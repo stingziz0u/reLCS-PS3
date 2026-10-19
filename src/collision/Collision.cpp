@@ -26,7 +26,11 @@
 
 // gotta figure out how they handled CSphere exactly
 // so using this to remind me to look into it again.
+#ifdef __PS3__
+#define CVECTORHACK(rwv3d) (*(CVector*)&(rwv3d))	// same layout; GCC: no address of a temporary
+#else
 #define CVECTORHACK(rwv3d) CVector(rwv3d)
+#endif
 
 #ifdef VU_COLLISION
 #include "VuCollision.h"
@@ -74,6 +78,21 @@ GetVUresult(CVuVector &point, CVuVector &normal, float &dist)
 
 eLevelName CCollision::ms_collisionInMemory;
 CLinkList<CColModel*> CCollision::ms_colModelCache;
+
+#ifdef __PS3__
+// patch 46: what collision costs inside, for the [col] log line
+// (World.cpp): ProcessColModels (sphere/box/line vs triangles), and the
+// triangle planes computed when a col model isn't in the plane cache
+int32 PS3_colCacheUsed;			// links in ms_colModelCache
+int32 PS3_colCacheLimit = NUMCOLCACHELINKS;	// below the list's size, to try smaller caches
+unsigned long long PS3_colModelsTicks, PS3_colPlaneTicks;
+uint32 PS3_colModelsCalls, PS3_colPlaneMisses, PS3_colPlaneTris;
+struct PS3ColTimer {
+	unsigned long long t0, *acc;
+	PS3ColTimer(unsigned long long *a) : t0(PS3_Ticks()), acc(a) {}
+	~PS3ColTimer() { *acc += PS3_Ticks() - t0; }
+};
+#endif
 
 void
 CCollision::Init(void)
@@ -1662,6 +1681,10 @@ CCollision::ProcessColModels(const CMatrix &matrixA, CColModel &modelA,
 	const CMatrix &matrixB, CColModel &modelB,
 	CColPoint *spherepoints, CColPoint *linepoints, float *linedists)
 {
+#ifdef __PS3__
+	PS3ColTimer ps3t(&PS3_colModelsTicks);
+	PS3_colModelsCalls++;
+#endif
 #ifdef VU_COLLISION
 	CVuVector *aSpheresA = (CVuVector*)SPR(0x0000);
 	CVuVector *aSpheresB = (CVuVector*)SPR(0x0800);
@@ -2158,7 +2181,23 @@ CCollision::CalculateTrianglePlanes(CColModel *model)
 		lptr->Remove();
 		ms_colModelCache.head.Insert(lptr);
 	}else{
+#ifdef __PS3__
+		PS3ColTimer ps3t(&PS3_colPlaneTicks);
+		PS3_colPlaneMisses++;
+		PS3_colPlaneTris += model->numTriangles;
+		// the limit (below the list's size): the oldest out first
+		while(PS3_colCacheUsed >= PS3_colCacheLimit && ms_colModelCache.tail.prev != &ms_colModelCache.head){
+			CLink<CColModel*> *old = ms_colModelCache.tail.prev;
+			old->item->RemoveTrianglePlanes();
+			ms_colModelCache.Remove(old);
+			PS3_colCacheUsed--;
+		}
+#endif
 		lptr = ms_colModelCache.Insert(model);
+#ifdef __PS3__
+		if(lptr)
+			PS3_colCacheUsed++;
+#endif
 		if(lptr == nil){
 			// make room if we have to, remove last in list
 			lptr = ms_colModelCache.tail.prev;
@@ -2181,6 +2220,9 @@ CCollision::RemoveTrianglePlanes(CColModel *model)
 	if(model->trianglePlanes){
 		ms_colModelCache.Remove(model->GetLinkPtr());
 		model->RemoveTrianglePlanes();
+#ifdef __PS3__
+		PS3_colCacheUsed--;
+#endif
 	}
 }
 

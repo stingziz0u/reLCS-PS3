@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"	// PS3_Logf
+#endif
 
 #include "Script.h"
 #include "ScriptCommands.h"
@@ -1000,7 +1003,7 @@ void CRunningScript::PlayerInAngledAreaCheckCommand(int32 command, uint32* pIp)
 	float initAngle = CGeneral::GetRadianAngleBetweenPoints(infX, infY, supX, supY) + HALFPI;
 	while (initAngle < 0.0f)
 		initAngle += TWOPI;
-	while (initAngle > TWOPI)
+	while (PS3_ANGLE_OK(initAngle) && initAngle > TWOPI)
 		initAngle -= TWOPI;
 	// it looks like the idea is to use a rectangle using the diagonal of the rectangle as
 	// the side of new rectangle, with "length" being the length of second side
@@ -1392,6 +1395,10 @@ void CRunningScript::DoDeatharrestCheck()
 		AllowMissionReplay = MISSION_RETRY_STAGE_WAIT_FOR_SCRIPT_TO_TERMINATE;
 #endif
 	script_assert(m_nStackPointer > 0);
+#ifdef __PS3__
+	if (m_nStackPointer == 0)
+		return;	// no handler to return to: m_anStack[0] would be stale
+#endif
 	while (m_nStackPointer > 1)
 		--m_nStackPointer;
 	ReturnFromGosubOrFunction();
@@ -2424,6 +2431,21 @@ void CTheScripts::ClearSpaceForMissionEntity(const CVector& pos, CEntity* pEntit
 			CVehicle* pVehicle = (CVehicle*)pFound;
 			if (pVehicle->bIsLocked || !pVehicle->CanBeDeleted())
 				break;
+#ifdef __PS3__
+			// patch 51: not a car a mission script has taken (Vigilante's
+			// criminal car: GET_RANDOM_CAR_OF_TYPE_IN_AREA makes it a
+			// mission car, its driver stays a random ped, so CanBeDeleted
+			// says yes). Making room for the next criminal deleted the car
+			// with the first one in it, and the script's next look at him
+			// stopped the script: no more criminals, the mission failed.
+			if (pVehicle->VehicleCreatedBy == MISSION_VEHICLE) {
+				PS3_Logf("[script] room for a mission entity: mission car %d (model %d) left where it is",
+				         CPools::GetVehiclePool()->GetIndex(pVehicle), pVehicle->GetModelIndex());
+				break;
+			}
+			PS3_Logf("[script] room for a mission entity: random car %d (model %d) deleted, with its driver and %d passengers",
+			         CPools::GetVehiclePool()->GetIndex(pVehicle), pVehicle->GetModelIndex(), pVehicle->m_nNumPassengers);
+#endif
 			if (pVehicle->pDriver) {
 				CPopulation::RemovePed(pVehicle->pDriver);
 				pVehicle->pDriver = nil;
@@ -2445,6 +2467,9 @@ void CTheScripts::ClearSpaceForMissionEntity(const CVector& pos, CEntity* pEntit
 			CPed* pPed = (CPed*)pFound;
 			if (pPed->IsPlayer() || !pPed->CanBeDeleted())
 				break;
+#ifdef __PS3__
+			PS3_Logf("[script] room for a mission entity: ped %d (model %d) deleted", CPools::GetPedPool()->GetIndex(pPed), pPed->GetModelIndex());
+#endif
 			CPopulation::RemovePed(pPed);
 			printf("Deleted a ped where a mission entity should be\n");
 			break;
@@ -2517,7 +2542,7 @@ int CTheScripts::AddPedsInVehicleToCollective(int index)
 	int colIndex = NextFreeCollectiveIndex;
 	AdvanceCollectiveIndex();
 	CVehicle* pVehicle = CPools::GetVehiclePool()->GetAt(index);
-	script_assert(pVehicle);
+	script_check(pVehicle);
 	CPed* pDriver = pVehicle->pDriver;
 	if (pDriver && !pDriver->IsPlayer() && pDriver->CharCreatedBy != MISSION_CHAR && pDriver->m_nPedType != PEDTYPE_COP) {
 		int index = FindFreeSlotInCollectiveArray();

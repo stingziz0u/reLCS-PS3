@@ -488,7 +488,7 @@ bool CGame::Initialise(const char* datFile)
 	CStreaming::RequestBigBuildings(LEVEL_GENERIC);
 	CStreaming::LoadAllRequestedModels(false);
 	CStreaming::RemoveIslandsNotUsed(currLevel);
-	printf("Streaming uses %zuK of its memory", CStreaming::ms_memoryUsed / 1024); // original modifier was %d
+	printf("Streaming uses %dK of its memory", (int)(CStreaming::ms_memoryUsed / 1024)); // original modifier was %d
 
 	LoadingScreen("Loading the Game", "Load animations", GetRandomSplashScreen());
 	PUSH_MEMID(MEMID_ANIMATION);
@@ -869,6 +869,7 @@ void CGame::Process(void)
 		CStreaming::LoadScene(TheCamera.GetPosition());
 		FrontEndMenuManager.m_bWantToLoad = false;
 	}
+	PS3_GAME_STEP("CPad::UpdatePads");
 	CPad::UpdatePads();
 #ifdef USE_CUSTOM_ALLOCATOR
 	ProcessTidyUpMemory();
@@ -876,11 +877,14 @@ void CGame::Process(void)
 #ifdef DEBUGMENU
 	DebugMenuProcess();
 #endif
+	PS3_GAME_STEP("CCutsceneMgr::Update");
 	CCutsceneMgr::Update();
 
+	PS3_GAME_STEP("FrontEndMenuManager.Process");
 	if (!CCutsceneMgr::IsCutsceneProcessing() && !CTimer::GetIsCodePaused())
 		FrontEndMenuManager.Process();
 
+	PS3_GAME_STEP("CTheZones::Update");
 	CTheZones::Update();
 #ifdef SECUROM
 	if (CTimer::GetTimeInMilliseconds() >= (35 * 60 * 1000) && gameProcessPirateCheck == 0){
@@ -902,35 +906,66 @@ void CGame::Process(void)
 			VarUpdatePlayerCoords = false;
 		}
 #endif
+		PS3_GAME_STEP("CSprite2d::SetRecipNearClip");
 		CSprite2d::SetRecipNearClip();
+		PS3_GAME_STEP("CSprite2d::InitPerFrame");
 		CSprite2d::InitPerFrame();
+		PS3_GAME_STEP("CFont::InitPerFrame");
 		CFont::InitPerFrame();
+		PS3_GAME_STEP("CRecordDataForGame::SaveOrRetrieveDataForThisFrame");
 		CRecordDataForGame::SaveOrRetrieveDataForThisFrame();
+		PS3_GAME_STEP("CRecordDataForChase::SaveOrRetrieveDataForThisFrame");
 		CRecordDataForChase::SaveOrRetrieveDataForThisFrame();
+		PS3_GAME_STEP("CPad::DoCheats");
 		CPad::DoCheats();
+		PS3_GAME_STEP("CClock::Update");
 		CClock::Update();
+		PS3_GAME_STEP("CWeather::Update");
 		CWeather::Update();
+#ifdef __PS3__
+		{
+			extern float PS3_profRain;
+			extern int PS3_profWeather;
+			PS3_profRain = CWeather::Rain;
+			PS3_profWeather = CWeather::NewWeatherType;
+		}
+#endif
 
 		PUSH_MEMID(MEMID_SCRIPT);
+		PS3_GAME_STEP("CTheScripts::Process");
 		CTheScripts::Process();
 		POP_MEMID();
 
+		PS3_GAME_STEP("CCollision::Update");
 		CCollision::Update();
+		PS3_GAME_STEP("CScriptPaths::Update");
 		CScriptPaths::Update();
 		CFerry::UpdateFerrys();
+		PS3_GAME_STEP("CTrain::UpdateTrains");
 		CTrain::UpdateTrains();
+		PS3_GAME_STEP("CPlane::UpdatePlanes");
 		CPlane::UpdatePlanes();
+		PS3_GAME_STEP("CHeli::UpdateHelis");
 		CHeli::UpdateHelis();
+		PS3_GAME_STEP("CDarkel::Update");
 		CDarkel::Update();
+		PS3_GAME_STEP("CSkidmarks::Update");
 		CSkidmarks::Update();
+		PS3_GAME_STEP("CAntennas::Update");
 		CAntennas::Update();
+		PS3_GAME_STEP("CGlass::Update");
 		CGlass::Update();
 #ifdef GTA_SCENE_EDIT
+		PS3_GAME_STEP("CSceneEdit::Update");
 		CSceneEdit::Update();
 #endif
+		PS3_GAME_STEP("CSetPieces::Update");
 		CSetPieces::Update();
+		PS3_GAME_STEP("CEventList::Update");
 		CEventList::Update();
+		PS3_GAME_STEP("CParticle::Update");
 		CParticle::Update();
+		PS3_GAME_STEP("gFireManager.Update");
 		gFireManager.Update();
 		//if (processTime >= 2) {
 		//	CPopulation::Update(false);
@@ -940,52 +975,82 @@ void CGame::Process(void)
 		//	processTime = CTimer::GetCurrentTimeInCycles() / CTimer::GetCyclesPerMillisecond() - startTime;
 		//}
 		CWeapon::UpdateWeapons();
+		PS3_GAME_STEP("CTheCarGenerators::Process");
 		if (!CCutsceneMgr::IsRunning())
 			CTheCarGenerators::Process();
+		PS3_GAME_STEP("CCranes::UpdateCranes");
 		if (!CReplay::IsPlayingBack())
 			CCranes::UpdateCranes();
+		PS3_GAME_STEP("CClouds::Update");
 		CClouds::Update();
 		//CMovingThings::Update(); // TODO
 		CWaterCannons::Update();
+		PS3_GAME_STEP("CUserDisplay::Process");
 		CUserDisplay::Process();
+		PS3_GAME_STEP("CReplay::Update");
 		CReplay::Update();
 
 		PUSH_MEMID(MEMID_WORLD);
+		PS3_GAME_STEP("CWorld::Process");
 		CWorld::Process();
 		POP_MEMID();
 
+		PS3_GAME_STEP("gAccidentManager.Update");
 		gAccidentManager.Update();
+		PS3_GAME_STEP("CPacManPickups::Update");
 		CPacManPickups::Update();
+		PS3_GAME_STEP("CPickups::Update");
 		CPickups::Update();
+		PS3_GAME_STEP("CGarages::Update");
 		CGarages::Update();
+		PS3_GAME_STEP("CRubbish::Update");
 		CRubbish::Update();
+		PS3_GAME_STEP("CSpecialFX::Update");
 		CSpecialFX::Update();
+		PS3_GAME_STEP("CRopes::Update");
 		CRopes::Update();
+		PS3_GAME_STEP("CTimeCycle::Update");
 		CTimeCycle::Update();
+		PS3_GAME_STEP("TheCamera.Process");
 		if (CReplay::ShouldStandardCameraBeProcessed())
 			TheCamera.Process();
+		PS3_GAME_STEP("CCullZones::Update");
 		CCullZones::Update();
+		PS3_GAME_STEP("CGameLogic::Update");
 		if (!CReplay::IsPlayingBack())
 			CGameLogic::Update();
+		PS3_GAME_STEP("CBridge::Update");
 		CBridge::Update();
+		PS3_GAME_STEP("CCoronas::DoSunAndMoon");
 		CCoronas::DoSunAndMoon();
+		PS3_GAME_STEP("CCoronas::Update");
 		CCoronas::Update();
+		PS3_GAME_STEP("CShadows::UpdateStaticShadows");
 		CShadows::UpdateStaticShadows();
+		PS3_GAME_STEP("CShadows::UpdatePermanentShadows");
 		CShadows::UpdatePermanentShadows();
+		PS3_GAME_STEP("gPhoneInfo.Update");
 		gPhoneInfo.Update();
 		if (!CReplay::IsPlayingBack())
 		{
 			PUSH_MEMID(MEMID_CARS);
 			//if (processTime < 2)
 				CCarCtrl::GenerateRandomCars();
+			PS3_GAME_STEP("CRoadBlocks::GenerateRoadBlocks");
 			CRoadBlocks::GenerateRoadBlocks();
+			PS3_GAME_STEP("CCarCtrl::RemoveDistantCars");
 			CCarCtrl::RemoveDistantCars();
+			PS3_GAME_STEP("CCarCtrl::RemoveCarsIfThePoolGetsFull");
 			CCarCtrl::RemoveCarsIfThePoolGetsFull();
 			POP_MEMID();
 		}
 	}
 #ifdef GTA_PS2
+	PS3_GAME_STEP("CMemCheck::DoTest");
 	CMemCheck::DoTest();
+#endif
+#ifdef __PS3__
+	PS3_ProfStep(PS3_PROF_GAME, nil);
 #endif
 }
 

@@ -33,6 +33,8 @@ int32 build = 0xFFFF;
 	int32 platform = PLATFORM_GL3;
 #elif RW_D3D9
 	int32 platform = PLATFORM_D3D9;
+#elif RW_PS3
+	int32 platform = PLATFORM_PS3;
 #else
 	int32 platform = PLATFORM_NULL;
 #endif

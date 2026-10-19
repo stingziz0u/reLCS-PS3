@@ -32,7 +32,14 @@ static myFILE myfiles[NUMFILES];
 #include <dirent.h>
 #include <errno.h>
 #include <unistd.h>
+#ifdef __PS3__
+// lv2 has no working directory: skel/ps3/ps3_fs.cpp emulates one
+#include "ps3_platform.h"
+#define chdir PS3_chdir
+#define _getcwd(b, n) PS3_getcwd(b, n)
+#else
 #define _getcwd getcwd
+#endif
 
 // Case-insensitivity on linux (from https://github.com/OneSadCookie/fcaseopen)
 void mychdir(char const *path)

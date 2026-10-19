@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#endif
 
 #include "main.h"
 
@@ -758,6 +761,9 @@ int32
 CPickups::GetActualPickupIndex(int32 index)
 {
 	if (index == -1) return -1;
+#ifdef __PS3__
+	if ((uint16)index >= NUMPICKUPS) return -1;	// a stale or bad handle: not past the array
+#endif
 
 	// doesn't look nice
 	if ((uint16)((index & 0xFFFF0000) >> 16) != aPickUps[(uint16)index].m_nIndex) return -1;
@@ -857,7 +863,12 @@ CPickups::GenerateNewOne(CVector pos, uint32 modelIndex, uint8 type, uint32 quan
 				if (aPickUps[slot].m_eType == PICKUP_ONCE_TIMEOUT || aPickUps[slot].m_eType == PICKUP_ONCE_TIMEOUT_SLOW) break;
 			}
 
-			if (slot >= NUMGENERALPICKUPS) return -1;
+			if (slot >= NUMGENERALPICKUPS) {
+#ifdef __PS3__
+				PS3_Logf("[pickup] no free pickup slot (%d): model %d not created", NUMGENERALPICKUPS, modelIndex);
+#endif
+				return -1;
+			}
 			aPickUps[slot].GetRidOfObjects();
 		}
 	}
@@ -1285,8 +1296,13 @@ CPickups::DoCollectableEffects(CEntity *entity)
 void
 CPickups::RenderPickUpText()
 {
+#ifndef __PS3__
 	wchar *strToPrint;
+#endif
 	for (int32 i = 0; i < NumMessages; i++) {
+#ifdef __PS3__
+		wchar *strToPrint = nil;	// a quantity outside 0..13 left it unset (MSVC: the previous message's)
+#endif
 
 		if (aMessages[i].money != 0) {
 			sprintf(gString, "$%d", aMessages[i].money);
@@ -1531,9 +1547,9 @@ INITSAVEBUF
 		CPickup *buf_pickup = WriteSaveBuf(buf, aPickUps[i]);
 		if (buf_pickup->m_eType != PICKUP_NONE) {
 			if (buf_pickup->m_pObject != nil)
-				buf_pickup->m_pObject = (CObject*)(CPools::GetObjectPool()->GetJustIndex_NoFreeAssert(buf_pickup->m_pObject) + 1);
+				buf_pickup->m_pObject = (CObject*)(uintptr)(CPools::GetObjectPool()->GetJustIndex_NoFreeAssert(buf_pickup->m_pObject) + 1);
 			if (buf_pickup->m_pExtraObject != nil)
-				buf_pickup->m_pExtraObject = (CObject*)(CPools::GetObjectPool()->GetJustIndex_NoFreeAssert(buf_pickup->m_pExtraObject) + 1);
+				buf_pickup->m_pExtraObject = (CObject*)(uintptr)(CPools::GetObjectPool()->GetJustIndex_NoFreeAssert(buf_pickup->m_pExtraObject) + 1);
 		}
 #endif
 	}

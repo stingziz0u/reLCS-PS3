@@ -37,7 +37,13 @@ enum Config {
 	NUMVEHICLES = 110,	// only 70
 	NUMBUILDINGS = 7000,	// only 6757
 	NUMTREADABLES = 1300,
+#ifdef __PS3__
+	// reVC-PS3: a full pool only skips the object, but there's memory for
+	// more (~512 bytes each)
+	NUMOBJECTS = 1200,
+#else
 	NUMOBJECTS = 475,
+#endif
 	NUMDUMMIES = 3000,
 	NUMAUDIOSCRIPTOBJECTS = 192,
 	NUMCOLMODELS = 4400,
@@ -59,8 +65,14 @@ enum Config {
 	NUMBOATALPHALIST = 20,
 	NUMALPHAENTITYLIST = 200,
 	NUMALPHAUNTERWATERENTITYLIST = 30,
-	NUMCOLCACHELINKS = 50,
+	NUMCOLCACHELINKS = 50,	// patch 46 tried 200: the planes were hardly ever recomputed with 50
+#ifdef __PS3__
+	// riots and big fights can use up 800: a reference that isn't registered
+	// leaves a dangling pointer when its entity is deleted (see References.cpp)
+	NUMREFERENCES = 4000,
+#else
 	NUMREFERENCES = 800,
+#endif
 
 	// Zones
 	NUMAUDIOZONES = 36,
@@ -512,4 +524,24 @@ static_assert(false, "SUPPORT_XBOX_SCRIPT and SUPPORT_MOBILE_SCRIPT are mutually
 #endif
 #if defined(GTA_PS2) && defined(EXTERNAL_3D_SOUND)
 #error EXTERNAL_3D_SOUND cannot work on PS2
+#endif
+
+// -------
+// PS3 (re3-PS3): what the RSX backend and the PS3 platform layer don't have
+#ifdef __PS3__
+#undef EXTENDED_COLOURFILTER	// postfx shaders are written for GL3/D3D9
+#undef EXTENDED_PIPELINES	// same: custom pipes are GL3/D3D9 only
+#undef SCREEN_DROPLETS
+#undef NEW_RENDERER
+#undef MULTISAMPLING
+#undef ANISOTROPIC_FILTERING
+#undef USE_TXD_CDIMAGE		// the PC TXDs are read as they are (no txd.img conversion)
+#undef USE_DEBUG_SCRIPT_LOADER	// asks the keyboard at boot
+#undef FLUSHABLE_STREAMING	// needs pthread signals
+#undef DETECT_JOYSTICK_MENU
+#undef TIMEBARS			// the same timers go to the log instead (ps3_prof.cpp)
+#undef XINPUT
+#undef MISSION_REPLAY		// mobile: autosaves when a mission starts; the PC game never did
+#define GAMEPAD_MENU		// pad settings page (setup 1-4, controller picture, invert, vibration) instead of the mouse one
+#define NO_MOVIES
 #endif

@@ -2270,6 +2270,7 @@ CPed::ReactToPointGun(CEntity *entWithGun)
 void
 CPed::ReactToAttack(CEntity *attacker)
 {
+	PS3_CRUMB("CPed::ReactToAttack model|state<<16", GetModelIndex() | m_nPedState<<16);
 	if (IsPlayer() && attacker->IsPed()) {
 		InformMyGangOfAttack(attacker);
 		SetLookFlag(attacker, true);
@@ -3573,7 +3574,11 @@ CPed::LineUpPedWithCar(PedLineUpPhase phase)
 	}
 
 	if (autoZPos.z > neededPos.z) {
+#ifdef __PS3__
+		vehAnim = m_pVehicleAnim ? m_pVehicleAnim->animId : ANIM_STD_NUM;	// checked for nil just below
+#else
 		vehAnim = m_pVehicleAnim->animId;
+#endif
 		if (veh->IsBike() && (m_pVehicleAnim && vehAnim != ANIM_BIKE_KICK)) {
 			float zBlend;
 			if (vehAnim != ANIM_BIKE_GETOFF_LHS && vehAnim != ANIM_BIKE_GETOFF_RHS) {
@@ -3918,8 +3923,8 @@ CPed::SetEnterCar(CVehicle *car, uint32 unused)
 		RestorePreviousState();
 		RestorePreviousObjective();
 	} else {
-		uint8 doorFlag;
-		eDoors door;
+		uint8 doorFlag = 0;	// the bike switch has no default
+		eDoors door = DOOR_FRONT_LEFT;
 		if (car->IsBike()) {
 			switch (m_vehDoor) {
 				case CAR_DOOR_RF:
@@ -6342,6 +6347,11 @@ bool
 CPed::PositionAnyPedOutOfCollision(void)
 {
 	CVehicle *veh;
+#ifdef __PS3__
+	// veh ended up as the last test's result, maybe nil, not the vehicle
+	// next to posNearVeh
+	CVehicle *vehNear = nil;
+#endif
 	CVector posNearVeh;
 	CVector posSomewhereClose;
 	bool putNearVeh = false;
@@ -6364,6 +6374,9 @@ CPed::PositionAnyPedOutOfCollision(void)
 				if (veh) {
 					if (potentialChangeSqr < smallestDistNearVeh) {
 						posNearVeh = potentialPos;
+#ifdef __PS3__
+						vehNear = veh;
+#endif
 						putNearVeh = true;
 						smallestDistNearVeh = potentialChangeSqr;
 					}
@@ -6385,6 +6398,11 @@ CPed::PositionAnyPedOutOfCollision(void)
 	if (putSomewhereClose) {
 		SetPosition(posSomewhereClose);
 	} else {
+#ifdef __PS3__
+		veh = vehNear;
+		if (veh == nil)
+			return false;
+#endif
 		CVector vehSize = veh->GetModelInfo()->GetColModel()->boundingBox.max;
 		posNearVeh.z += vehSize.z;
 		SetPosition(posNearVeh);

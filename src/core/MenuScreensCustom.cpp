@@ -33,11 +33,138 @@
 
 // Menu screens array is at the bottom of the file.
 
+#ifdef __PS3__
+extern int8 gbShowFps;
+// FRAME RATE: 30 (the game's own, as on the PS2) or 60. ps3.cpp paces the flips
+int8 gPS3Fps60;
+const char *fps30_60[] = { "FEG_F30", "FEG_F60" };
+// Graphics menu: MIPMAPS, TEXTURE FILTERING, ANTIALIASING (OFF / FXAA;
+// ps3.cpp hands them to the RSX renderer every frame)
+int8 gPS3Mipmaps, gPS3TexFilter, gPS3Antialias;
+const char *texFilterNames[] = { "FEG_TF0", "FEG_TF1", "FEG_TF2", "FEG_TF3", "FEG_TF4", "FEG_TF5", "FEG_TF6" };
+const char *antialiasNames[] = { "FEM_OFF", "FEG_AAF" };
+// Gamepad settings: right stick sensitivity, third and first person (Cam.cpp)
+extern int8 gPS3Sens3rd, gPS3Sens1st;
+// Display: collectibles on the radar and the map (Radar.cpp)
+extern int8 gPS3MapPackages, gPS3MapRampages, gPS3MapJumps, gPS3MapRobberies;
+// right stick sensitivity: 20% to 200% in steps of 5 (percent / 5, Cam.cpp)
+static wchar *
+SensDraw(int8 value)
+{
+	static wchar text[2][16];
+	static int which;
+	char str[16];
+	which ^= 1;
+	sprintf(str, "%d%%", 5*Clamp((int)value, 4, 40));
+	AsciiToUnicode(str, text[which]);
+	return text[which];
+}
+static void
+SensPress(int8 *value, int8 action)
+{
+	if (*value < 4 || *value > 40)
+		*value = 20;
+	if (action == FEOPTION_ACTION_LEFT && *value > 4)
+		(*value)--;
+	else if (action == FEOPTION_ACTION_RIGHT && *value < 40)
+		(*value)++;
+	else if (action == FEOPTION_ACTION_SELECT)
+		*value = 20;	// 100%
+	else
+		return;
+	FrontEndMenuManager.SaveSettings();
+}
+static wchar *Sens3rdDraw(bool *disabled, bool userHovering) { return SensDraw(gPS3Sens3rd); }
+static wchar *Sens1stDraw(bool *disabled, bool userHovering) { return SensDraw(gPS3Sens1st); }
+static void Sens3rdPress(int8 action) { SensPress(&gPS3Sens3rd, action); }
+static void Sens1stPress(int8 action) { SensPress(&gPS3Sens1st, action); }
+// stick dead zones: 5% to 50% in steps of 5 (percent / 5, ps3_pad.cpp),
+// X back to 30%, the game's own
+extern int8 gPS3DeadzoneL, gPS3DeadzoneR;
+static wchar *
+DeadzoneDraw(int8 value)
+{
+	static wchar text[2][16];
+	static int which;
+	char str[16];
+	which ^= 1;
+	sprintf(str, "%d%%", 5*Clamp((int)value, 1, 10));
+	AsciiToUnicode(str, text[which]);
+	return text[which];
+}
+static void
+DeadzonePress(int8 *value, int8 action)
+{
+	if (*value < 1 || *value > 10)
+		*value = 6;
+	if (action == FEOPTION_ACTION_LEFT && *value > 1)
+		(*value)--;
+	else if (action == FEOPTION_ACTION_RIGHT && *value < 10)
+		(*value)++;
+	else if (action == FEOPTION_ACTION_SELECT)
+		*value = 6;	// 30%
+	else
+		return;
+	FrontEndMenuManager.SaveSettings();
+}
+static wchar *DeadzoneLDraw(bool *disabled, bool userHovering) { return DeadzoneDraw(gPS3DeadzoneL); }
+static wchar *DeadzoneRDraw(bool *disabled, bool userHovering) { return DeadzoneDraw(gPS3DeadzoneR); }
+static void DeadzoneLPress(int8 action) { DeadzonePress(&gPS3DeadzoneL, action); }
+static void DeadzoneRPress(int8 action) { DeadzonePress(&gPS3DeadzoneR, action); }
+#ifdef RW_PS3_RSX
+#include "src/ps3/rwps3.h"
+// Display menu: how much of the TV the picture covers (overscan), 50..100 %
+int8 gPS3ScreenFit = 90;
+
+void PS3_ApplyScreenFit(void)
+{
+	rw::ps3::VideoSettings vs;
+	rw::ps3::getVideoSettings(&vs);
+	if (gPS3ScreenFit < 50 || gPS3ScreenFit > 100)
+		gPS3ScreenFit = 90;
+	if (vs.screenFit != gPS3ScreenFit) {
+		vs.screenFit = gPS3ScreenFit;
+		rw::ps3::setVideoSettings(&vs);
+	}
+}
+
+static wchar*
+ScreenFitDraw(bool *disabled, bool userHovering)
+{
+	static wchar text[16];
+	char str[16];
+	PS3_ApplyScreenFit();	// shows the change right away, while it's chosen
+	sprintf(str, "%d%%", gPS3ScreenFit);
+	AsciiToUnicode(str, text);
+	return text;
+}
+
+static void
+ScreenFitButtonPress(int8 action)
+{
+	if (action == FEOPTION_ACTION_LEFT && gPS3ScreenFit > 50)
+		gPS3ScreenFit--;
+	else if (action == FEOPTION_ACTION_RIGHT && gPS3ScreenFit < 100)
+		gPS3ScreenFit++;
+	else if (action == FEOPTION_ACTION_SELECT)
+		gPS3ScreenFit = gPS3ScreenFit == 100 ? 90 : 100;
+	else
+		return;
+	PS3_ApplyScreenFit();
+	FrontEndMenuManager.SaveSettings();	// reVC.ini [Display] ScreenFit
+}
+#define SCREEN_FIT_SELECTOR MENUACTION_CFO_DYNAMIC, "FED_PSF", { new CCFODynamic((int8*)&gPS3ScreenFit, "Display", "ScreenFit", ScreenFitDraw, ScreenFitButtonPress) }, 0, 0, MENUALIGN_LEFT,
+#endif
+#endif
+#ifndef SCREEN_FIT_SELECTOR
+#define SCREEN_FIT_SELECTOR
+#endif
+
 #ifdef PC_MENU
 
 #ifdef CUSTOM_FRONTEND_OPTIONS
 
-#if defined(IMPROVED_VIDEOMODE) && !defined(GTA_HANDHELD)
+#if defined(IMPROVED_VIDEOMODE) && !defined(GTA_HANDHELD) && !defined(__PS3__)	// PS3: always full screen
 	#define VIDEOMODE_SELECTOR MENUACTION_CFO_SELECT, "FEM_SCF", { new CCFOSelect((int8*)&FrontEndMenuManager.m_nPrefsWindowed, "VideoMode", "Windowed", screenModes, 2, true, ScreenModeAfterChange, true) }, 0, 0, MENUALIGN_LEFT,
 #else
 	#define VIDEOMODE_SELECTOR
@@ -96,7 +223,7 @@
 	#define INVERT_PAD_SELECTOR
 #endif
 
-#ifdef GAMEPAD_MENU
+#if defined(GAMEPAD_MENU) && !defined(__PS3__)	// PS3: always a DualShock 3
 	#define SELECT_CONTROLLER_TYPE  MENUACTION_CFO_SELECT, "FEC_TYP", { new CCFOSelect((int8*)&FrontEndMenuManager.m_PrefsControllerType, "Controller", "Type", controllerTypes, ARRAY_SIZE(controllerTypes), false, ControllerTypeAfterChange) }, 0, 0, MENUALIGN_LEFT,
 #else
 	#define SELECT_CONTROLLER_TYPE
@@ -133,6 +260,13 @@ void RestoreDefGraphics(int8 action) {
 		#endif
 		FrontEndMenuManager.m_PrefsUseWideScreen = false;
 		FrontEndMenuManager.m_nDisplayVideoMode = FrontEndMenuManager.m_nPrefsVideoMode;
+	#ifdef __PS3__
+		gPS3Fps60 = 0;
+		gbShowFps = 0;
+		gPS3Mipmaps = 0;
+		gPS3TexFilter = 0;
+		gPS3Antialias = 0;
+	#endif
 		CMBlur::BlurOn = false;
 		FrontEndMenuManager.SaveSettings();
 	#endif
@@ -150,6 +284,9 @@ void RestoreDefDisplay(int8 action) {
 	#endif
 	#ifdef PED_CAR_DENSITY_SLIDERS
 		CIniFile::LoadIniFile();
+	#endif
+	#if defined(__PS3__) && defined(RW_PS3_RSX)
+		gPS3ScreenFit = 90;
 	#endif
 	#ifdef GRAPHICS_MENU_OPTIONS // otherwise Frontend will handle those
 		FrontEndMenuManager.m_PrefsBrightness = 256;
@@ -461,11 +598,20 @@ CMenuScreenCustom aScreens[] = {
 		MENUACTION_DRAWDIST,	"FEM_LOD", { nil, SAVESLOT_NONE, MENUPAGE_DISPLAY_SETTINGS }, 0, 0, MENUALIGN_LEFT,
 		DENSITY_SLIDERS
 		CUTSCENE_BORDERS_TOGGLE
+#ifndef __PS3__	// PS3: in the gamepad settings
 		FREE_CAM_TOGGLE
+#endif
 		MENUACTION_LEGENDS,		"MAP_LEG", { nil, SAVESLOT_NONE, MENUPAGE_DISPLAY_SETTINGS }, 0, 0, MENUALIGN_LEFT,
 		MENUACTION_RADARMODE,	"FED_RDR", { nil, SAVESLOT_NONE, MENUPAGE_DISPLAY_SETTINGS }, 0, 0, MENUALIGN_LEFT,
+#ifdef __PS3__
+		MENUACTION_CFO_SELECT,	"FED_MHP", { new CCFOSelect((int8*)&gPS3MapPackages, "Display", "HiddenPackagesOnMap", off_on, 2, false) }, 0, 0, MENUALIGN_LEFT,
+		MENUACTION_CFO_SELECT,	"FED_MRP", { new CCFOSelect((int8*)&gPS3MapRampages, "Display", "RampagesOnMap", off_on, 2, false) }, 0, 0, MENUALIGN_LEFT,
+		MENUACTION_CFO_SELECT,	"FED_MUJ", { new CCFOSelect((int8*)&gPS3MapJumps, "Display", "UniqueJumpsOnMap", off_on, 2, false) }, 0, 0, MENUALIGN_LEFT,
+		MENUACTION_CFO_SELECT,	"FED_MSR", { new CCFOSelect((int8*)&gPS3MapRobberies, "Display", "RobberiesOnMap", off_on, 2, false) }, 0, 0, MENUALIGN_LEFT,
+#endif
 		MENUACTION_HUD,			"FED_HUD", { nil, SAVESLOT_NONE, MENUPAGE_DISPLAY_SETTINGS }, 0, 0, MENUALIGN_LEFT,
 		MENUACTION_SUBTITLES,	"FED_SUB", { nil, SAVESLOT_NONE, MENUPAGE_DISPLAY_SETTINGS }, 0, 0, MENUALIGN_LEFT,
+		SCREEN_FIT_SELECTOR
 		MENUACTION_CFO_DYNAMIC,	"FET_DEF", { new CCFODynamic(nil, nil, nil, nil, RestoreDefDisplay) }, 320, 0, MENUALIGN_CENTER,
 		MENUACTION_GOBACK,		"FEDS_TB", { nil, SAVESLOT_NONE, MENUPAGE_NONE}, 320, 0, MENUALIGN_CENTER,
 	},
@@ -619,7 +765,7 @@ CMenuScreenCustom aScreens[] = {
 
 	// MENUPAGE_CONTROLLER_PC = 26
 	{ "FET_CTL", MENUPAGE_OPTIONS, new CCustomScreenLayout({0, 0, MENU_DEFAULT_LINE_HEIGHT, false, false, 150}), nil,
-#ifdef PC_PLAYER_CONTROLS
+#if defined(PC_PLAYER_CONTROLS) && !defined(__PS3__)	// PS3: always classic (PS2) controls
 		MENUACTION_CTRLMETHOD,	"FET_STI", {nil, SAVESLOT_NONE, MENUPAGE_CONTROLLER_PC}, 320, 150, MENUALIGN_CENTER,
 		MENUACTION_KEYBOARDCTRLS,"FEC_RED", {nil, SAVESLOT_NONE, MENUPAGE_KEYBOARD_CONTROLS}, 0, 0, MENUALIGN_CENTER,
 #else
@@ -631,7 +777,9 @@ CMenuScreenCustom aScreens[] = {
 #ifdef DETECT_JOYSTICK_MENU
 		MENUACTION_CHANGEMENU,	"FEC_JOD", {nil, SAVESLOT_NONE, MENUPAGE_DETECT_JOYSTICK}, 0, 0, MENUALIGN_CENTER,
 #endif
+#ifndef __PS3__	// no mouse: its page is replaced by the gamepad one
 		MENUACTION_CHANGEMENU,	"FEC_MOU", {nil, SAVESLOT_NONE, MENUPAGE_MOUSE_CONTROLS}, 0, 0, MENUALIGN_CENTER,
+#endif
 		MENUACTION_RESTOREDEF,	"FET_DEF", {nil, SAVESLOT_NONE, MENUPAGE_CONTROLLER_PC}, 320, 0, MENUALIGN_CENTER,
 		MENUACTION_GOBACK,		"FEDS_TB", {nil, SAVESLOT_NONE, 0}, 320, 0, MENUALIGN_CENTER,
    },
@@ -706,6 +854,13 @@ CMenuScreenCustom aScreens[] = {
 		MENUACTION_CTRLCONFIG,		"FEC_CCF", { nil, SAVESLOT_NONE, MENUPAGE_CONTROLLER_SETTINGS }, 40, 76, MENUALIGN_LEFT,
 		MENUACTION_CTRLDISPLAY,		"FEC_CDP", { nil, SAVESLOT_NONE, MENUPAGE_CONTROLLER_SETTINGS }, 0, 0, MENUALIGN_LEFT,
 		INVERT_PAD_SELECTOR
+#ifdef __PS3__	// the camera is the pad's
+		FREE_CAM_TOGGLE
+		MENUACTION_CFO_DYNAMIC, "FEC_S3P", { new CCFODynamic((int8*)&gPS3Sens3rd, "Controller", "Sens3rdPct5", Sens3rdDraw, Sens3rdPress) }, 0, 0, MENUALIGN_LEFT,
+		MENUACTION_CFO_DYNAMIC, "FEC_S1P", { new CCFODynamic((int8*)&gPS3Sens1st, "Controller", "Sens1stPct5", Sens1stDraw, Sens1stPress) }, 0, 0, MENUALIGN_LEFT,
+		MENUACTION_CFO_DYNAMIC, "FEC_DZL", { new CCFODynamic((int8*)&gPS3DeadzoneL, "Controller", "DeadzoneLPct5", DeadzoneLDraw, DeadzoneLPress) }, 0, 0, MENUALIGN_LEFT,
+		MENUACTION_CFO_DYNAMIC, "FEC_DZR", { new CCFODynamic((int8*)&gPS3DeadzoneR, "Controller", "DeadzoneRPct5", DeadzoneRDraw, DeadzoneRPress) }, 0, 0, MENUALIGN_LEFT,
+#endif
 		MENUACTION_CTRLVIBRATION,	"FEC_VIB", { nil, SAVESLOT_NONE, MENUPAGE_CONTROLLER_SETTINGS }, 0, 0, MENUALIGN_LEFT,
 		SELECT_CONTROLLER_TYPE
 		MENUACTION_GOBACK,		"FEDS_TB", { nil, SAVESLOT_NONE, MENUPAGE_NONE }, 0, 0, MENUALIGN_LEFT,
@@ -773,10 +928,19 @@ CMenuScreenCustom aScreens[] = {
 #endif
 		MENUACTION_WIDESCREEN,	"FED_WIS", { nil, SAVESLOT_NONE, MENUPAGE_GRAPHICS_SETTINGS }, 0, 0, MENUALIGN_LEFT,
 		VIDEOMODE_SELECTOR
+#ifdef __PS3__
+		MENUACTION_CFO_SELECT, "FEG_FPS", { new CCFOSelect((int8*)&gbShowFps, "Graphics", "ShowFPS", off_on, 2, false) }, 0, 0, MENUALIGN_LEFT,
+		// always vsync, and the frame rate is this (no PC frame limiter)
+		MENUACTION_CFO_SELECT, "FEG_FRT", { new CCFOSelect((int8*)&gPS3Fps60, "Graphics", "FrameRate60", fps30_60, 2, false) }, 0, 0, MENUALIGN_LEFT,
+		MENUACTION_CFO_SELECT, "FEG_MIP", { new CCFOSelect((int8*)&gPS3Mipmaps, "Graphics", "Mipmaps", off_on, 2, false) }, 0, 0, MENUALIGN_LEFT,
+		MENUACTION_CFO_SELECT, "FEG_TXF", { new CCFOSelect((int8*)&gPS3TexFilter, "Graphics", "TextureFiltering", texFilterNames, ARRAY_SIZE(texFilterNames), false) }, 0, 0, MENUALIGN_LEFT,
+		MENUACTION_CFO_SELECT, "FEG_AAL", { new CCFOSelect((int8*)&gPS3Antialias, "Graphics", "FXAA", antialiasNames, ARRAY_SIZE(antialiasNames), false) }, 0, 0, MENUALIGN_LEFT,
+#else
 #ifdef LEGACY_MENU_OPTIONS
 		MENUACTION_FRAMESYNC,	"FEM_VSC", {nil, SAVESLOT_NONE, MENUPAGE_GRAPHICS_SETTINGS}, 0, 0, MENUALIGN_LEFT,
 #endif
 		MENUACTION_FRAMELIMIT,	"FEM_FRM", { nil, SAVESLOT_NONE, MENUPAGE_GRAPHICS_SETTINGS }, 0, 0, MENUALIGN_LEFT,
+#endif
 		MULTISAMPLING_SELECTOR
 		ISLAND_LOADING_SELECTOR
 		DUALPASS_SELECTOR

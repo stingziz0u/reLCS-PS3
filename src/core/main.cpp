@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#endif
 #include <time.h>
 #include "rpmatfx.h"
 #include "rphanim.h"
@@ -182,6 +185,16 @@ ValidateVersion()
 	int32 file = CFileMgr::OpenFile("models\\coll\\peds.col", "rb");
 	char buff[128];
 
+#ifdef __PS3__
+	// OpenFile returns 0 on failure, not -1; and the "Invalid version" screen
+	// below can't be drawn this early (no RenderWare yet): log and go on
+	memset(buff, 0, sizeof(buff));
+	if ( file <= 0 )
+	{
+		PS3_Log("[5] ValidateVersion: can't open models/coll/peds.col, skipped");
+		return;
+	}
+#endif
 	if ( file != -1 )
 	{
 		CFileMgr::Seek(file, 100, SEEK_SET);
@@ -199,9 +212,19 @@ ValidateVersion()
 		{
 			strncpy(version_name, &buff[15], 64);
 			CFileMgr::CloseFile(file);
+#ifdef __PS3__
+			PS3_Logf("[5] ValidateVersion: \"%s\"", version_name);
+#endif
 			return;
 		}
 	}
+#ifdef __PS3__
+	buff[127] = '\0';
+	PS3_Logf("[5] ValidateVersion: unknown signature in peds.col, skipped");
+	if ( file > 0 )
+		CFileMgr::CloseFile(file);
+	return;
+#endif
 
 	LoadingScreen("Invalid version", NULL, NULL);
 	
@@ -657,6 +680,11 @@ LoadingScreen(const char *str1, const char *str2, const char *splashscreen)
 {
 	CSprite2d *splash;
 
+#ifdef __PS3__
+	// the loading steps double as breadcrumbs in the log
+	if (str1 || str2)
+		PS3_Logf("[load] %s%s%s", str1 ? str1 : "", str1 && str2 ? " " : "", str2 ? str2 : "");
+#endif
 #ifdef DISABLE_LOADING_SCREEN
 	if (str1 && str2)
 		return;
@@ -1120,6 +1148,8 @@ DisplayGameDebugText()
 		    "OAL "
 #elif defined AUDIO_MSS
 		    "MSS "
+#elif defined AUDIO_PS3
+		    "PS3AUDIO "
 #endif
 #if defined _DEBUG || defined DEBUG
 		    "DEBUG "
@@ -1356,22 +1386,29 @@ RenderScene(void)
 	}
 #endif
 	PUSH_RENDERGROUP("RenderScene");
+	PS3_SCENE_STEP("clouds, horizon");
 	CClouds::Render();
 	DoRWRenderHorizon();
+	PS3_SCENE_STEP("roads");
 	CRenderer::RenderRoads();
 	CCoronas::RenderReflections();
+	PS3_SCENE_STEP("everything bar roads");
 	CRenderer::RenderEverythingBarRoads();
 	RwRenderStateSet(rwRENDERSTATECULLMODE, (void*)rwCULLMODECULLNONE);
+	PS3_SCENE_STEP("water, boats");
 	CWaterLevel::RenderWater();
 	CRenderer::RenderBoats();
 	CRenderer::RenderFadingInUnderwaterEntities();
 	RwRenderStateSet(rwRENDERSTATECULLMODE, (void*)rwCULLMODECULLNONE);
 	CWaterLevel::RenderTransparentWater();
+	PS3_SCENE_STEP("fading in");
 	CRenderer::RenderFadingInEntities();
 	RwRenderStateSet(rwRENDERSTATECULLMODE, (void*)rwCULLMODECULLNONE);
+	PS3_SCENE_STEP("rain streaks");
 	CWeather::RenderRainStreaks();
 	CCoronas::RenderSunReflection();
 	POP_RENDERGROUP();
+	PS3_SCENE_STEP(nil);
 }
 
 void
@@ -1399,23 +1436,40 @@ RenderEffects(void)
 	}
 #endif
 	PUSH_RENDERGROUP("RenderEffects");
+	PS3_FX_STEP("fx: CGlass::Render");
 	CGlass::Render();
+	PS3_FX_STEP("fx: CWaterCannons::Render");
 	CWaterCannons::Render();
+	PS3_FX_STEP("fx: CSpecialFX::Render");
 	CSpecialFX::Render();
+	PS3_FX_STEP("fx: CRopes::Render");
 	CRopes::Render();
+	PS3_FX_STEP("fx: CShadows::RenderStaticShadows");
 	CShadows::RenderStaticShadows();
+	PS3_FX_STEP("fx: CShadows::RenderStoredShadows");
 	CShadows::RenderStoredShadows();
+	PS3_FX_STEP("fx: CSkidmarks::Render");
 	CSkidmarks::Render();
+	PS3_FX_STEP("fx: CAntennas::Render");
 	CAntennas::Render();
+	PS3_FX_STEP("fx: CRubbish::Render");
 	CRubbish::Render();
+	PS3_FX_STEP("fx: CCoronas::Render");
 	CCoronas::Render();
+	PS3_FX_STEP("fx: CParticle::Render");
 	CParticle::Render();
+	PS3_FX_STEP("fx: CPacManPickups::Render");
 	CPacManPickups::Render();
+	PS3_FX_STEP("fx: CWeaponEffects::Render");
 	CWeaponEffects::Render();
+	PS3_FX_STEP("fx: CPointLights::RenderFogEffect");
 	CPointLights::RenderFogEffect();
+	PS3_FX_STEP("fx: CMovingThings::Render");
 	CMovingThings::Render();
+	PS3_FX_STEP("fx: CRenderer::RenderFirstPersonVehicle");
 	CRenderer::RenderFirstPersonVehicle();
 	POP_RENDERGROUP();
+	PS3_SCENE_STEP(nil);
 }
 
 void
@@ -1429,7 +1483,9 @@ Render2dStuff(void)
 	RwRenderStateSet(rwRENDERSTATEDESTBLEND, (void*)rwBLENDINVSRCALPHA);
 	RwRenderStateSet(rwRENDERSTATECULLMODE, (void*)rwCULLMODECULLNONE);
 
+	PS3_CRUMB("2d: CReplay::Display", 0);
 	CReplay::Display();
+	PS3_CRUMB("2d: CPickups::RenderPickUpText", 0);
 	CPickups::RenderPickUpText();
 
 	if(TheCamera.m_WideScreenOn
@@ -1470,6 +1526,7 @@ Render2dStuff(void)
 		CSprite2d::DrawRect(CRect(SCREEN_WIDTH / 2 + SCREEN_SCALE_X(210), 0.0f, SCREEN_WIDTH, SCREEN_HEIGHT), black);
 	}
 
+	PS3_CRUMB("2d: radio station name", 0);
 	MusicManager.DisplayRadioStationName();
 	TheConsole.Display();
 #ifdef GTA_SCENE_EDIT
@@ -1477,15 +1534,22 @@ Render2dStuff(void)
 		CSceneEdit::Draw();
 	else
 #endif
-		CHud::Draw();
+	{ PS3_CRUMB("2d: CHud::Draw", 0); CHud::Draw(); }
 
+	PS3_CRUMB("2d: CSpecialFX::Render2DFXs", 0);
 	CSpecialFX::Render2DFXs();
+	PS3_CRUMB("2d: OnscnTimer", 0);
 	CUserDisplay::OnscnTimer.ProcessForDisplay();
+	PS3_CRUMB("2d: CMessages::Display", 0);
 	CMessages::Display();
+	PS3_CRUMB("2d: CDarkel::DrawMessages", 0);
 	CDarkel::DrawMessages();
+	PS3_CRUMB("2d: CGarages::PrintMessages", 0);
 	CGarages::PrintMessages();
 	CPad::PrintErrorMessage();
+	PS3_CRUMB("2d: CFont::DrawFonts", 0);
 	CFont::DrawFonts();
+	PS3_CRUMB("2d: done", 0);
 #ifndef MASTER
 	COcclusion::Render();
 #endif
@@ -1511,12 +1575,58 @@ RenderMenus(void)
 #endif
 }
 
+#ifdef __PS3__
+#include <sys/systime.h>
+int8 gbShowFps;	// Graphics menu: "SHOW FPS"
+
+// frames per second in the top left corner, counted over half a second of
+// real time (not game time: it keeps counting in the pause menu)
+static void
+DrawFpsCounter(void)
+{
+	static uint32 lastMs, frames, fps;
+	// real milliseconds (GetCurrentTimeInCycles restarts every frame here)
+	uint32 now = (uint32)(sysGetSystemTime() / 1000);
+	frames++;
+	if (lastMs == 0)
+		lastMs = now;
+	if (now - lastMs >= 500) {
+		fps = (frames * 1000 + (now - lastMs) / 2) / (now - lastMs);
+		frames = 0;
+		lastMs = now;
+	}
+	char str[16];
+	wchar wstr[16];
+	sprintf(str, "%d FPS", fps);
+	AsciiToUnicode(str, wstr);
+	CFont::SetPropOn();
+	CFont::SetBackgroundOff();
+	CFont::SetScale(SCREEN_SCALE_X(0.5f), SCREEN_SCALE_Y(0.8f));
+	CFont::SetCentreOff();
+	CFont::SetRightJustifyOff();
+	CFont::SetJustifyOff();
+	CFont::SetBackGroundOnlyTextOff();
+	CFont::SetWrapx(SCREEN_WIDTH);
+	CFont::SetFontStyle(FONT_BANK);
+	CFont::SetColor(CRGBA(0, 0, 0, 255));
+	CFont::PrintString(SCREEN_SCALE_X(12.0f) + 2.0f, SCREEN_SCALE_Y(10.0f) + 2.0f, wstr);
+	extern int8 gPS3Fps60;
+	uint32 target = gPS3Fps60 ? 60 : 30;	// green at the FRAME RATE setting
+	CFont::SetColor(fps >= target - 5 ? CRGBA(120, 230, 120, 255) : fps >= target * 2 / 3 ? CRGBA(240, 220, 90, 255) : CRGBA(240, 90, 90, 255));
+	CFont::PrintString(SCREEN_SCALE_X(12.0f), SCREEN_SCALE_Y(10.0f), wstr);
+}
+#endif
+
 void
 Render2dStuffAfterFade(void)
 {
 	PUSH_RENDERGROUP("Render2dStuffAfterFade");
 #ifndef MASTER
 	DisplayGameDebugText();
+#endif
+#ifdef __PS3__
+	if (gbShowFps)
+		DrawFpsCounter();
 #endif
 
 #ifdef MOBILE_IMPROVEMENTS
@@ -1571,7 +1681,7 @@ Idle(void *arg)
 	if(!FrontEndMenuManager.m_bMenuActive && TheCamera.GetScreenFadeStatus() != FADE_2)
 	{
 		// This is from SA, but it's nice for windowed mode
-#if defined(GTA_PC) && !defined(RW_GL3)
+#if defined(GTA_PC) && !defined(RW_GL3) && !defined(__PS3__)
 		RwV2d pos;
 		pos.x = SCREEN_WIDTH / 2.0f;
 		pos.y = SCREEN_HEIGHT / 2.0f;
@@ -1624,7 +1734,9 @@ Idle(void *arg)
 #endif
 
 		RenderDebugShit();
+		tbStartTimer(0, "RenderEffects");
 		RenderEffects();
+		tbEndTimer("RenderEffects");
 
 		if((TheCamera.m_BlurType == MOTION_BLUR_NONE || TheCamera.m_BlurType == MOTION_BLUR_LIGHT_SCENE) &&
 		   TheCamera.m_ScreenReductionPercentage > 0.0f)
@@ -1680,7 +1792,9 @@ Idle(void *arg)
 	if (gbShowTimebars)
 		tbDisplay();
 
+	tbStartTimer(0, "Present");
 	DoRWStuffEndOfFrame();
+	tbEndTimer("Present");
 
 	POP_MEMID();	// MEMID_RENDER
 

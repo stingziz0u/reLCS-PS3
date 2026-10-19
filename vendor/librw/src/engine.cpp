@@ -16,6 +16,7 @@
 #include "d3d/rwd3d8.h"
 #include "d3d/rwd3d9.h"
 #include "gl/rwgl3.h"
+#include "ps3/rwps3.h"
 #include "gl/rwwdgl.h"
 
 #define PLUGIN_ID 0
@@ -236,6 +237,9 @@ Engine::init(MemoryFunctions *memfuncs)
 	d3d9::registerPlatformPlugins();
 	wdgl::registerPlatformPlugins();
 	gl3::registerPlatformPlugins();
+#ifdef RW_PS3
+	ps3::registerPlatformPlugins();
+#endif
 
 	Engine::state = Initialized;
 	return 1;
@@ -270,6 +274,8 @@ Engine::open(EngineOpenParams *p)
 	engine->device = gl3::renderdevice;
 #elif RW_D3D9
 	engine->device = d3d::renderdevice;
+#elif RW_PS3
+	engine->device = ps3::renderdevice;
 #else
 	engine->device = null::renderdevice;
 #endif

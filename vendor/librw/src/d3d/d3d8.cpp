@@ -14,6 +14,9 @@
 #include "rwd3d8.h"
 
 #include "rwd3dimpl.h"
+#ifdef RW_PS3_RSX
+#include "../ps3/rwps3.h"
+#endif
 
 #define PLUGIN_ID 2
 
@@ -563,6 +566,13 @@ readNativeTexture(Stream *stream)
 	if(format & Raster::PAL4 || format & Raster::PAL8){
 		pallength = format & Raster::PAL4 ? 32 : 256;
 		if(!d3d::isP8supported){
+#ifdef RW_PS3_RSX
+			Raster *fast;
+			if(ps3::readPalettedD3D8(stream, width, height, format|type, numLevels, &fast)){
+				tex->raster = fast;	// nil like readAsImage could: draws white
+				return tex;
+			}
+#endif
 			tex->raster = readAsImage(stream, width, height, depth, format|type, numLevels);
 			return tex;
 		}

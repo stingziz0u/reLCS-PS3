@@ -92,6 +92,10 @@ CPhysical::CPhysical(void)
 CPhysical::~CPhysical(void)
 {
 	m_entryInfoList.Flush();
+#ifdef __PS3__
+	// deleted without CWorld::Remove: out of the moving list all the same
+	RemoveFromMovingList();
+#endif
 }
 
 void
@@ -327,6 +331,10 @@ CPhysical::GetBoundRect(void)
 void
 CPhysical::AddToMovingList(void)
 {
+#ifdef __PS3__
+	if(m_movingListNode)
+		return;	// already in it: twice, it was processed twice a frame (and one node left behind)
+#endif
 	if (m_movingListNode == nil && !bIsStaticWaitingForCollision)
 		m_movingListNode = CWorld::GetMovingEntityList().InsertItem(this);
 }

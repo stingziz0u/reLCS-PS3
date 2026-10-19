@@ -91,7 +91,7 @@ void CCranes::AddThisOneCrane(CEntity* pEntity)
 	pCrane->m_pCraneEntity = (CBuilding*)pEntity;
 	pCrane->m_nCraneStatus = CCrane::NONE;
 	pCrane->m_fHookAngle = NumCranes; // lol wtf
-	while (pCrane->m_fHookAngle > TWOPI)
+	while (PS3_ANGLE_OK(pCrane->m_fHookAngle) && pCrane->m_fHookAngle > TWOPI)
 		pCrane->m_fHookAngle -= TWOPI;
 	pCrane->m_fHookOffset = DEFAULT_OFFSET;
 	pCrane->m_fHookHeight = DEFAULT_OFFSET;
@@ -390,9 +390,9 @@ bool CCrane::RotateCarriedCarProperly()
 	if (!m_pVehiclePickedUp)
 		return true;
 	float fAngleDelta = m_fDropoffHeading - CGeneral::GetATanOfXY(m_pVehiclePickedUp->GetForward().x, m_pVehiclePickedUp->GetForward().y);
-	while (fAngleDelta < -HALFPI)
+	while (PS3_ANGLE_OK(fAngleDelta) && fAngleDelta < -HALFPI)
 		fAngleDelta += PI;
-	while (fAngleDelta > HALFPI)
+	while (PS3_ANGLE_OK(fAngleDelta) && fAngleDelta > HALFPI)
 		fAngleDelta -= PI;
 	float fDeltaThisFrame = CAR_ROTATION_SPEED * CTimer::GetTimeStep();
 	if (Abs(fAngleDelta) <= fDeltaThisFrame) // no rotation is actually applied?
@@ -503,9 +503,9 @@ bool CCrane::GoTowardsTarget(float fAngleToTarget, float fDistanceToTarget, floa
 {
 	bool bAngleMovementFinished, bOffsetMovementFinished, bHeightMovementFinished;
 	float fHookAngleDelta = fAngleToTarget - m_fHookAngle;
-	while (fHookAngleDelta > PI)
+	while (PS3_ANGLE_OK(fHookAngleDelta) && fHookAngleDelta > PI)
 		fHookAngleDelta -= TWOPI;
-	while (fHookAngleDelta < -PI)
+	while (PS3_ANGLE_OK(fHookAngleDelta) && fHookAngleDelta < -PI)
 		fHookAngleDelta += TWOPI;
 	float fHookAngleChangeThisFrame = fSpeedMultiplier * CTimer::GetTimeStep() * HOOK_ANGLE_MOVEMENT_SPEED;
 	if (Abs(fHookAngleDelta) < fHookAngleChangeThisFrame) {
@@ -671,9 +671,9 @@ void CCranes::Save(uint8* buf, uint32* size)
 #else
 		CCrane *pCrane = WriteSaveBuf(buf, aCranes[i]);
 		if (pCrane->m_pCraneEntity != nil)
-			pCrane->m_pCraneEntity = (CBuilding*)(CPools::GetBuildingPool()->GetJustIndex_NoFreeAssert(pCrane->m_pCraneEntity) + 1);
+			pCrane->m_pCraneEntity = (CBuilding*)(uintptr)(CPools::GetBuildingPool()->GetJustIndex_NoFreeAssert(pCrane->m_pCraneEntity) + 1);
 		if (pCrane->m_pHook != nil)
-			pCrane->m_pHook = (CObject*)(CPools::GetObjectPool()->GetJustIndex_NoFreeAssert(pCrane->m_pHook) + 1);
+			pCrane->m_pHook = (CObject*)(uintptr)(CPools::GetObjectPool()->GetJustIndex_NoFreeAssert(pCrane->m_pHook) + 1);
 		if (pCrane->m_pVehiclePickedUp != nil)
 			pCrane->m_pVehiclePickedUp = (CVehicle*)(CPools::GetVehiclePool()->GetJustIndex_NoFreeAssert(pCrane->m_pVehiclePickedUp) + 1);
 #endif

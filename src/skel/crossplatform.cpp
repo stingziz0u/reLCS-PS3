@@ -19,12 +19,21 @@ void tmToSystemTime(const tm *tm, SYSTEMTIME *out) {
 void GetLocalTime_CP(SYSTEMTIME *out) {
     time_t timestamp = time(nil);
     tm *localTm = localtime(&timestamp);
+#ifdef __PS3__
+    if (localTm == nil) {
+        memset(out, 0, sizeof(*out));
+        out->wYear = 2001;
+        out->wMonth = 1;
+        out->wDay = 1;
+        return;
+    }
+#endif
     tmToSystemTime(localTm, out);
 }
 #endif
 
 // Compatible with Linux/POSIX and MinGW on Windows
-#ifndef _WIN32
+#if !defined _WIN32 && !defined __PS3__	// PS3: skel/ps3/ps3_fs.cpp
 HANDLE FindFirstFile(const char* pathname, WIN32_FIND_DATA* firstfile) {
 	char pathCopy[MAX_PATH];
 	strcpy(pathCopy, pathname);
@@ -142,6 +151,7 @@ char *trim(char *s) {
     return s;
 }
 
+#ifndef __PS3__	// PS3: skel/ps3/ps3_fs.cpp
 FILE* _fcaseopen(char const* filename, char const* mode)
 {
     FILE* result;
@@ -292,6 +302,7 @@ char* casepath(char const* path, bool checkPathFirst)
     }
     return out;
 }
+#endif // !__PS3__
 #endif
 
 #if !defined(_MSC_VER) && !defined(__CWCC__)

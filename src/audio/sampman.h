@@ -250,7 +250,7 @@ public:
 	int32 GetStreamedFileLength                                                (uint8 nStream = 0);
 	bool8 IsStreamPlaying                                                      (uint8 nStream = 0);
 	void  SetStreamedFileLoopFlag                             (bool8 nLoopFlag, uint8 nStream = 0);
-#ifdef AUDIO_OAL
+#if defined(AUDIO_OAL) || defined(AUDIO_PS3)
 	void  Service(void);
 #endif
 	bool8 InitialiseSampleBanks(void);

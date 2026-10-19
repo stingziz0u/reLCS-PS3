@@ -18,6 +18,9 @@
 #include "d3d/rwd3d9.h"
 #include "gl/rwwdgl.h"
 #include "gl/rwgl3.h"
+#ifdef RW_PS3
+#include "ps3/rwps3.h"
+#endif
 #include "gl/rwgl3plg.h"
 
 #define PLUGIN_ID ID_MATFX
@@ -619,6 +622,9 @@ registerMatFXPlugin(void)
 	d3d9::initMatFX();
 	wdgl::initMatFX();
 	gl3::initMatFX();
+#ifdef RW_PS3
+	ps3::initMatFX();
+#endif
 
 	matFXGlobals.atomicOffset =
 	Atomic::registerPlugin(sizeof(int32), ID_MATFX,

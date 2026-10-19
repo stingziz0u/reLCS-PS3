@@ -45,6 +45,46 @@ struct DIBheader
 	uint32 rmask, gmask, bmask, amask;
 };
 
+// The DIB header field by field: the file is little-endian and Stream's
+// readU16/readU32 give native values (a raw read8 into the struct only
+// worked on little-endian machines -- on the PS3 every BMP failed: the white
+// player of the player setup, the skins)
+static void
+readDIB(Stream *stream, DIBheader *dib)
+{
+	dib->headerSize = stream->readU32();
+	dib->width = stream->readI32();
+	dib->height = stream->readI32();
+	dib->numPlanes = stream->readI16();
+	dib->depth = stream->readI16();
+	dib->compression = stream->readU32();
+	dib->imgSize = stream->readU32();
+	dib->hres = stream->readI32();
+	dib->vres = stream->readI32();
+	dib->paletteLen = stream->readI32();
+	dib->numImportant = stream->readI32();
+	dib->rmask = stream->readU32();
+	dib->gmask = stream->readU32();
+	dib->bmask = stream->readU32();
+	dib->amask = stream->readU32();
+}
+
+static void
+writeDIB(Stream *stream, DIBheader *dib)
+{
+	stream->writeU32(dib->headerSize);
+	stream->writeI32(dib->width);
+	stream->writeI32(dib->height);
+	stream->writeI16(dib->numPlanes);
+	stream->writeI16(dib->depth);
+	stream->writeU32(dib->compression);
+	stream->writeU32(dib->imgSize);
+	stream->writeI32(dib->hres);
+	stream->writeI32(dib->vres);
+	stream->writeI32(dib->paletteLen);
+	stream->writeI32(dib->numImportant);
+}
+
 bool32
 BMPheader::read(Stream *stream)
 {
@@ -70,7 +110,6 @@ BMPheader::write(Stream *stream)
 Image*
 readBMP(const char *filename)
 {
-	ASSERTLITTLE;
 	Image *image;
 	uint32 length;
 	uint8 *data;
@@ -90,7 +129,7 @@ readBMP(const char *filename)
 	DIBheader dib;
 	if(!bmp.read(&file))
 		goto lose;
-	file.read8(&dib, sizeof(dib));
+	readDIB(&file, &dib);
 	file.seek(dib.headerSize-sizeof(dib));	// skip the part of the header we're ignoring
 	if(dib.headerSize <= 16){
 		dib.compression = 0;
@@ -132,7 +171,8 @@ readBMP(const char *filename)
 
 	file.seek(bmp.offset, 0);
 
-	pad = image->width*image->bpp % 4;
+	// rows are padded to 4 bytes
+	pad = (4 - (image->width*image->depth + 7)/8 % 4) % 4;
 
 	uint8 *px, *line;
 	line = image->pixels + (image->height-1)*image->stride;
@@ -196,7 +236,7 @@ lose:
 void
 writeBMP(Image *image, const char *filename)
 {
-	ASSERTLITTLE;
+	
 	uint8 *p;
 	StreamFile file;
 	if(!file.open(filename, "wb")){
@@ -231,7 +271,7 @@ writeBMP(Image *image, const char *filename)
 	dib.vres = 2835;	// 72dpi
 	dib.paletteLen = 0;
 	dib.numImportant = 0;
-	file.write8(&dib, dib.headerSize);
+	writeDIB(&file, &dib);	// 0x28 bytes
 
 	for(int i = 0; i < pallen; i++){
 		file.writeU8(image->palette[i*4+2]);

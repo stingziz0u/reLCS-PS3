@@ -338,7 +338,7 @@ INITSAVEBUF
 
 		// Convert entity pointer to building pool index while saving
 		if (phone->m_pEntity) {
-			phone->m_pEntity = (CEntity*) (CPools::GetBuildingPool()->GetJustIndex_NoFreeAssert((CBuilding*)phone->m_pEntity) + 1);
+			phone->m_pEntity = (CEntity*)(uintptr)(CPools::GetBuildingPool()->GetJustIndex_NoFreeAssert((CBuilding*)phone->m_pEntity) + 1);
 		}
 #endif
 	}

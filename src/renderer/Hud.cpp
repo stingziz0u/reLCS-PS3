@@ -5,6 +5,9 @@
 #include "Clock.h"
 #include "Darkel.h"
 #include "Hud.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#endif
 #include "Messages.h"
 #include "Frontend.h"
 #include "Font.h"
@@ -461,7 +464,13 @@ void CHud::Draw()
 							CRGBA(255, 255, 255, alpha));
 				} else {
 					CBaseModelInfo *weaponModel = CModelInfo::GetModelInfo(weaponInfo->m_nModelId);
+#ifdef __PS3__
+					// a model without a TXD slot (or a free one) had no icon to give anyway
+					TxdDef *weaponTxdDef = weaponModel && weaponModel->GetTxdSlot() >= 0 ? CTxdStore::GetSlot(weaponModel->GetTxdSlot()) : nil;
+					RwTexDictionary *weaponTxd = weaponTxdDef ? weaponTxdDef->texDict : nil;
+#else
 					RwTexDictionary *weaponTxd = CTxdStore::GetSlot(weaponModel->GetTxdSlot())->texDict;
+#endif
 					if (weaponTxd) {
 						RwTexture *weaponIcon = RwTexDictionaryFindNamedTexture(weaponTxd, weaponModel->GetModelName());
 						if (weaponIcon) {
@@ -1223,6 +1232,10 @@ void CHud::Draw()
 			}
 			CFont::SetDropShadowPosition(0);
 		}
+
+#if defined(__PS3__) && PS3_STAGE != 1
+		PS3_CarSpawnerDraw();
+#endif
 
 		/*
 			HelpMessage

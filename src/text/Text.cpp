@@ -10,6 +10,9 @@
 #include "Timer.h"
 
 wchar WideErrorString[25];
+#ifdef __PS3__
+#include "ps3_textfallback.h"
+#endif
 
 CText *CText::msInstance = nil;
 
@@ -67,10 +70,24 @@ CText::Load(void)
 	}
 
 	file = CFileMgr::OpenFile(filename, "rb");
+#ifdef __PS3__
+	// OpenFile returns 0 when it fails: the loop below would never end
+	if (file <= 0) {
+		printf("CText::Load: can't open TEXT\\%s\n", filename);
+		CFileMgr::SetDir("");
+		return;
+	}
+#endif
 
 	offset = 0;
 	while (!tkey_loaded || !tdat_loaded) {
 		ReadChunkHeader(&m_ChunkHeader, file, &offset);
+#ifdef __PS3__
+		if (m_ChunkHeader.size < 0 || CFileMgr::GetErrorReadWrite(file)) {
+			printf("CText::Load: TEXT\\%s is truncated or not a VC .gxt\n", filename);
+			break;
+		}
+#endif
 		if (m_ChunkHeader.size != 0) {
 			if (strncmp(m_ChunkHeader.magic, "TABL", 4) == 0) {
 				MissionTextOffsets.Load(m_ChunkHeader.size, file, &offset, 0x58000);
@@ -122,6 +139,23 @@ CText::Get(const char *key)
 		outstr = mission_keyArray.Search(key, mission_data.chars, &result);
 #else
 		outstr = mission_keyArray.Search(key, &result);
+#endif
+#ifdef __PS3__
+	if (!result && outstr == WideErrorString) {
+		// reVC's own menu keys aren't in the PC american.gxt
+		static wchar *cache[ARRAY_SIZE(ps3TextFallback)];
+		for (int i = 0; i < ARRAY_SIZE(ps3TextFallback); i++) {
+			if (strcmp(ps3TextFallback[i].key, key) != 0)
+				continue;
+			if (cache[i] == nil) {
+				size_t len = strlen(ps3TextFallback[i].text);
+				cache[i] = new wchar[len + 1];
+				for (size_t j = 0; j <= len; j++)
+					cache[i][j] = (uint8)ps3TextFallback[i].text[j];
+			}
+			return cache[i];
+		}
+	}
 #endif
 	return outstr;
 }
@@ -216,6 +250,7 @@ CText::ReadChunkHeader(ChunkHeader *buf, int32 file, size_t *offset)
 	CFileMgr::Read(file, (char*)buf, sizeof(ChunkHeader));
 	*offset += sizeof(ChunkHeader);
 #endif
+	buf->size = LittleI32(buf->size);	// .gxt is little-endian
 }
 
 void
@@ -273,6 +308,14 @@ CText::LoadMissionText(char *MissionTableName)
 	}
 	CTimer::Suspend();
 	int file = CFileMgr::OpenFile(filename, "rb");
+#ifdef __PS3__
+	if (file <= 0) {
+		printf("CText::LoadMissionText: can't open TEXT\\%s\n", filename);
+		CTimer::Resume();
+		CFileMgr::SetDir("");
+		return;
+	}
+#endif
 	CFileMgr::Seek(file, MissionTextOffsets.data[missionTableId].offset, SEEK_SET);
 
 	char TableCheck[8];
@@ -285,6 +328,12 @@ CText::LoadMissionText(char *MissionTableName)
 	while (!tkey_loaded || !tdat_loaded) {
 		size_t bytes_read = 0;
 		ReadChunkHeader(&m_ChunkHeader, file, &bytes_read);
+#ifdef __PS3__
+		if (m_ChunkHeader.size < 0 || CFileMgr::GetErrorReadWrite(file)) {
+			printf("CText::LoadMissionText: bad table %s\n", MissionTableName);
+			break;
+		}
+#endif
 		if (m_ChunkHeader.size != 0) {
 			if (strncmp(m_ChunkHeader.magic, "TKEY", 4) == 0) {
 				size_t bytes_read = 0;
@@ -331,6 +380,10 @@ CKeyArray::Load(size_t length, int file, size_t* offset)
 #else
 	CFileMgr::Read(file, rawbytes, length);
 	*offset += length;
+#endif
+#ifdef BIGENDIAN
+	for (int i = 0; i < numEntries; i++)
+		entries[i].valueOffset = LittleU32(entries[i].valueOffset);
 #endif
 }
 
@@ -426,6 +479,7 @@ CData::Load(size_t length, int file, size_t * offset)
 	CFileMgr::Read(file, rawbytes, length);
 	*offset += length;
 #endif
+	LittleSwap16(chars, numChars);	// UCS-2 little-endian
 }
 
 void
@@ -460,6 +514,10 @@ CMissionTextOffsets::Load(size_t table_size, int file, size_t *offset, int)
 	size = (uint16) (table_size / sizeof(CMissionTextOffsets::Entry));
 	CFileMgr::Read(file, (char*)data, sizeof(CMissionTextOffsets::Entry) * size);
 	*offset += sizeof(CMissionTextOffsets::Entry) * size;
+#endif
+#ifdef BIGENDIAN
+	for (int i = 0; i < size; i++)
+		data[i].offset = LittleU32(data[i].offset);
 #endif
 }
 

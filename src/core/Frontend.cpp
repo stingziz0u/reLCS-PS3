@@ -517,8 +517,12 @@ CMenuManager::CMenuManager()
 	DisplayComboButtonErrMsg = false;
 	m_PrefsDMA = 1;
 	OS_Language = LANG_ENGLISH;
+#ifdef __PS3__
+	m_ControlMethod = CONTROL_CLASSIC;	// a pad: the PS2 controls
+#else
 	m_ControlMethod = CONTROL_STANDARD;
-#ifdef PC_PLAYER_CONTROLS
+#endif
+#if defined(PC_PLAYER_CONTROLS) && !defined(__PS3__)
 	CCamera::m_bUseMouse3rdPerson = true;
 #else
 	CCamera::m_bUseMouse3rdPerson = false;
@@ -554,7 +558,9 @@ CMenuManager::CMenuManager()
 #endif
 
 #ifdef GAMEPAD_MENU
-#ifdef __SWITCH__
+#if defined(__PS3__)
+	m_PrefsControllerType = CONTROLLER_DUALSHOCK3;
+#elif defined(__SWITCH__)
 	m_PrefsControllerType = CONTROLLER_NINTENDO_SWITCH;
 #else
 	m_PrefsControllerType = CONTROLLER_XBOXONE;
@@ -647,7 +653,7 @@ CMenuManager::CentreMousePointer()
 		Point.y = SCREEN_HEIGHT / 2;
 		ClientToScreen(PSGLOBAL(window), &Point);
 		SetCursorPos(Point.x, Point.y);
-#elif defined RW_GL3
+#elif defined RE3_GLFW_INPUT
 		glfwSetCursorPos(PSGLOBAL(window), SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
 #endif
 
@@ -3093,6 +3099,25 @@ CMenuManager::LoadAllTextures()
 	CTimer::Update();
 }
 
+// gta_vc.set keeps these as one (or two) bytes; several are int32 here. Reading
+// or writing the first byte of an int32 is its high byte on a big-endian CPU
+// (0 written, and a 1 read back as 0x01000000)
+#ifdef BIGENDIAN
+template<typename T> static void SettingsRead1(int32 fileHandle, T &v) { uint8 b = 0; CFileMgr::Read(fileHandle, (char*)&b, 1); v = (T)b; }
+template<typename T> static void SettingsWrite1(int32 fileHandle, const T &v) { uint8 b = (uint8)v; CFileMgr::Write(fileHandle, (char*)&b, 1); }
+template<typename T> static void SettingsRead2(int32 fileHandle, T &v) { uint16 b = 0; CFileMgr::Read(fileHandle, (char*)&b, 2); v = (T)b; }
+template<typename T> static void SettingsWrite2(int32 fileHandle, const T &v) { uint16 b = (uint16)v; CFileMgr::Write(fileHandle, (char*)&b, 2); }
+#define SETTINGS_READ1(v) SettingsRead1(fileHandle, v)
+#define SETTINGS_WRITE1(v) SettingsWrite1(fileHandle, v)
+#define SETTINGS_READ2(v) SettingsRead2(fileHandle, v)
+#define SETTINGS_WRITE2(v) SettingsWrite2(fileHandle, v)
+#else
+#define SETTINGS_READ1(v) CFileMgr::Read(fileHandle, (char*)&v, 1)
+#define SETTINGS_WRITE1(v) CFileMgr::Write(fileHandle, (char*)&v, 1)
+#define SETTINGS_READ2(v) CFileMgr::Read(fileHandle, (char*)&v, 2)
+#define SETTINGS_WRITE2(v) CFileMgr::Write(fileHandle, (char*)&v, 2)
+#endif
+
 void
 CMenuManager::LoadSettings()
 {
@@ -3143,35 +3168,35 @@ CMenuManager::LoadSettings()
 			CFileMgr::Read(fileHandle, gString, 4);
 			CFileMgr::Read(fileHandle, gString, 1);
 #ifdef LEGACY_MENU_OPTIONS
-			CFileMgr::Read(fileHandle, (char*)&m_PrefsVsyncDisp, 1);
-			CFileMgr::Read(fileHandle, (char*)&CMBlur::BlurOn, 1);
+			SETTINGS_READ1(m_PrefsVsyncDisp);
+			SETTINGS_READ1(CMBlur::BlurOn);
 #else
 			CFileMgr::Read(fileHandle, gString, 1);
 			CFileMgr::Read(fileHandle, gString, 1);
 #endif
-			CFileMgr::Read(fileHandle, (char*)&TheCamera.m_bHeadBob, 1);
+			SETTINGS_READ1(TheCamera.m_bHeadBob);
 			CFileMgr::Read(fileHandle, (char*)&TheCamera.m_fMouseAccelHorzntl, 4);
-			CFileMgr::Read(fileHandle, (char*)&MousePointerStateHelper.bInvertVertically, 1);
-			CFileMgr::Read(fileHandle, (char*)&CVehicle::m_bDisableMouseSteering, 1);
-			CFileMgr::Read(fileHandle, (char*)&m_PrefsSfxVolume, 1);
-			CFileMgr::Read(fileHandle, (char*)&m_PrefsMusicVolume, 1);
-			CFileMgr::Read(fileHandle, (char*)&m_PrefsMP3BoostVolume, 1);
-			CFileMgr::Read(fileHandle, (char*)&m_PrefsRadioStation, 1);
-			CFileMgr::Read(fileHandle, (char*)&m_PrefsSpeakers, 1);
-			CFileMgr::Read(fileHandle, (char*)&m_nPrefsAudio3DProviderIndex, 1);
-			CFileMgr::Read(fileHandle, (char*)&m_PrefsDMA, 1);
-			CFileMgr::Read(fileHandle, (char*)&m_PrefsBrightness, 2);
+			SETTINGS_READ1(MousePointerStateHelper.bInvertVertically);
+			SETTINGS_READ1(CVehicle::m_bDisableMouseSteering);
+			SETTINGS_READ1(m_PrefsSfxVolume);
+			SETTINGS_READ1(m_PrefsMusicVolume);
+			SETTINGS_READ1(m_PrefsMP3BoostVolume);
+			SETTINGS_READ1(m_PrefsRadioStation);
+			SETTINGS_READ1(m_PrefsSpeakers);
+			SETTINGS_READ1(m_nPrefsAudio3DProviderIndex);
+			SETTINGS_READ1(m_PrefsDMA);
+			SETTINGS_READ2(m_PrefsBrightness);
 			CFileMgr::Read(fileHandle, (char*)&m_PrefsLOD, sizeof(m_PrefsLOD));
-			CFileMgr::Read(fileHandle, (char*)&m_PrefsShowSubtitles, 1);
-			CFileMgr::Read(fileHandle, (char*)&m_PrefsUseWideScreen, 1);
-			CFileMgr::Read(fileHandle, (char*)&m_PrefsFrameLimiter, 1);
-			CFileMgr::Read(fileHandle, (char*)&m_nDisplayVideoMode, 1);
+			SETTINGS_READ1(m_PrefsShowSubtitles);
+			SETTINGS_READ1(m_PrefsUseWideScreen);
+			SETTINGS_READ1(m_PrefsFrameLimiter);
+			SETTINGS_READ1(m_nDisplayVideoMode);
 			CFileMgr::Read(fileHandle, m_PrefsSkinFile, 256);
-			CFileMgr::Read(fileHandle, (char*)&m_ControlMethod, 1);
-			CFileMgr::Read(fileHandle, (char*)&m_PrefsLanguage, 1);
-			CFileMgr::Read(fileHandle, (char*)&m_PrefsShowHud, 1);
-			CFileMgr::Read(fileHandle, (char*)&m_PrefsRadarMode, 1);
-			CFileMgr::Read(fileHandle, (char*)&m_PrefsShowLegends, 1);
+			SETTINGS_READ1(m_ControlMethod);
+			SETTINGS_READ1(m_PrefsLanguage);
+			SETTINGS_READ1(m_PrefsShowHud);
+			SETTINGS_READ1(m_PrefsRadarMode);
+			SETTINGS_READ1(m_PrefsShowLegends);
 		}
 	}
 
@@ -3189,6 +3214,15 @@ CMenuManager::LoadSettings()
 #endif
 #ifdef PC_PLAYER_CONTROLS
 	CCamera::m_bUseMouse3rdPerson = m_ControlMethod == CONTROL_STANDARD;
+#endif
+#ifdef __PS3__
+	// a pad only: the PS2 controls (lock-on targeting, classic camera), never
+	// the PC "standard" ones (mouse camera, free aim, no lock-on)
+	m_ControlMethod = CONTROL_CLASSIC;
+	CCamera::m_bUseMouse3rdPerson = false;
+#ifdef GAMEPAD_MENU
+	m_PrefsControllerType = CONTROLLER_DUALSHOCK3;
+#endif
 #endif
 #ifdef LEGACY_MENU_OPTIONS
 	m_PrefsVsync = m_PrefsVsyncDisp;
@@ -3262,35 +3296,35 @@ CMenuManager::SaveSettings()
 		CFileMgr::Write(fileHandle, RubbishString, 4);
 		CFileMgr::Write(fileHandle, RubbishString, 1);
 #ifdef LEGACY_MENU_OPTIONS
-		CFileMgr::Write(fileHandle, (char*)&m_PrefsVsyncDisp, 1);
-		CFileMgr::Write(fileHandle, (char*)&CMBlur::BlurOn, 1);
+		SETTINGS_WRITE1(m_PrefsVsyncDisp);
+		SETTINGS_WRITE1(CMBlur::BlurOn);
 #else
 		CFileMgr::Write(fileHandle, RubbishString, 1);
 		CFileMgr::Write(fileHandle, RubbishString, 1);
 #endif
-		CFileMgr::Write(fileHandle, (char*)&TheCamera.m_bHeadBob, 1);
+		SETTINGS_WRITE1(TheCamera.m_bHeadBob);
 		CFileMgr::Write(fileHandle, (char*)&TheCamera.m_fMouseAccelHorzntl, 4);
-		CFileMgr::Write(fileHandle, (char*)&MousePointerStateHelper.bInvertVertically, 1);
-		CFileMgr::Write(fileHandle, (char*)&CVehicle::m_bDisableMouseSteering, 1);
-		CFileMgr::Write(fileHandle, (char*)&m_PrefsSfxVolume, 1);
-		CFileMgr::Write(fileHandle, (char*)&m_PrefsMusicVolume, 1);
-		CFileMgr::Write(fileHandle, (char*)&m_PrefsMP3BoostVolume, 1);
-		CFileMgr::Write(fileHandle, (char*)&m_PrefsRadioStation, 1);
-		CFileMgr::Write(fileHandle, (char*)&m_PrefsSpeakers, 1);
-		CFileMgr::Write(fileHandle, (char*)&m_nPrefsAudio3DProviderIndex, 1);
-		CFileMgr::Write(fileHandle, (char*)&m_PrefsDMA, 1);
-		CFileMgr::Write(fileHandle, (char*)&m_PrefsBrightness, 2);
+		SETTINGS_WRITE1(MousePointerStateHelper.bInvertVertically);
+		SETTINGS_WRITE1(CVehicle::m_bDisableMouseSteering);
+		SETTINGS_WRITE1(m_PrefsSfxVolume);
+		SETTINGS_WRITE1(m_PrefsMusicVolume);
+		SETTINGS_WRITE1(m_PrefsMP3BoostVolume);
+		SETTINGS_WRITE1(m_PrefsRadioStation);
+		SETTINGS_WRITE1(m_PrefsSpeakers);
+		SETTINGS_WRITE1(m_nPrefsAudio3DProviderIndex);
+		SETTINGS_WRITE1(m_PrefsDMA);
+		SETTINGS_WRITE2(m_PrefsBrightness);
 		CFileMgr::Write(fileHandle, (char*)&m_PrefsLOD, sizeof(m_PrefsLOD));
-		CFileMgr::Write(fileHandle, (char*)&m_PrefsShowSubtitles, 1);
-		CFileMgr::Write(fileHandle, (char*)&m_PrefsUseWideScreen, 1);
-		CFileMgr::Write(fileHandle, (char*)&m_PrefsFrameLimiter, 1);
-		CFileMgr::Write(fileHandle, (char*)&m_nPrefsVideoMode, 1);
+		SETTINGS_WRITE1(m_PrefsShowSubtitles);
+		SETTINGS_WRITE1(m_PrefsUseWideScreen);
+		SETTINGS_WRITE1(m_PrefsFrameLimiter);
+		SETTINGS_WRITE1(m_nPrefsVideoMode);
 		CFileMgr::Write(fileHandle, m_PrefsSkinFile, 256);
-		CFileMgr::Write(fileHandle, (char*)&m_ControlMethod, 1);
-		CFileMgr::Write(fileHandle, (char*)&m_PrefsLanguage, 1);
-		CFileMgr::Write(fileHandle, (char*)&m_PrefsShowHud, 1);
-		CFileMgr::Write(fileHandle, (char*)&m_PrefsRadarMode, 1);
-		CFileMgr::Write(fileHandle, (char*)&m_PrefsShowLegends, 1);
+		SETTINGS_WRITE1(m_ControlMethod);
+		SETTINGS_WRITE1(m_PrefsLanguage);
+		SETTINGS_WRITE1(m_PrefsShowHud);
+		SETTINGS_WRITE1(m_PrefsRadarMode);
+		SETTINGS_WRITE1(m_PrefsShowLegends);
 	}
 	m_lastWorking3DAudioProvider = m_nPrefsAudio3DProviderIndex;
 
@@ -3714,6 +3748,11 @@ CMenuManager::AdditionalOptionInput(bool &goBack)
 					pressedL = true;
 				}
 			}
+#ifdef __PS3__
+			// a pad: L1 shows/hides the legend (the PC game's L key)
+			if (CPad::GetPad(0)->GetLeftShoulder1JustDown())
+				m_PrefsShowLegends = !m_PrefsShowLegends;
+#endif
 			break;
 		}
 		case MENUPAGE_SOUND_SETTINGS:
@@ -4074,7 +4113,13 @@ CMenuManager::ProcessList(bool &optionSelected, bool &goBack)
 			m_nSelectedListRow = m_nTotalListRow - 1;
 	}
 
+#ifdef __PS3__
+	// on the map X sets the waypoint: it isn't "select" there (the page's only
+	// entry is Back, so it closed the map)
+	if ((CPad::GetPad(0)->GetEnterJustDown() || CPad::GetPad(0)->GetCrossJustDown()) && m_nCurrScreen != MENUPAGE_MAP) {
+#else
 	if (CPad::GetPad(0)->GetEnterJustDown() || CPad::GetPad(0)->GetCrossJustDown()) {
+#endif
 		m_bShowMouse = 0;
 		optionSelected = true;
 	}
@@ -4392,7 +4437,11 @@ CMenuManager::UserInput(void)
 				optionSelected = true;
 			}
 		} else {
+#ifdef __PS3__
+			if ((CPad::GetPad(0)->GetEnterJustDown() || CPad::GetPad(0)->GetCrossJustDown()) && m_nCurrScreen != MENUPAGE_MAP) {
+#else
 			if (CPad::GetPad(0)->GetEnterJustDown() || CPad::GetPad(0)->GetCrossJustDown()) {
+#endif
 				m_bShowMouse = false;
 				optionSelected = true;
 			}
@@ -4953,7 +5002,7 @@ CMenuManager::ProcessUserInput(uint8 goDown, uint8 goUp, uint8 optionSelected, u
 					ControlsManager.MakeControllerActionsBlank();
 					ControlsManager.InitDefaultControlConfiguration();
 					ControlsManager.InitDefaultControlConfigMouse(MousePointerStateHelper.GetMouseSetUp());
-#if !defined RW_GL3
+#if !defined RE3_GLFW_INPUT
 					if (AllValidWinJoys.m_aJoys[JOYSTICK1].m_bInitialised) {
 						DIDEVCAPS devCaps;
 						devCaps.dwSize = sizeof(DIDEVCAPS);
@@ -4974,8 +5023,12 @@ CMenuManager::ProcessUserInput(uint8 goDown, uint8 goUp, uint8 optionSelected, u
 #endif
 					TheCamera.m_fMouseAccelHorzntl = 0.0025f;
 					CVehicle::m_bDisableMouseSteering = true;
+#ifdef __PS3__
+					m_ControlMethod = CONTROL_CLASSIC;
+#else
 					m_ControlMethod = CONTROL_STANDARD;
-#ifdef PC_PLAYER_CONTROLS
+#endif
+#if defined(PC_PLAYER_CONTROLS) && !defined(__PS3__)
 					TheCamera.m_bUseMouse3rdPerson = true;
 #else
 					TheCamera.m_bUseMouse3rdPerson = false;
@@ -5937,7 +5990,11 @@ CMenuManager::PrintMap(void)
 
 	CFont::SetWrapx(MENU_X_RIGHT_ALIGNED(MENU_X_MARGIN));
 	CFont::SetRightJustifyWrap(MENU_X_LEFT_ALIGNED(MENU_X_MARGIN));
+#ifdef __PS3__
+	DisplayHelperText("FEH_MPS");	// the pad's buttons (ps3_textfallback.h), not the PC keys and mouse
+#else
 	DisplayHelperText("FEH_MPH");
+#endif
 }
 
 void
@@ -6005,7 +6062,11 @@ CMenuManager::PrintController(void)
 	const float CONTROLLER_SIZE_X = 235.2f;
 	const float CONTROLLER_SIZE_Y = 175.2f;
 	const float CONTROLLER_POS_X = (DEFAULT_SCREEN_WIDTH - CONTROLLER_SIZE_X) / 2.0f;
+#ifdef __PS3__
+	const float CONTROLLER_POS_Y = 270.0f;	// below the page's options (two more since 1.1.2)
+#else
 	const float CONTROLLER_POS_Y = 220.0f;
+#endif
 
 	float centerX = CONTROLLER_POS_X + CONTROLLER_SIZE_X / 2;
 	float centerY = CONTROLLER_POS_Y + CONTROLLER_SIZE_Y / 2;

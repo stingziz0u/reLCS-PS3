@@ -21,6 +21,30 @@ extern int32 ScriptParams[32];
 void FlushLog();
 #define script_assert(_Expression) { FlushLog(); assert(_Expression); }
 
+// Bytes that aren't a valid command or parameter: the script is lost (a
+// mission read over its code, a corrupt main.scm...). On the PS3 that
+// script is stopped at its next chance instead of running garbage and
+// writing through a nil pointer.
+#ifdef __PS3__
+void ScriptBroken(const char *file, int line);
+#define script_bad() do { FlushLog(); ScriptBroken(__FILE__, __LINE__); } while(0)
+// an entity the command needs isn't there (a handle of something the
+// cleanup deleted...): on the PS3 the script stops instead of using nil
+#define script_check(p) do { if (!(p)) { script_bad(); return 0; } } while(0)
+#define script_checkv(p) do { if (!(p)) { script_bad(); return; } } while(0)
+// patch 50: what a mission asks of the world (Script.cpp)
+class CRunningScript;
+void PS3_ScriptCarQuery(CRunningScript *s, const char *what, int32 handle, int32 marked, float x1, float y1, float x2, float y2, int32 model);
+void PS3_ScriptModelWait(CRunningScript *s, int32 model, bool loaded);
+void PS3_ScriptGone(CRunningScript *s, const char *what, int32 handle);
+// patch 53: Messing with the Man (the bikers' chaos meter) is running
+extern bool gPS3ChaosMission;
+#else
+#define script_bad() script_assert(0)
+#define script_check(p) script_assert(p)
+#define script_checkv(p) script_assert(p)
+#endif
+
 #define PICKUP_PLACEMENT_OFFSET (0.5f)
 #define PED_FIND_Z_OFFSET (5.0f)
 #define COP_PED_FIND_Z_OFFSET (10.0f)
@@ -636,6 +660,7 @@ public:
 	static uint32& GetLastMissionPassedTime() { return LastMissionPassedTime; }
 #ifdef MISSION_SWITCHER
 	static void SwitchToMission(int32 mission);
+	static void EndMissionScripts(void);	// the running mission fails and cleans up (as a switch does)
 #endif
 
 	static int GetSaveVarIndex(int);

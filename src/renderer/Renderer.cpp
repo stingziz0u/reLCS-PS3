@@ -101,8 +101,10 @@ CRenderer::PreRender(void)
 	int i;
 	CLink<CVisibilityPlugins::AlphaObjectInfo> *node;
 
-	for(i = 0; i < ms_nNoOfVisibleEntities; i++)
+	for(i = 0; i < ms_nNoOfVisibleEntities; i++){
+		PS3_CRUMB("PreRender visible: model|type<<16", ms_aVisibleEntityPtrs[i]->GetModelIndex() | ms_aVisibleEntityPtrs[i]->GetType()<<16);
 		ms_aVisibleEntityPtrs[i]->PreRender();
+	}
 
 	for(i = 0; i < ms_nNoOfVisibleVehicles; i++)
 		ms_aVisibleVehiclePtrs[i]->PreRender();
@@ -122,15 +124,20 @@ CRenderer::PreRender(void)
 #ifdef SQUEEZE_PERFORMANCE
 		if (ms_aInVisibleEntityPtrs[i]->IsVehicle() && ((CVehicle*)ms_aInVisibleEntityPtrs[i])->IsHeli())
 #endif
+		PS3_CRUMB("PreRender invisible: model|type<<16", ms_aInVisibleEntityPtrs[i]->GetModelIndex() | ms_aInVisibleEntityPtrs[i]->GetType()<<16);
 		ms_aInVisibleEntityPtrs[i]->PreRender();
 	}
 
 	for(node = CVisibilityPlugins::m_alphaEntityList.head.next;
 	    node != &CVisibilityPlugins::m_alphaEntityList.tail;
-	    node = node->next)
+	    node = node->next){
+		PS3_CRUMB("PreRender alpha: model|type<<16", ((CEntity*)node->item.entity)->GetModelIndex() | ((CEntity*)node->item.entity)->GetType()<<16);
 		((CEntity*)node->item.entity)->PreRender();
+	}
 
+	PS3_CRUMB("CHeli::SpecialHeliPreRender", 0);
 	CHeli::SpecialHeliPreRender();
+	PS3_CRUMB("CShadows::RenderExtraPlayerShadows", 0);
 	CShadows::RenderExtraPlayerShadows();
 }
 
@@ -445,18 +452,6 @@ CRenderer::RenderVehicles(void)
 	POP_RENDERGROUP();
 }
 
-#ifdef NEW_RENDERER
-#ifndef LIBRW
-#error "Need librw for EXTENDED_PIPELINES"
-#endif
-
-enum {
-	// blend passes
-	PASS_NOZ,	// no z-write
-	PASS_ADD,	// additive
-	PASS_BLEND	// normal blend
-};
-
 static void
 SetStencilState(int state)
 {
@@ -484,6 +479,19 @@ SetStencilState(int state)
 		break;
 	}
 }
+
+#ifdef NEW_RENDERER
+#ifndef LIBRW
+#error "Need librw for EXTENDED_PIPELINES"
+#endif
+
+enum {
+	// blend passes
+	PASS_NOZ,	// no z-write
+	PASS_ADD,	// additive
+	PASS_BLEND	// normal blend
+};
+
 
 void
 CRenderer::RenderOneBuilding(CEntity *ent, float camdist)
@@ -1810,6 +1818,7 @@ CRenderer::RemoveVehiclePedLights(CEntity *ent, bool reset)
 }
 
 
+#ifdef EXTENDED_PIPELINES
 #include "postfx.h"
 
 static RwIm2DVertex Screen2EnvQuad[4];
@@ -1990,3 +1999,10 @@ CRenderer::GenerateEnvironmentMap(void)
 		RwIm2DRenderIndexedPrimitive(rwPRIMTYPETRILIST, CustomPipes::EnvScreenQuad, 4, (RwImVertexIndex*)CustomPipes::QuadIndices, 6);
 	}
 }
+#else
+// PS3: no environment map (custom pipelines are GL3/D3D9 only)
+void
+CRenderer::GenerateEnvironmentMap(void)
+{
+}
+#endif

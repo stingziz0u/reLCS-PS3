@@ -485,6 +485,7 @@ CWeapon::FireFromCar(CVehicle *shooter, bool left, bool right)
 bool
 CWeapon::FireMelee(CEntity *shooter, CVector &fireSource)
 {
+	PS3_CRUMB("CWeapon::FireMelee weapon|shooter model<<16", m_eWeaponType | shooter->GetModelIndex()<<16);
 	ASSERT(shooter!=nil);
 
 	CWeaponInfo *info = GetInfo();

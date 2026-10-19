@@ -12,6 +12,9 @@
 #endif
 
 #include "Pad.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#endif
 #include "ControllerConfig.h"
 #include "Timer.h"
 #include "Frontend.h"
@@ -78,7 +81,11 @@ CMouseControllerState CPad::NewMouseControllerState;
 CMouseControllerState CPad::PCTempMouseControllerState;
 
 #ifdef DETECT_PAD_INPUT_SWITCH
+#ifdef __PS3__
+bool CPad::IsAffectedByController = true;	// a pad only: on-screen help shows pad buttons from the start
+#else
 bool CPad::IsAffectedByController = false;
+#endif
 #endif
 
 _TODO("gbFastTime");
@@ -1699,6 +1706,32 @@ void CPad::UpdatePads(void)
 
 	if ( bUpdate )
 		GetPad(0)->Update(0);
+
+#if defined(__PS3__) && PS3_STAGE != 1
+	PS3_AutotestFrame();	// the automatic test (USRDIR/autotest.txt), if any
+	PS3_CarSpawnerPad();	// L3 + R3
+	{
+		// vibration (Gamepad settings): what the PS2 game sent to the
+		// DualShock 2 every frame, on the DS3's large motor
+		// Real time: the game's clock stands still in the pause menu, where
+		// only the menu's own test shake (turning it on) may run.
+		extern uint32 TimeToStopPadShaking;
+		static uint32 last;
+		uint32 now = (uint32)CTimer::GetTimeInMillisecondsPauseMode();
+		int32 dt = last ? Min((int32)(now - last), 100) : 0;
+		last = now;
+		CPad *pad0 = GetPad(0);
+		if (FrontEndMenuManager.m_bMenuActive && TimeToStopPadShaking == 0)
+			pad0->ShakeDur = 0;
+		if (pad0->ShakeDur > 0)
+			pad0->ShakeDur = Max(pad0->ShakeDur - dt, 0);
+		if (pad0->ShakeDur <= 0) {
+			pad0->ShakeDur = 0;
+			pad0->ShakeFreq = 0;
+		}
+		PS3_PadRumble(pad0->ShakeFreq);
+	}
+#endif
 
 #ifndef MASTER
 	GetPad(1)->Update(1);

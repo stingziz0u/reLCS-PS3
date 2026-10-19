@@ -257,6 +257,7 @@ CPed::ClearPointGunAt(void)
 void
 CPed::SetAttack(CEntity *victim)
 {
+	PS3_CRUMB("CPed::SetAttack model|state<<16", GetModelIndex() | m_nPedState<<16);
 	CPed *victimPed = nil;
 	CWeaponInfo *curWeapon = CWeaponInfo::GetWeaponInfo(GetWeapon()->m_eWeaponType);
 	CAnimBlendAssociation *animAssoc;
@@ -997,7 +998,7 @@ CPed::Attack(void)
 			&& (GetWeapon()->m_eWeaponState != WEAPONSTATE_RELOADING
 				|| GetWeapon()->m_eWeaponType == WEAPONTYPE_MINIGUN)) {
 
-			PedOnGroundState pedOnGroundState;
+			PedOnGroundState pedOnGroundState = NO_PED;	// unset without nastyGame
 			if (ourWeapon->m_eWeaponFire == WEAPON_FIRE_MELEE &&
 				(CGame::nastyGame && ((pedOnGroundState = CheckForPedsOnGroundToAttack(this, nil)) > PED_IN_FRONT_OF_ATTACKER)
 				|| GetWeapon()->m_eWeaponType == WEAPONTYPE_BASEBALLBAT && pedOnGroundState == NO_PED && bIsStanding && m_pCurSurface && m_pCurSurface->IsVehicle())) {
@@ -1062,6 +1063,7 @@ CPed::Attack(void)
 void
 CPed::StartFightAttack(uint8 buttonPressure)
 {
+	PS3_CRUMB("CPed::StartFightAttack model|state<<16", GetModelIndex() | m_nPedState<<16);
 	if (!IsPedInControl() || (m_attackTimer > CTimer::GetTimeInMilliseconds() && buttonPressure != 0))
 		return;
 
@@ -1151,6 +1153,7 @@ CPed::StartFightAttack(uint8 buttonPressure)
 void
 CPed::StartFightDefend(uint8 direction, uint8 hitLevel, uint8 unk)
 {
+	PS3_CRUMB("CPed::StartFightDefend model|state<<16", GetModelIndex() | m_nPedState<<16);
 	if (m_nPedState == PED_DEAD) {
 		if (CGame::nastyGame) {
 			if (hitLevel == HITLEVEL_GROUND) {
@@ -2070,6 +2073,7 @@ CPed::PlayHitSound(CPed *hitTo)
 bool
 CPed::FightStrike(CVector &touchedNodePos, bool fightWithWeapon)
 {
+	PS3_CRUMB("CPed::FightStrike model|state<<16", GetModelIndex() | m_nPedState<<16);
 	CColModel *hisCol;
 	CVector attackDistance;
 	float maxDistanceToBeat;
@@ -2666,6 +2670,7 @@ CPed::ClearInvestigateEvent(void)
 bool
 CPed::InflictDamage(CEntity *damagedBy, eWeaponType method, float damage, ePedPieceTypes pedPiece, uint8 direction)
 {
+	PS3_CRUMB("CPed::InflictDamage model|state<<16", GetModelIndex() | m_nPedState<<16);
 	CPlayerPed *player = FindPlayerPed();
 	float dieDelta = 4.0f;
 	float dieSpeed = 0.0f;

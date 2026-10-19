@@ -158,6 +158,12 @@ CBike::CBike(int32 id, uint8 CreatedBy)
 		m_aGroundOffset[i] = CVector(0.0f, 0.0f, 0.0f);
 		m_aSuspensionSpringRatioPrev[i] = m_aSuspensionSpringRatio[i] = 1.0f;
 		m_aWheelTimer[i] = 0.0f;
+#ifdef __PS3__
+		// never set until a wheel touches the ground, but PreRender uses
+		// them for wheel particles (cars and bikes of scripted playback)
+		memset((void*)&m_aWheelColPoints[i], 0, sizeof(CColPoint));
+		m_aWheelColPoints[i].surfaceB = SURFACE_DEFAULT;
+#endif
 	}
 
 	m_nWheelsOnGround = 0;

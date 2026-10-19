@@ -16,11 +16,11 @@ public:
 	{
 		float result = angle;
 
-		while (result >= 180.0f) {
+		while (PS3_ANGLE_OK(result) && result >= 180.0f) {
 			result -= 2 * 180.0f;
 		}
 
-		while (result < -180.0f) {
+		while (PS3_ANGLE_OK(result) && result < -180.0f) {
 			result += 2 * 180.0f;
 		}
 
@@ -32,11 +32,11 @@ public:
 	{
 		float result = Clamp(angle, -25.0f, 25.0f);
 
-		while (result >= PI) {
+		while (PS3_ANGLE_OK(result) && result >= PI) {
 			result -= 2 * PI;
 		}
 
-		while (result < -PI) {
+		while (PS3_ANGLE_OK(result) && result < -PI) {
 			result += 2 * PI;
 		}
 	

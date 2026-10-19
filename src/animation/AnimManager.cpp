@@ -1484,26 +1484,32 @@ CAnimManager::LoadAnimFile(RwStream *stream, bool compress, char (*uncompressedA
 		uint32 size;
 	};
 	IfpHeader anpk, info, name, dgan, cpan, anim;
+#ifdef __PS3__
+	alignas(16) char buf[256];	// read through fbuf: floats must be aligned on the PPU
+#else
 	char buf[256];
+#endif
 	int j, k, l;
 	float *fbuf = (float*)buf;
+	// the .ifp files are little-endian
+#define READ_IFP_HEADER(h) do { RwStreamRead(stream, &(h), sizeof(IfpHeader)); (h).size = LittleU32((h).size); } while(0)
 
 	// block name
-	RwStreamRead(stream, &anpk, sizeof(IfpHeader));
+	READ_IFP_HEADER(anpk);
 	ROUNDSIZE(anpk.size);
-	RwStreamRead(stream, &info, sizeof(IfpHeader));
+	READ_IFP_HEADER(info);
 	ROUNDSIZE(info.size);
 	RwStreamRead(stream, buf, info.size);
 	CAnimBlock *animBlock = GetAnimationBlock(buf+4);
 	if(animBlock){
 		if(animBlock->numAnims == 0){
-			animBlock->numAnims = *(int*)buf;
+			animBlock->numAnims = LittleI32(*(int*)buf);
 			animBlock->firstIndex = ms_numAnimations;
 		}
 	}else{
 		animBlock = &ms_aAnimBlocks[ms_numAnimBlocks++];
 		strncpy(animBlock->name, buf+4, MAX_ANIMBLOCK_NAME);
-		animBlock->numAnims = *(int*)buf;
+		animBlock->numAnims = LittleI32(*(int*)buf);
 		animBlock->firstIndex = ms_numAnimations;
 	}
 
@@ -1516,7 +1522,7 @@ CAnimManager::LoadAnimFile(RwStream *stream, bool compress, char (*uncompressedA
 		CAnimBlendHierarchy *hier = &ms_aAnimations[animIndex++];
 
 		// animation name
-		RwStreamRead(stream, &name, sizeof(IfpHeader));
+		READ_IFP_HEADER(name);
 		ROUNDSIZE(name.size);
 		RwStreamRead(stream, buf, name.size);
 		hier->SetName(buf);
@@ -1539,32 +1545,32 @@ CAnimManager::LoadAnimFile(RwStream *stream, bool compress, char (*uncompressedA
 		hier->keepCompressed = false;
 
 		// DG info has number of nodes/sequences
-		RwStreamRead(stream, (char*)&dgan, sizeof(IfpHeader));
+		READ_IFP_HEADER(dgan);
 		ROUNDSIZE(dgan.size);
-		RwStreamRead(stream, (char*)&info, sizeof(IfpHeader));
+		READ_IFP_HEADER(info);
 		ROUNDSIZE(info.size);
 		RwStreamRead(stream, buf, info.size);
-		hier->numSequences = *(int*)buf;
+		hier->numSequences = LittleI32(*(int*)buf);
 		hier->sequences = new CAnimBlendSequence[hier->numSequences];
 
 		CAnimBlendSequence *seq = hier->sequences;
 		for(k = 0; k < hier->numSequences; k++, seq++){
 			// Each node has a name and key frames
-			RwStreamRead(stream, &cpan, sizeof(IfpHeader));
+			READ_IFP_HEADER(cpan);
 			ROUNDSIZE(dgan.size);
-			RwStreamRead(stream, &anim, sizeof(IfpHeader));
+			READ_IFP_HEADER(anim);
 			ROUNDSIZE(anim.size);
 			RwStreamRead(stream, buf, anim.size);
-			int numFrames = *(int*)(buf+28);
+			int numFrames = LittleI32(*(int*)(buf+28));
 			seq->SetName(buf);
 			if(anim.size == 44)
-				seq->SetBoneTag(*(int*)(buf+40));
+				seq->SetBoneTag(LittleI32(*(int*)(buf+40)));
 			if(numFrames == 0)
 				continue;
 
 			bool hasScale = false;
 			bool hasTranslation = false;
-			RwStreamRead(stream, &info, sizeof(info));
+			READ_IFP_HEADER(info);
 			if(strncmp(info.ident, "KRTS", 4) == 0){
 				hasScale = true;
 				seq->SetNumFrames(numFrames, true, compressHier);
@@ -1580,6 +1586,7 @@ CAnimManager::LoadAnimFile(RwStream *stream, bool compress, char (*uncompressedA
 			for(l = 0; l < numFrames; l++){
 				if(hasScale){
 					RwStreamRead(stream, buf, 0x2C);
+					LittleSwap32(buf, 0x2C/4);
 					CQuaternion rot(fbuf[0], fbuf[1], fbuf[2], fbuf[3]);
 					rot.Invert();
 					CVector trans(fbuf[4], fbuf[5], fbuf[6]);
@@ -1599,6 +1606,7 @@ CAnimManager::LoadAnimFile(RwStream *stream, bool compress, char (*uncompressedA
 					}
 				}else if(hasTranslation){
 					RwStreamRead(stream, buf, 0x20);
+					LittleSwap32(buf, 0x20/4);
 					CQuaternion rot(fbuf[0], fbuf[1], fbuf[2], fbuf[3]);
 					rot.Invert();
 					CVector trans(fbuf[4], fbuf[5], fbuf[6]);
@@ -1616,6 +1624,7 @@ CAnimManager::LoadAnimFile(RwStream *stream, bool compress, char (*uncompressedA
 					}
 				}else{
 					RwStreamRead(stream, buf, 0x14);
+					LittleSwap32(buf, 0x14/4);
 					CQuaternion rot(fbuf[0], fbuf[1], fbuf[2], fbuf[3]);
 					rot.Invert();
 
@@ -1639,6 +1648,7 @@ CAnimManager::LoadAnimFile(RwStream *stream, bool compress, char (*uncompressedA
 	}
 	if(animIndex > ms_numAnimations)
 		ms_numAnimations = animIndex;
+#undef READ_IFP_HEADER
 }
 
 void

@@ -796,6 +796,10 @@ int8 CRunningScript::ProcessCommands500To599(int32 command)
 		if (model < 0)
 			model = CTheScripts::UsedObjectArray[-model].index;
 		UpdateCompareFlag(CStreaming::HasModelLoaded(model)/* || cWorldStream::Instance()->pDynamic(model, 0) */); // TODO
+#ifdef __PS3__
+		if (model >= 0 && model < NUMSTREAMINFO && m_bIsMissionScript)
+			PS3_ScriptModelWait(this, model, CStreaming::HasModelLoaded(model));
+#endif
 		return 0;
 	}
 	case COMMAND_MARK_MODEL_AS_NO_LONGER_NEEDED:
@@ -904,7 +908,7 @@ int8 CRunningScript::ProcessCommands500To599(int32 command)
 		return 0;
 #endif
 	default:
-		script_assert(0);
+		script_bad();
 	}
 	return -1;
 }
@@ -1562,7 +1566,7 @@ int8 CRunningScript::ProcessCommands600To699(int32 command)
 		return 0;
 	*/
 	default:
-		script_assert(0);
+		script_bad();
 	}
 	return -1;
 }
@@ -2458,7 +2462,7 @@ int8 CRunningScript::ProcessCommands700To799(int32 command)
 		return 0;
 	}
 	default:
-		script_assert(0);
+		script_bad();
 	}
 	return -1;
 }

@@ -5,6 +5,9 @@
 #include "CopPed.h"
 #include "CutsceneMgr.h"
 #include "DMAudio.h"
+#ifdef __PS3__
+#include "AudioManager.h"
+#endif
 #include "EventList.h"
 #include "Explosion.h"
 #include "Fire.h"
@@ -24,6 +27,45 @@
 #include "TempColModels.h"
 #include "WaterLevel.h"
 #include "World.h"
+#ifdef __PS3__
+// the entity being processed, for the crash dump (Ped.cpp)
+extern CEntity *PS3_curEntity;
+extern const char *PS3_curEntityStep;
+#define PS3_CUR_ENTITY(e, step) (PS3_curEntity = (e), PS3_curEntityStep = (step))
+// CPU time of each entity's animations and ProcessControl, by kind ([prof] world:)
+static const char *ps3AnimNames[] = { "anims peds", "anims vehicles", "anims objects", "anims other" };
+static const char *ps3ControlNames[] = { "control peds", "control vehicles", "control objects", "control other" };
+static inline int PS3_EntKind(CEntity *e) { return e->IsPed() ? 0 : e->IsVehicle() ? 1 : e->IsObject() ? 2 : 3; }
+#define PS3_ENT_T0() unsigned long long ps3t0 = PS3_Ticks()
+#define PS3_ENT_ADD(names, e) PS3_ProfAdd(PS3_PROF_WORLD, names[PS3_EntKind(e)], PS3_Ticks() - ps3t0)
+#define PS3_WORLD_STEP(name) PS3_ProfStep(PS3_PROF_WORLD, name)
+// patch 44: ProcessCollision in its passes (the first one, up to four more
+// for what isn't in a safe position yet, the stuck pass) and the models that
+// cost the most: the [col] log line. In patch 43's stress log, chaos with
+// the tank took collision to 8.6 ms a frame (the RSX waiting for the CPU).
+static unsigned long long ps3ColTicks[3];
+static uint32 ps3ColCalls[3];
+static unsigned long long ps3ColModelTicks[MODELINFOSIZE];
+static uint32 ps3ColModelCalls[MODELINFOSIZE];
+static inline void
+PS3_ColAdd(CEntity *e, int pass, unsigned long long t)
+{
+	ps3ColTicks[pass] += t;
+	ps3ColCalls[pass]++;
+	int mi = e->GetModelIndex();
+	if (mi >= 0 && mi < MODELINFOSIZE) {
+		ps3ColModelTicks[mi] += t;
+		ps3ColModelCalls[mi]++;
+	}
+}
+#define PS3_COL_PROCESS(e, pass) do { unsigned long long ps3c0 = PS3_Ticks(); (e)->ProcessCollision(); PS3_ColAdd((e), (pass), PS3_Ticks() - ps3c0); } while (0)
+#else
+#define PS3_CUR_ENTITY(e, step)
+#define PS3_ENT_T0()
+#define PS3_ENT_ADD(names, e)
+#define PS3_WORLD_STEP(name)
+#define PS3_COL_PROCESS(e, pass) (e)->ProcessCollision()
+#endif
 
 #define OBJECT_REPOSITION_OFFSET_Z 2.0f
 
@@ -90,7 +132,15 @@ CWorld::Remove(CEntity *ent)
 
 	if(ent->IsBuilding() || ent->IsDummy()) return;
 
+#ifdef __PS3__
+	// a static entity can still be in the moving list (CWorld::Process takes
+	// it out after its ProcessControl): deleted before that, its node stayed
+	// and the next frame processed a freed object (reVC-PS3, mission
+	// cub3: the game thread died). RemoveFromMovingList checks the node.
+	((CPhysical *)ent)->RemoveFromMovingList();
+#else
 	if(!ent->GetIsStatic()) ((CPhysical *)ent)->RemoveFromMovingList();
+#endif
 }
 
 void
@@ -1898,10 +1948,109 @@ CWorld::RemoveStaticObjects()
 	}
 }
 
+#ifdef __PS3__
+#include "ps3_platform.h"	// PS3_Logf
+// any live entity of the pools
+static bool
+PS3_AnyEntityLive(const void *p)
+{
+	int idx;
+	bool isFree;
+	if(CPools::GetPedPool()->PS3_Owns(p, &idx, &isFree) ||
+	   CPools::GetVehiclePool()->PS3_Owns(p, &idx, &isFree) ||
+	   CPools::GetObjectPool()->PS3_Owns(p, &idx, &isFree) ||
+	   CPools::GetBuildingPool()->PS3_Owns(p, &idx, &isFree) ||
+	   CPools::GetTreadablePool()->PS3_Owns(p, &idx, &isFree) ||
+	   CPools::GetDummyPool()->PS3_Owns(p, &idx, &isFree))
+		return !isFree;
+	return false;
+}
+
+static bool
+PS3_PedLive(const void *p)
+{
+	int idx;
+	bool isFree;
+	return CPools::GetPedPool()->PS3_Owns(p, &idx, &isFree) && !isFree;
+}
+
+static void
+PS3_LogStalePtr(CPhysical *e, const char *name, const void *p)
+{
+	static int logged;
+	if(logged < 24){
+		logged++;
+		PS3_Logf("[world] stale %s %p in %s %p (model %d): cleared", name, p,
+		         e->IsPed() ? "ped" : e->IsVehicle() ? "vehicle" : "object", e, e->GetModelIndex());
+	}
+	PS3_CRUMB("world: stale entity pointer cleared, model", e->GetModelIndex());
+}
+
+// Nodes of the moving list whose entity was deleted without leaving it (or
+// whose pool slot holds another entity now): dropped before anything uses
+// them, and logged. And the entity pointers of the vehicles and objects
+// that move (collision records, ground, driver, passengers...): one to a
+// deleted entity is cleared (the peds check theirs, Ped.cpp). A few pool
+// checks per moving entity a frame.
+static void
+PS3_SweepMovingList(void)
+{
+#define PS3_FIX_PTR(m, live) \
+	if((m) && !live(m)){ PS3_LogStalePtr(e, #m, (m)); (m) = nil; }
+	CPtrNode *next;
+	for(CPtrNode *node = CWorld::GetMovingEntityList().first; node; node = next){
+		next = node->next;
+		CPhysical *e = (CPhysical *)node->item;
+		int idx = -1;
+		bool isFree = true;
+		const char *pool = "no pool";
+		if(CPools::GetPedPool()->PS3_Owns(e, &idx, &isFree)) pool = "ped";
+		else if(CPools::GetVehiclePool()->PS3_Owns(e, &idx, &isFree)) pool = "vehicle";
+		else if(CPools::GetObjectPool()->PS3_Owns(e, &idx, &isFree)) pool = "object";
+		else isFree = true;
+		if(isFree || e->m_movingListNode != node){
+			static int logged;
+			if(logged < 16){
+				logged++;
+				PS3_Logf("[world] moving list: %p (%s slot %d, %s) isn't a live entity there: dropped",
+				         e, pool, idx, isFree ? "free" : "another entity's node");
+			}
+			PS3_CRUMB("world: stale moving list node dropped, slot", idx);
+			CWorld::GetMovingEntityList().DeleteNode(node);
+			continue;
+		}
+		if(e->IsPed())
+			continue;
+		int n = 0;
+		for(int i = 0; i < e->m_nCollisionRecords && i < PHYSICAL_MAX_COLLISIONRECORDS; i++){
+			if(PS3_AnyEntityLive(e->m_aCollisionRecords[i]))
+				e->m_aCollisionRecords[n++] = e->m_aCollisionRecords[i];
+			else
+				PS3_LogStalePtr(e, "m_aCollisionRecords[]", e->m_aCollisionRecords[i]);
+		}
+		e->m_nCollisionRecords = n;
+		PS3_FIX_PTR(e->m_pDamageEntity, PS3_AnyEntityLive);
+		if(e->IsVehicle()){
+			CVehicle *v = (CVehicle *)e;
+			PS3_FIX_PTR(v->pDriver, PS3_PedLive);
+			for(int i = 0; i < ARRAY_SIZE(v->pPassengers); i++)
+				PS3_FIX_PTR(v->pPassengers[i], PS3_PedLive);
+			PS3_FIX_PTR(v->m_pCurGroundEntity, PS3_AnyEntityLive);
+			PS3_FIX_PTR(v->m_pBlowUpEntity, PS3_AnyEntityLive);
+			PS3_FIX_PTR(v->m_pLastDamageEntity, PS3_AnyEntityLive);
+		}
+	}
+#undef PS3_FIX_PTR
+}
+#endif
+
 void
 CWorld::Process(void)
 {
 	if(!(CTimer::GetFrameCounter() & 63)) CReferences::PruneAllReferencesInWorld();
+#ifdef __PS3__
+	PS3_SweepMovingList();
+#endif
 
 	if(bProcessCutsceneOnly) {
 		for(int i = 0; i < NUMCUTSCENEOBJECTS; i++) {
@@ -1925,6 +2074,8 @@ CWorld::Process(void)
 		for(CPtrNode *node = ms_listMovingEntityPtrs.first; node; node = node->next) {
 			CPhysical *movingEnt = (CPhysical *)node->item;
 			if(movingEnt->bRemoveFromWorld) {
+				PS3_CRUMB("world: remove model|type<<16", movingEnt->GetModelIndex() | movingEnt->GetType()<<16);
+				PS3_CUR_ENTITY(movingEnt, "removal");
 				RemoveEntityInsteadOfProcessingIt(movingEnt);
 			} else {
 				if(!CCutsceneMgr::IsCutsceneProcessing() || movingEnt->UpdatesInCutscene())
@@ -1962,7 +2113,11 @@ CWorld::Process(void)
 				if(movingEnt->bRemoveFromWorld) {
 					RemoveEntityInsteadOfProcessingIt(movingEnt);
 				} else {
+					PS3_CRUMB("world: ProcessControl (postponed) model", movingEnt->GetModelIndex());
+					PS3_CUR_ENTITY(movingEnt, "ProcessControl");
+					PS3_ENT_T0();
 					movingEnt->ProcessControl();
+					PS3_ENT_ADD(ps3ControlNames, movingEnt);
 					if(movingEnt->GetIsStatic()) { movingEnt->RemoveFromMovingList(); }
 				}
 			}
@@ -1976,11 +2131,14 @@ CWorld::Process(void)
 				movingEnt->UpdateRwFrame();
 			}
 		} else {
+			PS3_WORLD_STEP("collision");
 			bNoMoreCollisionTorque = false;
 			for(CPtrNode *node = ms_listMovingEntityPtrs.first; node; node = node->next) {
 				CEntity *movingEnt = (CEntity *)node->item;
 				if(!movingEnt->bIsInSafePosition) {
-					movingEnt->ProcessCollision();
+					PS3_CRUMB("world: ProcessCollision model", movingEnt->GetModelIndex());
+					PS3_CUR_ENTITY(movingEnt, "ProcessCollision");
+					PS3_COL_PROCESS(movingEnt, 0);
 					movingEnt->GetMatrix().UpdateRW();
 					movingEnt->UpdateRwFrame();
 				}
@@ -1990,7 +2148,9 @@ CWorld::Process(void)
 				for(CPtrNode *node = ms_listMovingEntityPtrs.first; node; node = node->next) {
 					CEntity *movingEnt = (CEntity *)node->item;
 					if(!movingEnt->bIsInSafePosition) {
-						movingEnt->ProcessCollision();
+						PS3_CRUMB("world: ProcessCollision model", movingEnt->GetModelIndex());
+						PS3_CUR_ENTITY(movingEnt, "ProcessCollision");
+						PS3_COL_PROCESS(movingEnt, 1);
 						movingEnt->GetMatrix().UpdateRW();
 						movingEnt->UpdateRwFrame();
 					}
@@ -2000,16 +2160,21 @@ CWorld::Process(void)
 				CEntity *movingEnt = (CEntity *)node->item;
 				if(!movingEnt->bIsInSafePosition) {
 					movingEnt->bIsStuck = true;
-					movingEnt->ProcessCollision();
+					PS3_CRUMB("world: ProcessCollision (stuck) model", movingEnt->GetModelIndex());
+					PS3_CUR_ENTITY(movingEnt, "ProcessCollision");
+					PS3_COL_PROCESS(movingEnt, 2);
 					movingEnt->GetMatrix().UpdateRW();
 					movingEnt->UpdateRwFrame();
 					if(!movingEnt->bIsInSafePosition) { movingEnt->bIsStuck = true; }
 				}
 			}
+			PS3_WORLD_STEP("shift");
 			bSecondShift = false;
 			for(CPtrNode *node = ms_listMovingEntityPtrs.first; node; node = node->next) {
 				CEntity *movingEnt = (CEntity *)node->item;
 				if(!movingEnt->bIsInSafePosition) {
+					PS3_CRUMB("world: ProcessShift model", movingEnt->GetModelIndex());
+					PS3_CUR_ENTITY(movingEnt, "ProcessShift");
 					movingEnt->ProcessShift();
 					movingEnt->GetMatrix().UpdateRW();
 					movingEnt->UpdateRwFrame();
@@ -2020,6 +2185,8 @@ CWorld::Process(void)
 			for(CPtrNode *node = ms_listMovingEntityPtrs.first; node; node = node->next) {
 				CPhysical *movingEnt = (CPhysical *)node->item;
 				if(!movingEnt->bIsInSafePosition) {
+					PS3_CRUMB("world: ProcessShift model", movingEnt->GetModelIndex());
+					PS3_CUR_ENTITY(movingEnt, "ProcessShift");
 					movingEnt->ProcessShift();
 					movingEnt->GetMatrix().UpdateRW();
 					movingEnt->UpdateRwFrame();
@@ -2035,9 +2202,12 @@ CWorld::Process(void)
 				}
 			}
 		}
+		PS3_WORLD_STEP("peds in vehicles");
 		for(CPtrNode *node = ms_listMovingEntityPtrs.first; node; node = node->next) {
 			CPed *movingPed = (CPed *)node->item;
 			if(movingPed->IsPed()) {
+				PS3_CRUMB("world: ped in/at a vehicle model|state<<16", movingPed->GetModelIndex() | movingPed->m_nPedState<<16);
+				PS3_CUR_ENTITY(movingPed, "vehicle/attached position");
 				if(movingPed->bInVehicle && movingPed->m_nPedState != PED_EXIT_TRAIN ||
 				   movingPed->EnteringCar()) {
 					CVehicle *movingCar = movingPed->m_pMyVehicle;
@@ -2075,6 +2245,8 @@ CWorld::Process(void)
 				}
 			}
 		}
+		PS3_CUR_ENTITY(nil, "");
+		PS3_WORLD_STEP("messages, player, fallen");
 		CMessages::Process();
 		Players[PlayerInFocus].Process();
 		CRecordDataForChase::SaveOrRetrieveCarPositions();
@@ -2083,6 +2255,7 @@ CWorld::Process(void)
 		} else if((CTimer::GetFrameCounter() & 7) == 5) {
 			RemoveFallenCars();
 		}
+		PS3_WORLD_STEP(nil);
 	}
 }
 
@@ -2328,3 +2501,70 @@ CWorld::CheckObjectsEffectedByFire(float x, float y, float z, float radius, CEnt
 		}
 	}
 }
+
+#ifdef __PS3__
+#include <sys/systime.h>
+// "[col] ..." with the [prof] lines (ps3_prof.cpp, every 10 s)
+// Every 10 s (ps3_prof.cpp): how full the pools are. Something that only
+// grows over hours (an audio entity never given back, an object pool that
+// fills) shows here long before it breaks anything (Cabmageddon, reVC-PS3
+// patch 57: a crash after 2.5 hours, not in a short session).
+void
+PS3_PoolsReport(void)
+{
+	int audio = 0;
+	for (int i = 0; i < NUM_AUDIOENTITIES; i++)
+		if (AudioManager.m_asAudioEntities[i].m_bIsUsed)
+			audio++;
+	PS3_Logf("[pools] audio entities %d of %d (one-shot %d); peds %d of %d, vehicles %d of %d, objects %d of %d, ptr nodes %d of %d, entry nodes %d of %d",
+	         audio, NUM_AUDIOENTITIES, AudioManager.m_sAudioScriptObjectManager.m_nScriptObjectEntityTotal,
+	         CPools::GetPedPool()->GetNoOfUsedSpaces(), CPools::GetPedPool()->GetSize(),
+	         CPools::GetVehiclePool()->GetNoOfUsedSpaces(), CPools::GetVehiclePool()->GetSize(),
+	         CPools::GetObjectPool()->GetNoOfUsedSpaces(), CPools::GetObjectPool()->GetSize(),
+	         CPools::GetPtrNodePool()->GetNoOfUsedSpaces(), CPools::GetPtrNodePool()->GetSize(),
+	         CPools::GetEntryInfoNodePool()->GetNoOfUsedSpaces(), CPools::GetEntryInfoNodePool()->GetSize());
+}
+
+void
+PS3_ColReport(unsigned int frames)
+{
+	if (frames == 0 || ps3ColCalls[0] == 0)
+		return;
+	double msPerTick = 1000.0 / sysGetTimebaseFrequency();
+	extern unsigned long long PS3_colModelsTicks, PS3_colPlaneTicks;	// Collision.cpp
+	extern uint32 PS3_colModelsCalls, PS3_colPlaneMisses, PS3_colPlaneTris, PS3_colPlaneBytes;
+	extern int32 PS3_colCacheUsed, PS3_colCacheLimit;
+	PS3_Logf("[col]  inside: ProcessColModels %.2f ms (x%.0f); triangle planes not cached: %.2f ms (x%.1f, %.0f triangles); "
+	         "plane cache %d of %d col models, %u KB",
+	         PS3_colModelsTicks * msPerTick / frames, (double)PS3_colModelsCalls / frames,
+	         PS3_colPlaneTicks * msPerTick / frames, (double)PS3_colPlaneMisses / frames,
+	         (double)PS3_colPlaneTris / frames, PS3_colCacheUsed, PS3_colCacheLimit, PS3_colPlaneBytes >> 10);
+	PS3_colModelsTicks = PS3_colPlaneTicks = 0;
+	PS3_colModelsCalls = PS3_colPlaneMisses = PS3_colPlaneTris = 0;
+	char line[700];
+	int len = snprintf(line, sizeof(line),
+	                   "[col]  ProcessCollision per frame: first pass %.2f ms (x%.1f), passes 2-5 %.2f ms (x%.1f), stuck pass %.2f ms (x%.1f) | slowest models:",
+	                   ps3ColTicks[0] * msPerTick / frames, (double)ps3ColCalls[0] / frames,
+	                   ps3ColTicks[1] * msPerTick / frames, (double)ps3ColCalls[1] / frames,
+	                   ps3ColTicks[2] * msPerTick / frames, (double)ps3ColCalls[2] / frames);
+	for (int k = 0; k < 6 && len < (int)sizeof(line) - 70; k++) {
+		int best = -1;
+		for (int i = 0; i < MODELINFOSIZE; i++)
+			if (ps3ColModelTicks[i] && (best < 0 || ps3ColModelTicks[i] > ps3ColModelTicks[best]))
+				best = i;
+		if (best < 0)
+			break;
+		CBaseModelInfo *mi = CModelInfo::GetModelInfo(best);
+		len += snprintf(line + len, sizeof(line) - len, " %s %.2f ms (x%.1f, %.3f each)",
+		                mi ? mi->GetModelName() : "?", ps3ColModelTicks[best] * msPerTick / frames,
+		                (double)ps3ColModelCalls[best] / frames,
+		                ps3ColModelTicks[best] * msPerTick / ps3ColModelCalls[best]);
+		ps3ColModelTicks[best] = 0;
+	}
+	PS3_Log(line);
+	memset(ps3ColTicks, 0, sizeof(ps3ColTicks));
+	memset(ps3ColCalls, 0, sizeof(ps3ColCalls));
+	memset(ps3ColModelTicks, 0, sizeof(ps3ColModelTicks));
+	memset(ps3ColModelCalls, 0, sizeof(ps3ColModelCalls));
+}
+#endif

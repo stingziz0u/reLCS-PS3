@@ -44,6 +44,7 @@ C_PcSave::SaveSlot(int32 slot)
 	MakeValidSaveName(slot);
 	PcSaveHelper.nErrorCode = SAVESTATUS_SUCCESSFUL;
 	_psGetUserFilesFolder();
+	PS3_CRUMB("SaveSlot: open", slot);
 	int file = CFileMgr::OpenFile(ValidSaveName, "wb");
 	if (file != 0) {
 #ifdef MISSION_REPLAY
@@ -51,10 +52,18 @@ C_PcSave::SaveSlot(int32 slot)
 #endif
 			DoGameSpecificStuffBeforeSave();
 		if (GenericSave(file)) {
+			PS3_CRUMB("SaveSlot: close", slot);
 			if (!!CFileMgr::CloseFile(file))
 				nErrorCode = SAVESTATUS_ERR_SAVE_CLOSE;
+#ifdef __PS3__
+			debug("save: slot %d written to %s\n", slot + 1, ValidSaveName);
+#endif
 			return 0;
 		}
+#ifdef __PS3__
+		debug("save: slot %d failed (error %d)\n", slot + 1, nErrorCode);
+		CFileMgr::CloseFile(file);	// the original leaks the file here
+#endif
 
 		return 2;
 	}
@@ -109,8 +118,12 @@ C_PcSave::PopulateSlotInfo()
 			SYSTEMTIME SaveDateTime;
 		} header;
 		sprintf(savename, "%s%i%s", DefaultPCSaveFileName, i + 1, ".b");
+		PS3_CRUMB("PopulateSlotInfo: slot", i);
 		int file = CFileMgr::OpenFile(savename, "rb");
 		if (file != 0) {
+#ifdef __PS3__
+			memset(&header, 0, sizeof(header));
+#endif
 			CFileMgr::Read(file, (char*)&header, sizeof(header));
 			if (strncmp((char*)&header, TopLineEmptyFile, sizeof(TopLineEmptyFile)-1) != 0) {
 				Slots[i] = SLOT_OK;
@@ -131,7 +144,11 @@ C_PcSave::PopulateSlotInfo()
 #endif
 				SYSTEMTIME st;
 				memcpy(&st, &header.SaveDateTime, sizeof(SYSTEMTIME));
+#ifdef __PS3__
+				const char *month = "JAN";	// a PC (little-endian) save has the month byte-swapped
+#else
 				const char *month;
+#endif
 				switch (st.wMonth)
 				{
 				case 1: month = "JAN"; break;

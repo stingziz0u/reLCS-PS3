@@ -1,6 +1,10 @@
 #include <csignal>
 #define WITHWINDOWS
 #include "common.h"
+#ifdef __PS3__
+#include "crossplatform.h"
+#include "ps3_platform.h"
+#endif
 #if defined DETECT_JOYSTICK_MENU && defined XINPUT
 #include <xinput.h>
 #if !defined(PSAPI_VERSION) || (PSAPI_VERSION > 1)
@@ -194,7 +198,14 @@ CustomFrontendOptionsPopulate(void)
 #define MINI_CASE_SENSITIVE
 #include "ini.h"
 
+#ifdef __PS3__
+// lv2 has no working directory (ps3_fs.cpp emulates one, and the game moves
+// it around: data/, TXD/...): the ini always in USRDIR, whatever it is
+#include "ps3_platform.h"
+mINI::INIFile ini(PS3_USRDIR "/reLCS.ini");
+#else
 mINI::INIFile ini("reLCS.ini");
+#endif
 mINI::INIStructure cfg;
 
 bool ReadIniIfExists(const char *cat, const char *key, uint32 *out)
@@ -396,7 +407,7 @@ void LoadINIControllerSettings()
 				if (contType == -1)
 					continue;
 
-				int contKey;
+				int contKey = -1;
 				if (contType == JOYSTICK) {
 					char *temp;
 					contKey = strtol(binding, &temp, 0);
@@ -423,6 +434,8 @@ void LoadINIControllerSettings()
 					}
 				}
 
+				if (contKey == -1)
+					continue;
 				ControlsManager.SetControllerKeyAssociatedWithAction((e_ControllerAction)i, contKey, (eControllerType)contType);
 			}
 		}
@@ -519,6 +532,14 @@ bool LoadINISettings()
 	ReadIniIfExists("General", "SkinFile", FrontEndMenuManager.m_PrefsSkinFile, 256);
 	ReadIniIfExists("Controller", "Method", &FrontEndMenuManager.m_ControlMethod);
 	ReadIniIfExists("General", "Language", &FrontEndMenuManager.m_PrefsLanguage);
+#ifdef __PS3__
+	{
+		// gamepad settings: CONFIGURATION (setup 1-4), not saved by the PC game
+		int32 padMode;
+		if (ReadIniIfExists("Controller", "PadMode", &padMode) && padMode >= 0 && padMode <= 3)
+			CPad::GetPad(0)->Mode = padMode;
+	}
+#endif
 	ReadIniIfExists("Display", "ShowHud", &FrontEndMenuManager.m_PrefsShowHud);
 	ReadIniIfExists("Display", "RadarMode", &FrontEndMenuManager.m_PrefsRadarMode);
 	ReadIniIfExists("Display", "ShowLegends", &FrontEndMenuManager.m_PrefsShowLegends);
@@ -628,6 +649,9 @@ void SaveINISettings()
 	StoreIni("General", "SkinFile", FrontEndMenuManager.m_PrefsSkinFile, 256);
 	StoreIni("Controller", "Method", FrontEndMenuManager.m_ControlMethod);
 	StoreIni("General", "Language", FrontEndMenuManager.m_PrefsLanguage);
+#ifdef __PS3__
+	StoreIni("Controller", "PadMode", (int32)CPad::GetPad(0)->Mode);
+#endif
 	StoreIni("Display", "ShowHud", FrontEndMenuManager.m_PrefsShowHud);
 	StoreIni("Display", "RadarMode", FrontEndMenuManager.m_PrefsRadarMode);
 	StoreIni("Display", "ShowLegends", FrontEndMenuManager.m_PrefsShowLegends);
@@ -1231,6 +1255,23 @@ void re3_assert(const char *expr, const char *filename, unsigned int lineno, con
 		return;
 
 	abort();
+#elif defined __PS3__
+	// to the log and keep going (no debugger); each place logged 3 times at most
+	static struct { const char *file; unsigned int line; int count; } seen[64];
+	static int numSeen;
+	int i;
+	for (i = 0; i < numSeen; i++)
+		if (seen[i].line == lineno && seen[i].file == filename)
+			break;
+	if (i == numSeen && numSeen < 64) {
+		seen[numSeen].file = filename;
+		seen[numSeen].line = lineno;
+		seen[numSeen].count = 0;
+		numSeen++;
+	}
+	if (i < 64 && seen[i].count++ >= 3)
+		return;
+	PS3_Logf("[assert] %s:%u %s(): %s", filename, lineno, func, expr);
 #else
 	// TODO
 	printf("\nRELCS ASSERT FAILED\n\tFile: %s\n\tLine: %d\n\tFunction: %s\n\tExpression: %s\n",filename,lineno,func,expr);
@@ -1247,11 +1288,15 @@ void re3_debug(const char *format, ...)
 #ifdef _WIN32
 	vsprintf_s(re3_buff, re3_buffsize, format, va);
 #else
-	vsprintf(re3_buff, format, va);
+	vsnprintf(re3_buff, re3_buffsize, format, va);
 #endif
 	va_end(va);
 
+#ifdef __PS3__
+	PS3_LogRaw(re3_buff);
+#else
 	printf("%s", re3_buff);
+#endif
 	CDebug::DebugAddText(re3_buff);
 #endif
 }

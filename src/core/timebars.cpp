@@ -52,6 +52,7 @@ void tbInit()
 
 void tbStartTimer(int32 unk, Const char *name)
 {
+	PS3_CRUMB(name, unk);
 	strcpy(TimerBar.Timers[TimerBar.count].name, name);
 	TimerBar.Timers[TimerBar.count].unk = unk;
 	TimerBar.Timers[TimerBar.count].startTime = (float)CTimer::GetCurrentTimeInCycles() / (float)CTimer::GetCyclesPerFrame();

@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#endif
 
 #include "Script.h"
 #include "ScriptCommands.h"
@@ -128,6 +131,9 @@ int8 CRunningScript::ProcessCommands800To899(int32 command)
 	{
 		CollectParameters(&m_nIp, 5);
 		int handle = -1;
+#ifdef __PS3__
+		int32 ps3Marked = 0;
+#endif
 		uint32 i = CPools::GetVehiclePool()->GetSize();
 		float infX = GET_FLOAT_PARAM(0);
 		float infY = GET_FLOAT_PARAM(1);
@@ -153,8 +159,14 @@ int8 CRunningScript::ProcessCommands800To899(int32 command)
 			--CCarCtrl::NumRandomCars;
 			if (m_bIsMissionScript)
 				CTheScripts::MissionCleanUp.AddEntityToList(handle, CLEANUP_CAR);
+#ifdef __PS3__
+			ps3Marked++;
+#endif
 		}
-		SET_INTEGER_PARAM(0, handle);
+#ifdef __PS3__
+		PS3_ScriptCarQuery(this, "GET_RANDOM_CAR_OF_TYPE_IN_AREA", handle, ps3Marked, infX, infY, supX, supY, ScriptParams[4]);
+#endif
+		ScriptParams[0] = handle;
 		StoreParameters(&m_nIp, 1);
 		return 0;
 	}
@@ -1203,7 +1215,7 @@ int8 CRunningScript::ProcessCommands800To899(int32 command)
 		return 0;
 	}
 	default:
-		script_assert(0);
+		script_bad();
 	}
 	return -1;
 }
@@ -2115,7 +2127,26 @@ int8 CRunningScript::ProcessCommands900To999(int32 command)
 	case COMMAND_ADD_BLIP_FOR_PICKUP:
 	{
 		CollectParameters(&m_nIp, 1);
-		CObject* pObject = CPickups::aPickUps[CPickups::GetActualPickupIndex(GET_INTEGER_PARAM(0))].m_pObject;
+#ifdef __PS3__
+		// a pickup that is gone (or never was: GenerateNewOne found no slot)
+		// has no object: aPickUps[-1] / GetIndex(nil) read outside the
+		// arrays (the autotest died here in GENERL3). Blip its place instead
+		int pickupIndex = CPickups::GetActualPickupIndex(ScriptParams[0]);
+		CObject* pObject = pickupIndex >= 0 ? CPickups::aPickUps[pickupIndex].m_pObject : nil;
+		if (pObject == nil) {
+			PS3_Logf("[script] ADD_BLIP_FOR_PICKUP: pickup handle 0x%x (index %d) has no object: %s",
+			         ScriptParams[0], pickupIndex, pickupIndex >= 0 ? "blip at its place" : "no blip");
+			CRadar::GetActualBlipArrayIndex(CollectNextParameterWithoutIncreasingPC(m_nIp));
+			int handle = pickupIndex >= 0 ? CRadar::SetCoordBlip(BLIP_COORD, CPickups::aPickUps[pickupIndex].m_vecPos, 6, BLIP_DISPLAY_BOTH) : -1;
+			if (handle != -1)
+				CRadar::ChangeBlipScale(handle, 3);
+			ScriptParams[0] = handle;
+			StoreParameters(&m_nIp, 1);
+			return 0;
+		}
+#else
+		CObject* pObject = CPickups::aPickUps[CPickups::GetActualPickupIndex(ScriptParams[0])].m_pObject;
+#endif
 		CRadar::GetActualBlipArrayIndex(CollectNextParameterWithoutIncreasingPC(m_nIp));
 		int handle = CRadar::SetEntityBlip(BLIP_OBJECT, CPools::GetObjectPool()->GetIndex(pObject), 6, BLIP_DISPLAY_BOTH);
 		CRadar::ChangeBlipScale(handle, 3);
@@ -2198,7 +2229,7 @@ int8 CRunningScript::ProcessCommands900To999(int32 command)
 		CHud::m_ItemToFlash = GET_INTEGER_PARAM(0);
 		return 0;
 	default:
-		script_assert(0);
+		script_bad();
 	}
 	return -1;
 }

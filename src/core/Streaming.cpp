@@ -13,6 +13,32 @@
 #include "Wanted.h"
 #include "Directory.h"
 #include "RwHelper.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#endif
+#if defined(__PS3__) && defined(RW_PS3_RSX)
+#include "src/ps3/rwps3.h"
+#endif
+
+#if defined(__PS3__) && defined(RW_PS3_RSX)
+#include "TxdStore.h"
+// The map's radar tiles ("radar00".."radar63"): 2D, so no made mip levels,
+// and HD ones (256x256 and more) kept as DXT in VRAM. An HD map pack of 64
+// 512x512 RGBA tiles took 64-87 MB and VRAM ran out with the map open
+// (white tiles, Ren's re3 log).
+static void
+PS3_TxdLoadHints(int32 slot)
+{
+	const char *n = CTxdStore::GetTxdName(slot);
+	bool radar = n && strncmp(n, "radar", 5) == 0 && n[5] >= '0' && n[5] <= '9';
+	rw::ps3::loadHints = radar ? rw::ps3::PS3_LOAD_NOMIPS | rw::ps3::PS3_LOAD_DXT : 0;
+}
+#define PS3_TXD_HINTS(slot) PS3_TxdLoadHints(slot)
+#define PS3_TXD_HINTS_END() (rw::ps3::loadHints = 0)
+#else
+#define PS3_TXD_HINTS(slot)
+#define PS3_TXD_HINTS_END()
+#endif
 #include "World.h"
 #include "Entity.h"
 #include "FileMgr.h"
@@ -38,6 +64,34 @@
 #include "Frontend.h"
 #include "VarConsole.h"
 #include "KeyGen.h"
+
+#if defined(__PS3__) && defined(RW_PS3_RSX)
+// how long each streamed object takes to become a RW object (the [tex] line)
+struct PS3StreamTimer {
+	uint64 start;
+	int32 streamId;
+	PS3StreamTimer(int32 id) : start(rw::ps3::texProfNow()), streamId(id) {}
+	~PS3StreamTimer() {
+		rw::ps3::TexProfile &t = rw::ps3::texProfile;
+		uint64 d = rw::ps3::texProfNow() - start;
+		if(d > t.worstUs){
+			t.worstUs = d;
+			// VC also streams col (STREAM_OFFSET_COL) and ifp (STREAM_OFFSET_ANIM)
+			const char *name = streamId < STREAM_OFFSET_TXD ? CModelInfo::GetModelInfo(streamId)->GetModelName() :
+			                   streamId < STREAM_OFFSET_COL ? CTxdStore::GetTxdName(streamId - STREAM_OFFSET_TXD) :
+			                   streamId < STREAM_OFFSET_ANIM ? "col" : streamId < NUMSTREAMINFO ? "ifp" : "?";
+			snprintf(t.worstName, sizeof(t.worstName), "%s%s", streamId < STREAM_OFFSET_TXD ? "" :
+			         streamId < STREAM_OFFSET_COL ? "txd " : "", name);
+		}
+		if(streamId < STREAM_OFFSET_TXD){ t.modelUs += d; t.models++; }
+		else if(streamId < STREAM_OFFSET_COL){ t.txdUs += d; t.txds++; }
+		else { t.otherUs += d; t.others++; }
+	}
+};
+#define PS3_STREAM_TIMER(id) PS3StreamTimer ps3StreamTimer(id)
+#else
+#define PS3_STREAM_TIMER(id)
+#endif
 
 bool CStreaming::ms_disableStreaming;
 bool CStreaming::ms_bLoadingBigModel;
@@ -230,7 +284,23 @@ CStreaming::Init2(void)
 	// PC only, figure out how much memory we got
 #ifdef GTA_PC
 #define MB (1024*1024)
-#ifdef FIX_BUGS
+#if defined(__PS3__)
+	// What is really free now (audio banks, RenderWare and the pools are
+	// already allocated), minus room for everything that still grows while
+	// playing (mission entities, cutscenes, collision, the stream decoders).
+	// lv2 hangs instead of failing when it runs out: stay well inside.
+	{
+		int32 freeMB = (int32)PS3_FreeUserMemMB();
+		int32 mb = freeMB - 48;
+		if(mb > 96) mb = 96;
+		if(mb < 65) mb = 65;
+		ms_memoryAvailable = mb*MB;
+		PS3_Logf("[mem] streaming budget %d MB (free user memory %d MB)", mb, freeMB);
+	}
+	desiredNumVehiclesLoaded = (int32)((ms_memoryAvailable / MB - 65) / 3 + 12);
+	if(desiredNumVehiclesLoaded > MAXVEHICLESLOADED)
+		desiredNumVehiclesLoaded = MAXVEHICLESLOADED;
+#elif defined FIX_BUGS
 	// do what gta3 does
 	extern size_t _dwMemAvailPhys;
 	ms_memoryAvailable = (_dwMemAvailPhys - 10*MB)/2;
@@ -242,7 +312,7 @@ CStreaming::Init2(void)
 #else
 	ms_memoryAvailable = 65 * MB;
 	desiredNumVehiclesLoaded = 25;
-	debug("Memory allocated to Streaming is %zuMB", ms_memoryAvailable/MB); // original modifier was %d
+	debug("Memory allocated to Streaming is %dMB", (int)(ms_memoryAvailable/MB)); // original modifier was %d
 #endif
 #undef MB
 #endif
@@ -432,6 +502,19 @@ CStreaming::LoadCdDirectory(const char *dirname, int n)
 	assert(sizeof(direntry) == 32);
 	while(CFileMgr::Read(fd, (char*)&direntry, sizeof(direntry))){
 		bool bAddToStreaming = false;
+		direntry.offset = LittleU32(direntry.offset);	// .dir is little-endian
+		direntry.size = LittleU32(direntry.size);
+#ifdef __PS3__
+		// USRDIR/mods: a file of the same name replaces the entry. It sits in
+		// its own image, so it is never read together with its neighbours
+		int imgSelector = n<<24;
+		direntry.name[23] = '\0';
+		if(PS3_ModsImgEntry(direntry.name, &direntry.offset, &direntry.size)){
+			imgSelector = PS3_MODS_IMAGE<<24;
+			lastID = -1;
+		}
+		bool ps3Mod = imgSelector != n<<24;
+#endif
 
 		if(direntry.size > (uint32)ms_streamingBufferSize)
 			ms_streamingBufferSize = direntry.size;
@@ -451,7 +534,11 @@ CStreaming::LoadCdDirectory(const char *dirname, int n)
 			}else{
 #ifdef FIX_BUGS
 				// remember which cdimage this came from
+#ifdef __PS3__
+				ms_pExtraObjectsDir->AddItem(direntry, ps3Mod ? PS3_MODS_IMAGE : n);
+#else
 				ms_pExtraObjectsDir->AddItem(direntry, n);
+#endif
 #else
 				ms_pExtraObjectsDir->AddItem(direntry);
 #endif
@@ -488,6 +575,9 @@ CStreaming::LoadCdDirectory(const char *dirname, int n)
 				if(lastID != -1)
 					ms_aInfoForModel[lastID].m_nextID = modelId;
 				lastID = modelId;
+#ifdef __PS3__
+				if(ps3Mod) lastID = -1;
+#endif
 			}
 		}
 	}
@@ -524,6 +614,8 @@ RegisterAtomicMemPtrsCB(RpAtomic *atomic, void *data)
 bool
 CStreaming::ConvertBufferToObject(int8 *buf, int32 streamId)
 {
+	PS3_CRUMB("CStreaming::ConvertBufferToObject", streamId);
+	PS3_STREAM_TIMER(streamId);
 	RwMemory mem;
 	RwStream *stream;
 	int cdsize;
@@ -611,12 +703,14 @@ CStreaming::ConvertBufferToObject(int8 *buf, int32 streamId)
 		}
 
 		PUSH_MEMID(MEMID_STREAM_TEXUTRES);
+		PS3_TXD_HINTS(streamId - STREAM_OFFSET_TXD);
 		if(ms_bLoadingBigModel || cdsize > 200){
 			success = CTxdStore::StartLoadTxd(streamId - STREAM_OFFSET_TXD, stream);
 			if(success)
 				ms_aInfoForModel[streamId].m_loadState = STREAMSTATE_STARTED;
 		}else
 		        success = CTxdStore::LoadTxd(streamId - STREAM_OFFSET_TXD, stream);
+		PS3_TXD_HINTS_END();
 		POP_MEMID();
 		UpdateMemoryUsed();
 
@@ -698,6 +792,7 @@ CStreaming::ConvertBufferToObject(int8 *buf, int32 streamId)
 bool
 CStreaming::FinishLoadingLargeFile(int8 *buf, int32 streamId)
 {
+	PS3_STREAM_TIMER(streamId);
 	RwMemory mem;
 	RwStream *stream;
 	uint32 startTime, endTime, timeDiff;
@@ -739,7 +834,9 @@ CStreaming::FinishLoadingLargeFile(int8 *buf, int32 streamId)
 		// Txd
 		CTxdStore::AddRef(streamId - STREAM_OFFSET_TXD);
 		PUSH_MEMID(MEMID_STREAM_TEXUTRES);
+		PS3_TXD_HINTS(streamId - STREAM_OFFSET_TXD);
 		success = CTxdStore::FinishLoadTxd(streamId - STREAM_OFFSET_TXD, stream);
+		PS3_TXD_HINTS_END();
 		POP_MEMID();
 		CTxdStore::RemoveRefWithoutDelete(streamId - STREAM_OFFSET_TXD);
 	}else{
@@ -1846,7 +1943,7 @@ CStreaming::StreamZoneModels(const CVector &pos)
 		timeBeforeNextLoad--;
 	else{
 		// Switch a ped
-		int oldMI;
+		int oldMI = -1;
 		// Find a ped to unload
 		for(i = 0; i < NUMMODELSPERPEDGROUP; i++)
 			if(ms_bIsPedFromPedGroupLoaded[i]){
@@ -2247,11 +2344,26 @@ CStreaming::RequestModelStream(int32 ch)
 }
 
 // Load data previously read from disc
+#ifdef __PS3__
+// LoadRequestedModels (the streaming of every frame): a channel's files are
+// turned into objects until ~4 ms went by, the rest on its next turn, so a
+// frame doesn't convert four big TXDs in a row (the hitches when new areas
+// stream in). Loading screens and FlushChannels convert everything at once.
+static bool ps3StreamBudget;
+// texels the texture thread converts in ~12 ms (~80 ns a texel with mip
+// levels while the game thread runs too: the stress test of patch 36)
+#define PS3_TEX_BACKLOG_MAX 160000
+namespace rw { namespace ps3 { uint32 textureBacklog(void); } }
+#endif
+
 bool
 CStreaming::ProcessLoadingChannel(int32 ch)
 {
 	int status;
 	int i, id, cdsize;
+#ifdef __PS3__
+	uint32 ps3Start = CTimer::GetCurrentTimeInCycles();
+#endif
 
 	status = CdStreamGetStatus(ch);
 	if(status != STREAM_NONE){
@@ -2301,6 +2413,23 @@ CStreaming::ProcessLoadingChannel(int32 ch)
 				}else
 					ms_channel[ch].streamIds[i] = -1;
 			}
+#ifdef __PS3__
+			// (patch 36) or the texture thread has ~12 ms of work queued
+			if(ps3StreamBudget && ms_channel[ch].state != CHANNELSTATE_STARTED &&
+			   (CTimer::GetCurrentTimeInCycles() - ps3Start > 4 * CTimer::GetCyclesPerMillisecond() ||
+			    rw::ps3::textureBacklog() > PS3_TEX_BACKLOG_MAX)){
+				bool more = false;
+				for(int j = i+1; j < 4; j++)
+					if(ms_channel[ch].streamIds[j] != -1)
+						more = true;
+				if(more){
+					// still READING: the next turn of this channel goes on
+					// with the files left (its buffer isn't reused before)
+					ms_channel[ch].state = CHANNELSTATE_READING;
+					return false;
+				}
+			}
+#endif
 		}
 	}
 
@@ -2362,8 +2491,15 @@ CStreaming::LoadRequestedModels(void)
 
 	// We have data, load
 	if(ms_channel[currentChannel].state == CHANNELSTATE_READING ||
-	   ms_channel[currentChannel].state == CHANNELSTATE_STARTED)
+	   ms_channel[currentChannel].state == CHANNELSTATE_STARTED){
+#ifdef __PS3__
+		ps3StreamBudget = true;
 		ProcessLoadingChannel(currentChannel);
+		ps3StreamBudget = false;
+#else
+		ProcessLoadingChannel(currentChannel);
+#endif
+	}
 
 	if(ms_channelError == -1){
 		// Channel is idle, read more data
@@ -3150,6 +3286,21 @@ CStreaming::MakeSpaceFor(int32 size)
 	}
 #undef MB
 #endif
+#ifdef RW_PS3_RSX
+	// textures take ~4x their IMG size in VRAM: it runs out before the
+	// streaming memory does, so make room there too
+	// nothing unused left and VRAM still tight: what is behind the camera
+	// goes, as the game does for its streaming memory (Ren's re3 log: a
+	// burst of 464 models took VRAM from 179 to 216 MB, every texture
+	// after that failed and the game crashed opening the map)
+	for(int ps3Round = 0; rw::ps3::vramTight() && ps3Round < 8; ps3Round++){
+		while(rw::ps3::vramTight() && RemoveLeastUsedModel(STREAMFLAGS_20))
+			rw::ps3::vramEvictions++;
+		if(!rw::ps3::vramCritical())
+			break;
+		DeleteRwObjectsBehindCamera(ms_memoryUsed > 2*1024*1024 ? ms_memoryUsed - 2*1024*1024 : 0);
+	}
+#endif
 	while(ms_memoryUsed >= ms_memoryAvailable - size)
 		if(!RemoveLeastUsedModel(STREAMFLAGS_20)){
 			DeleteRwObjectsBehindCamera(ms_memoryAvailable - size);
@@ -3280,7 +3431,7 @@ CStreaming::UpdateForAnimViewer(void)
 		CStreaming::AddModelsToRequestList(CVector(0.0f, 0.0f, 0.0f), 0);
 		CStreaming::LoadRequestedModels();
 		// original modifier was %d
-		sprintf(gString, "Requested %d, memory size %zuK\n", CStreaming::ms_numModelsRequested, 2 * CStreaming::ms_memoryUsed);
+		sprintf(gString, "Requested %d, memory size %dK\n", CStreaming::ms_numModelsRequested, (int)(2 * CStreaming::ms_memoryUsed));
 	}
 	else {
 		CStreaming::RetryLoadFile(CStreaming::ms_channelError);

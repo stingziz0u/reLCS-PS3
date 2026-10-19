@@ -58,6 +58,61 @@
 #include <rwcore.h>
 #include <rpworld.h>
 
+// Pool-backed classes return nil from operator new when their pool is full.
+// Without noexcept the compiler may run the constructor on that nil (the
+// original game did): with it, `new` gives nil and the callers that check
+// for it (most of them) carry on.
+#ifdef __PS3__
+#define POOL_NEW_NOEXCEPT noexcept
+#else
+#define POOL_NEW_NOEXCEPT
+#endif
+
+// Input through the GLFW-style code paths: real GLFW, or the PS3 pad layer
+// that implements the few glfw* calls the game makes.
+#if defined RW_GL3 || defined __PS3__
+#define RE3_GLFW_INPUT
+#endif
+#ifdef __PS3__
+#include "ps3_glfw.h"
+// crash breadcrumbs: cheap, in memory; the main thread dumps them to the log
+// when the game thread dies (skel/ps3/ps3_log.cpp). tag must be a literal.
+extern "C" void PS3_Crumb(const char *tag, int val);
+extern "C" void PS3_CrumbAt(const char *tag, int val, unsigned where);
+extern "C" void PS3_ScriptCrumb(const char *name8, int command, unsigned ip);
+#define PS3_CRUMB(tag, val) PS3_Crumb(tag, val)
+extern "C" void PS3_PoolFull(const char *name, int size);	// ps3_log.cpp
+// The "while (a >= PI) a -= TWOPI;" loops of the game (100+, patch 18):
+// with an infinite or huge angle they never end and the game freezes. A
+// sane angle is left alone; anything else (inf, NaN, |a| >= 100000) is 0.
+extern "C" void PS3_BadAngle(void);	// ps3_log.cpp: crumb + one log line
+static inline bool PS3_AngleOk(float &a) { if (!(a > -100000.0f && a < 100000.0f)) { a = 0.0f; PS3_BadAngle(); } return true; }
+#define PS3_ANGLE_OK(a) PS3_AngleOk(a)
+// the address is where the current function was called from
+#define PS3_CRUMB_CALLER(tag, val) PS3_CrumbAt(tag, val, (unsigned)(uintptr_t)__builtin_return_address(0))
+// Where the CPU time inside CGame::Process and CWorld::Process goes
+// (ps3_prof.cpp, a "[prof] game:" and a "[prof] world:" line every 10 s).
+// A step of a group lasts until the group's next step (nil: the end); the
+// time of an entity's work is added to a bucket with PS3_ProfAdd. Ticks are
+// the timebase's (mftb: no system call).
+extern "C" void PS3_ProfStep(int group, const char *name);
+extern "C" void PS3_ProfAdd(int group, const char *name, unsigned long long ticks);
+static inline unsigned long long PS3_Ticks(void) { unsigned long long t; __asm__ volatile("mftb %0" : "=r"(t)); return t; }
+#define PS3_PROF_GAME	0
+#define PS3_PROF_WORLD	1
+#define PS3_PROF_SCENE	2
+#define PS3_GAME_STEP(tag) do { PS3_Crumb(tag, 0); PS3_ProfStep(PS3_PROF_GAME, tag); } while (0)
+#define PS3_SCENE_STEP(tag) PS3_ProfStep(PS3_PROF_SCENE, tag)
+#define PS3_FX_STEP(tag) do { PS3_Crumb(tag, 0); PS3_ProfStep(PS3_PROF_SCENE, tag); } while (0)
+#else
+#define PS3_CRUMB(tag, val)
+#define PS3_CRUMB_CALLER(tag, val)
+#define PS3_ANGLE_OK(a) true
+#define PS3_GAME_STEP(tag)
+#define PS3_SCENE_STEP(tag)
+#define PS3_FX_STEP(tag)
+#endif
+
 // gotta put this somewhere
 #ifdef LIBRW
 #define STREAMPOS(str) ((str)->tell())
@@ -110,6 +165,39 @@ typedef uint16_t wchar;
 typedef uint8 bool8;
 typedef uint16 bool16;
 typedef uint32 bool32;
+
+// The PC data files are little-endian. On a big-endian build (PS3) these
+// swap what was read straight into memory; elsewhere they do nothing.
+#ifdef BIGENDIAN
+inline uint16 LittleU16(uint16 x) { return __builtin_bswap16(x); }
+inline int16 LittleI16(int16 x) { return (int16)__builtin_bswap16((uint16)x); }
+inline uint32 LittleU32(uint32 x) { return __builtin_bswap32(x); }
+inline int32 LittleI32(int32 x) { return (int32)__builtin_bswap32((uint32)x); }
+inline float LittleF32(float x) { uint32 u; memcpy(&u, &x, 4); u = __builtin_bswap32(u); memcpy(&x, &u, 4); return x; }
+#else
+inline uint16 LittleU16(uint16 x) { return x; }
+inline int16 LittleI16(int16 x) { return x; }
+inline uint32 LittleU32(uint32 x) { return x; }
+inline int32 LittleI32(int32 x) { return x; }
+inline float LittleF32(float x) { return x; }
+#endif
+// in place, for whole arrays of 32/16 bit values (ints or floats)
+inline void LittleSwap32(void *p, int32 count)
+{
+#ifdef BIGENDIAN
+	uint32 *w = (uint32*)p;
+	for(int32 i = 0; i < count; i++)
+		w[i] = __builtin_bswap32(w[i]);
+#endif
+}
+inline void LittleSwap16(void *p, int32 count)
+{
+#ifdef BIGENDIAN
+	uint16 *w = (uint16*)p;
+	for(int32 i = 0; i < count; i++)
+		w[i] = __builtin_bswap16(w[i]);
+#endif
+}
 
 #if defined(_MSC_VER) || defined (__MWERKS__)
 typedef ptrdiff_t ssize_t;

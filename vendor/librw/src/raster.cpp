@@ -15,6 +15,7 @@
 //#include "d3d/rwd3d8.h"
 //#include "d3d/rwd3d9.h"
 #include "gl/rwgl3.h"
+#include "ps3/rwps3.h"
 
 #define PLUGIN_ID 0
 
@@ -460,6 +461,44 @@ d3d_to_gl3(rw::Raster *ras)
 #endif
 }
 
+#ifdef RW_PS3
+static rw::Raster*
+d3d_to_ps3(rw::Raster *ras)
+{
+	using namespace rw;
+
+	int dxt = 0;
+	d3d::D3dRaster *d3dras = GETD3DRASTEREXT(ras);
+	if(d3dras->customFormat){
+		switch(d3dras->format){
+		case d3d::D3DFMT_DXT1: dxt = 1; break;
+		case d3d::D3DFMT_DXT3: dxt = 3; break;
+		case d3d::D3DFMT_DXT5: dxt = 5; break;
+		}
+	}
+	if(dxt == 0)
+		return nil;
+
+	Raster *newras = Raster::create(ras->width, ras->height, ras->depth,
+		                        ras->format | Raster::TEXTURE | Raster::DONTALLOCATE);
+	int numLevels = ras->getNumLevels();
+	ps3::allocateDXT(newras, dxt, numLevels, d3dras->hasAlpha);
+	// RSX texture origin is top-left like D3D: the blocks are copied as they are
+	for(int i = 0; i < numLevels; i++){
+		uint8 *srcpx = ras->lock(i, Raster::LOCKREAD);
+		uint8 *dstpx = newras->lock(i, Raster::LOCKWRITE | Raster::LOCKNOFETCH);
+		if(srcpx && dstpx){
+			int32 w = newras->width < 4 ? 4 : newras->width;
+			int32 h = newras->height < 4 ? 4 : newras->height;
+			memcpy(dstpx, srcpx, (w/4)*(h/4)*(dxt == 1 ? 8 : 16));
+		}
+		ras->unlock(i);
+		newras->unlock(i);
+	}
+	return newras;
+}
+#endif
+
 static rw::Raster*
 xbox_to_gl3(rw::Raster *ras)
 {
@@ -515,7 +554,17 @@ Raster::convertTexToCurrentPlatform(rw::Raster *ras)
 			ras->destroy();
 			return newras;
 		}
-	}else if(ras->platform == PLATFORM_XBOX && (rw::platform == PLATFORM_D3D9 || rw::platform == PLATFORM_D3D8)){
+	}
+#ifdef RW_PS3
+	else if((ras->platform == PLATFORM_D3D8 || ras->platform == PLATFORM_D3D9) && rw::platform == PLATFORM_PS3){
+		Raster *newras = d3d_to_ps3(ras);
+		if(newras){
+			ras->destroy();
+			return newras;
+		}
+	}
+#endif
+	else if(ras->platform == PLATFORM_XBOX && (rw::platform == PLATFORM_D3D9 || rw::platform == PLATFORM_D3D8)){
 		Raster *newras = xbox_to_d3d(ras);
 		if(newras){
 			ras->destroy();
@@ -531,20 +580,38 @@ Raster::convertTexToCurrentPlatform(rw::Raster *ras)
 
 	// fall back to going through Image directly
 	int32 width, height, depth, format;
+#ifdef RW_PS3
+	uint64 tprof = ps3::texProfNow();
+	ps3::texProfile.textures++;
+#endif
 	Image *img = ras->toImage();
 	// TODO: maybe don't *always* do this?
 	img->unpalettize();
+#ifdef RW_PS3
+	ps3::texProfile.us[ps3::TEXPROF_CONVERT] += ps3::texProfNow() - tprof;
+#endif
 	Raster::imageFindRasterFormat(img, Raster::TEXTURE, &width, &height, &depth, &format);
 	format |= ras->format & (Raster::MIPMAP | Raster::AUTOMIPMAP);
 	Raster *newras = Raster::create(width, height, depth, format);
+	if(newras == nil){
+		// keep the old one rather than crash
+		img->destroy();
+		return ras;
+	}
 	newras->setFromImage(img);
 	img->destroy();
 	int numLevels = ras->getNumLevels();
 	for(int i = 1; i < numLevels; i++){
 		ras->lock(i, Raster::LOCKREAD);
+#ifdef RW_PS3
+		tprof = ps3::texProfNow();
+#endif
 		img = ras->toImage();
 		// TODO: maybe don't *always* do this?
 		img->unpalettize();
+#ifdef RW_PS3
+		ps3::texProfile.us[ps3::TEXPROF_CONVERT] += ps3::texProfNow() - tprof;
+#endif
 		newras->lock(i, Raster::LOCKWRITE|Raster::LOCKNOFETCH);
 		newras->setFromImage(img);
 		newras->unlock(i);

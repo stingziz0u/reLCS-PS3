@@ -174,6 +174,7 @@ CSkidmarks::RegisterOne(uintptr id, const CVector &pos, float fwdX, float fwdY, 
 void
 CSkidmarks::RegisterOne(uintptr id, const CVector &pos, float fwdX, float fwdY, eSkidmarkType type, bool *isBloody)
 {
+	PS3_CRUMB("CSkidmarks::RegisterOne", (int)(id & 3));
 	int i;
 	CVector2D fwd(fwdX, fwdY);
 

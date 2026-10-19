@@ -1,3 +1,4 @@
+#pragma once
 #include <time.h>
 #include <limits.h>
 
@@ -60,7 +61,7 @@ int _caserename(const char *old_filename, const char *new_filename);
 #define caserename _caserename
 #endif
 
-#ifdef RW_GL3
+#ifdef RE3_GLFW_INPUT
 typedef struct
 {
     GLFWwindow* window;
@@ -131,12 +132,24 @@ void GetLocalTime_CP(SYSTEMTIME* out);
 
 // Compatible with Linux/POSIX and MinGW on Windows
 #ifndef _WIN32
+#ifndef __PS3__
 #include <iostream>
+#include <langinfo.h>
+#else
+#include <ctype.h>
+#include <stdio.h>
+#endif
 #include <dirent.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <langinfo.h>
 #include <unistd.h>
+#include <limits.h>
+#ifndef PATH_MAX
+#define PATH_MAX 1024
+#endif
+#ifndef NAME_MAX
+#define NAME_MAX 255
+#endif
 
 typedef void* HANDLE;
 #define INVALID_HANDLE_VALUE NULL

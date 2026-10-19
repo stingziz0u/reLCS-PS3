@@ -803,7 +803,7 @@ int8 CRunningScript::ProcessCommands1400To1499(int32 command)
 		return 0;
 	}
 	default:
-		script_assert(0);
+		script_bad();
 	}
 	return -1;
 }
