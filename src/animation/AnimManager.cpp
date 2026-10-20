@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#endif
 
 #include "General.h"
 #include "RwHelper.h"
@@ -246,6 +249,14 @@ AnimAssocDesc aWeaponAnimDescs[] = {
 	{ ANIM_ATTACK_2,  ASSOC_FADEOUTWHENDONE | ASSOC_PARTIAL },
 	{ ANIM_ATTACK_EXTRA1,  ASSOC_FADEOUTWHENDONE | ASSOC_PARTIAL },
 	{ ANIM_ATTACK_EXTRA2,  ASSOC_FADEOUTWHENDONE | ASSOC_PARTIAL },
+#ifdef FIX_BUGS
+	// colt45 has 5 anims (colt45_cop): without this the 5th read the next
+	// array (ANIM_MEDIC_CPR) and CreateAnimAssocGroups OR'ed its flags into
+	// assocList[ANIM_MEDIC_CPR - ANIM_ATTACK_1], far past the 5 associations
+	// (res-PS3: the game died when the colt45 block streamed in, after the
+	// intro). reVC has it as ANIM_WEAPON_FIRE_3RD.
+	{ ANIM_ATTACK_3,  ASSOC_FADEOUTWHENDONE | ASSOC_PARTIAL },
+#endif
 };
 AnimAssocDesc aMedicAnimDescs[] = {
 	{ ANIM_MEDIC_CPR,  ASSOC_FADEOUTWHENDONE | ASSOC_PARTIAL },
@@ -1456,9 +1467,18 @@ CAnimManager::CreateAnimAssocGroups(void)
 		group->groupId = i;
 		group->firstAnimId = def->animDescs[0].animId;
 		group->CreateAssociations(def->blockName, clump, def->animNames, def->numAnims);
-		for(j = 0; j < group->numAssociations; j++)
+		for(j = 0; j < group->numAssociations; j++){
+#ifdef __PS3__
+			uint32 idx = def->animDescs[j].animId - group->firstAnimId;
+			if(idx >= (uint32)group->numAssociations){
+				PS3_Logf("[anim] group %s: anim %d has id %d, outside its %d anims: flags not set",
+				         def->name, j, def->animDescs[j].animId, group->numAssociations);
+				continue;
+			}
+#endif
 			// GetAnimation(i) in III (but it's in LoadAnimFiles), GetAnimation(group->animDesc[j].animId) in VC
 			group->GetAnimation(def->animDescs[j].animId)->flags |= def->animDescs[j].flags;
+		}
 		if(IsClumpSkinned(clump))
 			RpClumpForAllAtomics(clump, AtomicRemoveAnimFromSkinCB, nil);
 		RpClumpDestroy(clump);
