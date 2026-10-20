@@ -661,7 +661,10 @@ struct PS3CollectibleIter {
 				CPickup &p = CPickups::aPickUps[i];
 				if (p.m_eType == PICKUP_NONE)
 					continue;
-				if (kind == 0 ? p.m_eType != PICKUP_COLLECTABLE1 : p.m_eModelIndex != MI_PICKUP_KILLFRENZY)
+				// LCS: the hidden packages are ordinary pickups of the package
+				// model (main.scm's CREATE_PICKUP), not PICKUP_COLLECTABLE1
+				if (kind == 0 ? (p.m_eType != PICKUP_COLLECTABLE1 && p.m_eModelIndex != MI_COLLECTABLE1)
+				              : p.m_eModelIndex != MI_PICKUP_KILLFRENZY)
 					continue;
 				pos = p.m_vecPos;
 				i++;
@@ -740,6 +743,26 @@ PS3_DrawCollectibles(void)
 		}
 		if (!map && !inRange && nearestDist >= 0.0f)
 			PS3_CollectibleBlip(nearestPos, c, legends[kind]);
+	}
+	// how many of each the pickups have, the first times the map is open
+	static int logged;
+	if (map && logged < 3) {
+		logged++;
+		int n[2] = { 0, 0 }, types[2] = { -1, -1 };
+		for (int i = 0; i < NUMPICKUPS; i++) {
+			CPickup &p = CPickups::aPickUps[i];
+			if (p.m_eType == PICKUP_NONE)
+				continue;
+			int k = (p.m_eType == PICKUP_COLLECTABLE1 || p.m_eModelIndex == MI_COLLECTABLE1) ? 0 :
+			        p.m_eModelIndex == MI_PICKUP_KILLFRENZY ? 1 : -1;
+			if (k >= 0) {
+				n[k]++;
+				types[k] = p.m_eType;
+			}
+		}
+		PS3_Logf("[map] pickups: %d hidden packages (type %d, model %d), %d rampages (type %d, model %d); shown: packages %d, rampages %d",
+		         n[0], types[0], (int)MI_COLLECTABLE1, n[1], types[1], (int)MI_PICKUP_KILLFRENZY,
+		         (int)gPS3MapPackages, (int)gPS3MapRampages);
 	}
 }
 #endif

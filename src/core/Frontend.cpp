@@ -3170,6 +3170,9 @@ CMenuManager::LoadSettings()
 #ifdef LEGACY_MENU_OPTIONS
 			SETTINGS_READ1(m_PrefsVsyncDisp);
 			SETTINGS_READ1(CMBlur::BlurOn);
+#ifdef __PS3__
+			CMBlur::BlurOn = false;	// no trails on the PS3 (MenuScreensCustom.cpp)
+#endif
 #else
 			CFileMgr::Read(fileHandle, gString, 1);
 			CFileMgr::Read(fileHandle, gString, 1);

@@ -572,7 +572,7 @@ CMenuScreenCustom aScreens[] = {
 		MENUACTION_FRAMESYNC,	"FEM_VSC", {nil, SAVESLOT_NONE, MENUPAGE_DISPLAY_SETTINGS}, 0, 0, MENUALIGN_LEFT,
 #endif
 		MENUACTION_FRAMELIMIT,	"FEM_FRM", {nil, SAVESLOT_NONE, MENUPAGE_DISPLAY_SETTINGS}, 0, 0, MENUALIGN_LEFT,
-#if defined LEGACY_MENU_OPTIONS && !defined EXTENDED_COLOURFILTER
+#if defined LEGACY_MENU_OPTIONS && !defined EXTENDED_COLOURFILTER && !defined __PS3__
 		MENUACTION_TRAILS,		"FED_TRA", {nil, SAVESLOT_NONE, MENUPAGE_DISPLAY_SETTINGS}, 0, 0, MENUALIGN_LEFT,
 #endif
 		MENUACTION_SUBTITLES,	"FED_SUB", {nil, SAVESLOT_NONE, MENUPAGE_DISPLAY_SETTINGS}, 0, 0, MENUALIGN_LEFT,
@@ -946,7 +946,9 @@ CMenuScreenCustom aScreens[] = {
 		DUALPASS_SELECTOR
 #ifdef EXTENDED_COLOURFILTER
 		POSTFX_SELECTORS
-#elif defined LEGACY_MENU_OPTIONS
+#elif defined LEGACY_MENU_OPTIONS && !defined __PS3__
+		// PS3 (reLCS): no TRAILS, the picture of the frame before blended in
+		// went wild (Ren) and cost two waits for the RSX a frame
 		MENUACTION_TRAILS,		"FED_TRA", { nil, SAVESLOT_NONE, MENUPAGE_GRAPHICS_SETTINGS }, 0, 0, MENUALIGN_LEFT,
 #endif
 		// re3.cpp inserts here pipeline selectors if neo/neo.txd exists and EXTENDED_PIPELINES defined

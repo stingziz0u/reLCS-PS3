@@ -102,6 +102,12 @@ imageMissKnown(const char *name, const char *mask)
 void
 imageMissRemember(const char *name, const char *mask)
 {
+	// which ones (reLCS: textures that look broken on the cars)
+	static int logged;
+	if(logged < 80){
+		logged++;
+		rsxLog("[tex] not in its TXD nor an image file: %s%s%s", name ? name : "", mask && mask[0] ? " / " : "", mask ? mask : "");
+	}
 	if(imgMissCount >= IMGMISS_SIZE*3/4){
 		memset(imgMiss, 0, sizeof(imgMiss));
 		imgMissCount = 0;
