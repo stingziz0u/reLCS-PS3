@@ -68,6 +68,9 @@
 #include "SpecialFX.h"
 #include "Stats.h"
 #include "Streaming.h"
+#include "PlayerPed.h"
+#include "ModelIndices.h"
+#include "Camera.h"
 #include "SurfaceTable.h"
 #include "TempColModels.h"
 #include "Timecycle.h"
@@ -804,6 +807,35 @@ void CGame::ShutDownForRestart(void)
 	CSpecialFX::Shutdown();
 }
 
+#ifdef FIX_BUGS
+static void
+PS3_CreatePlayerAfterLoad(void)
+{
+	if (!CStreaming::HasModelLoaded(MI_PLAYER)) {
+		CStreaming::RequestSpecialModel(MI_PLAYER, "player", STREAMFLAGS_DONT_REMOVE | STREAMFLAGS_DEPENDENCY);
+		CStreaming::LoadAllRequestedModels(false);
+	}
+	CPlayerPed::SetupPlayerPed(0);
+	CPlayerPed *player = CWorld::Players[0].m_pPed;
+	player->CharCreatedBy = MISSION_CHAR;
+	// where the camera was saved (by the player); the script puts him at
+	// the safehouse's spot right away
+	CPlayerPed::DeactivatePlayerPed(0);
+	CVector pos = TheCamera.GetPosition();
+	float ground = CWorld::FindGroundZForCoord(pos.x, pos.y);
+	if (ground > MAP_Z_LOW_LIMIT)
+		pos.z = ground;
+	pos.z += player->GetDistanceFromCentreOfMassToBaseOfModel();
+	player->SetPosition(pos);
+	CPlayerPed::ReactivatePlayerPed(0);
+	// his outfit (STORE_PLAYER_OUTFIT; the one he respawns in)
+	player->Undress(CGameLogic::mStoredPlayerOutfit);
+	CStreaming::LoadAllRequestedModels(false);
+	player->Dress();
+	debug("PS3: player created after the load, outfit %s, at %.1f %.1f %.1f\n", CGameLogic::mStoredPlayerOutfit, pos.x, pos.y, pos.z);
+}
+#endif
+
 void CGame::InitialiseWhenRestarting(void)
 {
 	CRect rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -845,6 +877,15 @@ void CGame::InitialiseWhenRestarting(void)
 		InitRadioStationPositionList();
 		if ( bLoadSuccessful == true )
 		{
+#ifdef FIX_BUGS
+			// LCS's saves have no ped pool: the player isn't in the save, the
+			// game makes him here (main.scm goes on after its save with
+			// IS_PLAYER_PLAYING / SET_PLAYER_COORDINATES). Without him the
+			// first frame after a load read a nil player (CTheZones::Update)
+			// and the game went back to the XMB.
+			if (CWorld::Players[0].m_pPed == nil)
+				PS3_CreatePlayerAfterLoad();
+#endif
 			DMAudio.ResetTimers(CTimer::GetTimeInMilliseconds());
 			CFerry::InitFerrys();
 			CTrain::InitTrains();
