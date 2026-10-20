@@ -1727,6 +1727,9 @@ void FlushLog()
 #endif
 }
 
+// (PS3: SCRIPT_LOG_FILE_LEVEL 0 turns USE_ADVANCED_SCRIPT_DEBUG_OUTPUT off;
+// the logging functions below need it, as their declarations in Script.h)
+#ifdef USE_ADVANCED_SCRIPT_DEBUG_OUTPUT
 int32* GetPointerToScriptVariableForDebug(CRunningScript* pScript, uint32* pIp, char* buf)
 {
 	char tmpstr[24];
@@ -1951,6 +1954,7 @@ void CRunningScript::LogAfterProcessingCommand(int32 command)
 		}
 	}
 }
+#endif // USE_ADVANCED_SCRIPT_DEBUG_OUTPUT
 
 #ifdef MISSION_SWITCHER
 void

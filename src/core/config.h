@@ -421,7 +421,13 @@ static_assert(false, "SUPPORT_XBOX_SCRIPT and SUPPORT_MOBILE_SCRIPT are mutually
 //#define USE_MISSION_REPLAY_OVERRIDE_FOR_NON_MOBILE_SCRIPT
 #endif
 #define USE_ADVANCED_SCRIPT_DEBUG_OUTPUT
+#ifdef __PS3__
+// SCRDBG.LOG opened again every frame and a line formatted and written for
+// every script command: 20-35 ms a frame on the PS3
+#define SCRIPT_LOG_FILE_LEVEL 0
+#else
 #define SCRIPT_LOG_FILE_LEVEL 1 // 0 == no log, 1 == overwrite every frame, 2 == full log
+#endif
 
 #if SCRIPT_LOG_FILE_LEVEL == 0
 #undef USE_ADVANCED_SCRIPT_DEBUG_OUTPUT
@@ -538,6 +544,9 @@ static_assert(false, "SUPPORT_XBOX_SCRIPT and SUPPORT_MOBILE_SCRIPT are mutually
 #undef USE_TXD_CDIMAGE		// the PC TXDs are read as they are (no txd.img conversion)
 #undef USE_DEBUG_SCRIPT_LOADER	// asks the keyboard at boot
 #undef FLUSHABLE_STREAMING	// needs pthread signals
+// reLCS turns on the script debug log (SCRIPT_LOG_FILE_LEVEL 1, set to 0
+// above on the PS3); the basic one sprintf's every mission command
+#undef USE_BASIC_SCRIPT_DEBUG_OUTPUT
 #undef DETECT_JOYSTICK_MENU
 #undef TIMEBARS			// the same timers go to the log instead (ps3_prof.cpp)
 #undef XINPUT
