@@ -278,6 +278,12 @@ struct TexProfile {
 // names of textures that aren't image files either (texture.cpp)
 bool imageMissKnown(const char *name, const char *mask);
 void imageMissRemember(const char *name, const char *mask);
+// every texture a model asked for that neither its TXD nor an image file
+// had (left out: drawn white), and a callback the game's check
+// (ps3_autotest.cpp) sets to log each one with the model loading
+extern uint32 texMissTotal;
+extern void (*texMissHook)(const char *name, const char *mask);
+inline void texMissed(const char *name, const char *mask) { texMissTotal++; if(texMissHook) texMissHook(name, mask); }
 extern TexProfile texProfile;
 uint64 texProfNow(void);	// microseconds
 

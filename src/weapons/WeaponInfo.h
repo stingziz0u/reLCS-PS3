@@ -33,6 +33,9 @@ enum
 class CWeaponInfo {
 	static char ms_aWeaponNames[WEAPONTYPE_TOTALWEAPONS][32];
 public:
+#ifdef __PS3__
+	static const char *PS3_WeaponName(int w) { return ms_aWeaponNames[w]; }
+#endif
 	static uint16 ms_aReloadSampleTime[WEAPONTYPE_TOTALWEAPONS];
 	static int32 ms_aMaxAmmoForWeapon[WEAPONTYPE_TOTALWEAPONS];
 

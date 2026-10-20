@@ -1970,6 +1970,28 @@ CRadar::DrawCoordBlip(int32 blipId)
 	}
 }
 
+#ifdef __PS3__
+// LCS's legend keys: its GXT has LG_38..LG_50 for its own blips (the contacts,
+// bomb shop, clothes...) in the order of the sprites; VC's LG_02..LG_24 aren't
+// there. nil: the game's switch below.
+const char *
+PS3_LegendKey(int32 sprite)
+{
+	// EightBall, church confessional (Burner), Ma Cipriani, Donald Love, JD
+	// O'Toole, Salvatore Leone, Maria, McAffrey, Toshiko, Vincenzo, bomb shop,
+	// clothes shop
+	static const char *contacts[] = { "LG_38", "LG_39", "LG_40", "LG_41", "LG_42", "LG_43",
+	                                  "LG_44", "LG_45", "LG_46", "LG_47", "LG_48", "LG_49" };
+	if (sprite >= RADAR_SPRITE_EIGHTBALL && sprite <= RADAR_SPRITE_CLOTHES)
+		return contacts[sprite - RADAR_SPRITE_EIGHTBALL];
+	switch (sprite) {
+	case RADAR_SPRITE_PHIL_CASSIDY: return "LG_50";
+	case RADAR_SPRITE_ENTITY_BLIP: return "LG_51";	// "Threat" (VC's LG_38 is EightBall here)
+	default: return nil;
+	}
+}
+#endif
+
 void
 CRadar::DrawLegend(int32 x, int32 y, int32 sprite)
 {
@@ -2023,6 +2045,11 @@ CRadar::DrawLegend(int32 x, int32 y, int32 sprite)
 	}
 
 	wchar *text;
+#ifdef __PS3__
+	if (const char *lcsKey = PS3_LegendKey(sprite))
+		text = TheText.Get(lcsKey);
+	else
+#endif
 	switch ( sprite ) {
 		case RADAR_SPRITE_ENTITY_BLIP:
 			text = TheText.Get("LG_38");

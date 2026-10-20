@@ -66,6 +66,10 @@ class CTheZones
 	static uint16 TotalNumberOfZoneInfos;
 	static CZoneInfo ZoneInfoArray[2*NUMINFOZONES];
 public:
+#ifdef __PS3__
+	static uint16 PS3_NumInfoZones(void) { return TotalNumberOfInfoZones; }
+	static uint16 PS3_NumNavigationZones(void) { return TotalNumberOfNavigationZones; }
+#endif
 	static eLevelName m_CurrLevel;
 
 	static void Init(void);

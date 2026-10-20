@@ -348,6 +348,17 @@ static const struct { const char *key; const char *text; } ps3TextFallback[] = {
 	{ "HOTRING", "Hotring Racer" },
 	{ "ITBEG", "In the beginning..." },
 	{ "MAP_LEG", "Map Legend" },
+	{ "MAP_YAH", "You are here" },	// reLCS-PS3: the map's marker (not in LCS's GXT)
+};
+
+// reLCS-PS3: keys res asks for (VC's) that LCS's GXT has under another name
+static const struct { const char *key; const char *lcs; } ps3TextAlias[] = {
+	{ "FES_CHE", "FET_WRN" },	// saving after cheats
+	{ "STOCK", "A_STOCK" },	// "Out of stock."
+	{ "KF_3", "RAMP_P" },	// "RAMPAGE PASSED!"
+	{ "PU_CF1", "PU_CF" },	// "Press ... to take this weapon", one per pad setup in VC
+	{ "PU_CF3", "PU_CF" },
+	{ "PU_CF4", "PU_CF" },
 };
 
 // reVC-PS3: keys whose PC text names the keyboard or the mouse. These win over

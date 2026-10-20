@@ -70,6 +70,9 @@ const CRGBA SCROLLBAR_COLOR = LABEL_COLOR;
 #define MAP_MIN_SIZE 162.f
 #define MAP_SIZE_TO_ALLOW_X_MOVE 297.f
 #define PS3_MAP_START_SIZE 310.f
+#ifdef __PS3__
+bool gPS3PauseMenuDisabled;	// COMMAND_DISABLE_PAUSE_MENU (Script10.cpp); off at CTheScripts::Init
+#endif
 
 #define MAX_VISIBLE_LIST_ROW 30
 #define SCROLLBAR_MAX_HEIGHT 263.0f // not in end result
@@ -5702,6 +5705,12 @@ CMenuManager::ProcessFileActions()
 void
 CMenuManager::SwitchMenuOnAndOff()
 {
+#ifdef __PS3__
+	// DISABLE_PAUSE_MENU (LCS's main.scm, while the intro runs): START
+	// doesn't open the pause menu
+	if (gPS3PauseMenuDisabled && !m_bMenuActive && !m_bStartUpFrontEndRequested && !m_bShutDownFrontEndRequested)
+		return;
+#endif
 	if (!TheCamera.m_WideScreenOn) {
 
 		// Reminder: You need REGISTER_START_BUTTON defined to make it work.

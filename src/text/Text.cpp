@@ -12,6 +12,7 @@
 wchar WideErrorString[25];
 #ifdef __PS3__
 #include "ps3_textfallback.h"
+#include "ps3_platform.h"	// PS3_Logf
 #endif
 
 CText *CText::msInstance = nil;
@@ -170,10 +171,68 @@ CText::Get(const char *key)
 			}
 			return cache[i];
 		}
+		for (int i = 0; i < ARRAY_SIZE(ps3TextAlias); i++)
+			if (strcmp(ps3TextAlias[i].key, key) == 0)
+				return Get(ps3TextAlias[i].lcs);
+		// one line per key no text was found for (the first 300)
+		static uint32 missHash[512];
+		static int missLogged;
+		uint32 h = 2166136261u;
+		for (const char *c = key; *c; c++)
+			h = (h ^ (uint8)*c) * 16777619u;
+		if (h == 0) h = 1;
+		for (uint32 i = h; ; i++) {
+			uint32 &v = missHash[i % ARRAY_SIZE(missHash)];
+			if (v == h)
+				break;
+			if (v == 0) {
+				if (missLogged < 300) {
+					v = h;
+					missLogged++;
+					PS3_Logf("[text] no text for \"%s\" (mission text loaded: %s)", key,
+					         bIsMissionTextLoaded ? szMissionTableName : "none");
+				}
+				break;
+			}
+		}
 	}
 #endif
 	return outstr;
 }
+
+#ifdef __PS3__
+// for the check (ps3_autotest.cpp): where a key's text comes from, without
+// logging it as missing. 0 none, 1 the GXT's main table, 2 the mission table
+// loaded, 3 the port's (override, fallback or alias)
+int
+CText::PS3_Lookup(const char *key)
+{
+	uint8 result = false;
+#if defined (FIX_BUGS) || defined(FIX_BUGS_64)
+	keyArray.Search(key, data.chars, &result);
+#else
+	keyArray.Search(key, &result);
+#endif
+	if (result)
+		return 1;
+	if (bHasMissionTextOffsets && bIsMissionTextLoaded) {
+#if defined (FIX_BUGS) || defined(FIX_BUGS_64)
+		mission_keyArray.Search(key, mission_data.chars, &result);
+#else
+		mission_keyArray.Search(key, &result);
+#endif
+		if (result)
+			return 2;
+	}
+	for (int i = 0; i < ARRAY_SIZE(ps3TextOverride); i++)
+		if (strcmp(ps3TextOverride[i].key, key) == 0) return 3;
+	for (int i = 0; i < ARRAY_SIZE(ps3TextFallback); i++)
+		if (strcmp(ps3TextFallback[i].key, key) == 0) return 3;
+	for (int i = 0; i < ARRAY_SIZE(ps3TextAlias); i++)
+		if (strcmp(ps3TextAlias[i].key, key) == 0) return PS3_Lookup(ps3TextAlias[i].lcs) ? 3 : 0;
+	return 0;
+}
+#endif
 
 wchar UpperCaseTable[128] = {
 	128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138,

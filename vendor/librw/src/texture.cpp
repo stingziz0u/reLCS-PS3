@@ -362,7 +362,12 @@ Texture::read(const char *name, const char *mask)
 		if(tex == nil)
 			goto dummytex;
 #endif
+#ifdef RW_PS3
+	// counted (and handed to the game's check) whether a dummy is made or not
+	}else dummytex: if(ps3::texMissed(name, mask), TEXTUREGLOBAL(makeDummies)){
+#else
 	}else dummytex: if(TEXTUREGLOBAL(makeDummies)){
+#endif
 //printf("missing texture %s %s\n", name ? name : "", mask ? mask : "");
 		tex = Texture::create(nil);
 		if(tex == nil)

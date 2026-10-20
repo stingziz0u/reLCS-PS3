@@ -73,6 +73,8 @@ texProfNow(void)
 #define IMGMISS_SIZE 2048
 static uint32 imgMiss[IMGMISS_SIZE];
 static int32 imgMissCount;
+uint32 texMissTotal;
+void (*texMissHook)(const char *name, const char *mask);
 
 static uint32
 imgMissHash(const char *name, const char *mask)
@@ -104,7 +106,7 @@ imageMissRemember(const char *name, const char *mask)
 {
 	// which ones (reLCS: textures that look broken on the cars)
 	static int logged;
-	if(logged < 80){
+	if(logged < 400){
 		logged++;
 		rsxLog("[tex] not in its TXD nor an image file: %s%s%s", name ? name : "", mask && mask[0] ? " / " : "", mask ? mask : "");
 	}

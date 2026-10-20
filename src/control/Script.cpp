@@ -1177,8 +1177,14 @@ int CTheScripts::OpenScript()
 }
 #endif
 
+#ifdef __PS3__
+extern bool gPS3PauseMenuDisabled;
+#endif
 bool CTheScripts::Init(bool loaddata)
 {
+#ifdef __PS3__
+	gPS3PauseMenuDisabled = false;	// a load or a new game starts with it off; main.scm sets it
+#endif
 	bool retval = false;
 	printf("CTheScripts::Init\n");
 	pActiveScripts = pIdleScripts = nil;

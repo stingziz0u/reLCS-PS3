@@ -537,6 +537,23 @@ int8 CRunningScript::ProcessCommands1500To1599(int32 command)
 	case COMMAND_CLEAR_BIG_MESSAGES:
 		//CMessages::ClearBigMessagesOnly(); TODO
 		//CHud::ClearBigMessagesExcept(2, 2); TODO
+#ifdef FIX_BUGS
+		// what those two do: the big messages queued and on screen go, but
+		// style 2's (the original's "except 2, 2"). Missions call this 98
+		// times; without it a big text stayed up over the next one.
+		for (int i = 0; i < NUMBIGMESSAGES; i++) {
+			if (i == 2)
+				continue;
+			for (int j = 0; j < 4; j++) {
+				CMessages::BIGMessages[i].m_Stack[j].m_pText = nil;
+				CMessages::BIGMessages[i].m_Stack[j].m_pString = nil;
+			}
+			if (i < ARRAY_SIZE(BigMessageInUse)) {
+				CHud::m_BigMessage[i][0] = '\0';
+				BigMessageInUse[i] = 0.0f;
+			}
+		}
+#endif
 		CGarages::MessageEndTime = CGarages::MessageStartTime;
 		return 0;
 	case COMMAND_CLEAR_AREA_OF_OBJECTS:

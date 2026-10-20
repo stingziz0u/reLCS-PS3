@@ -99,6 +99,10 @@ public:
 	void LoadMissionText(char *MissionTableName);
 	bool IsLoaded();
 	void GetUTF8(const char*, char*, int); // TODO but unused
+#ifdef __PS3__
+	int PS3_Lookup(const char *key);
+	const char *PS3_MissionTable(void) { return bIsMissionTextLoaded ? szMissionTableName : nil; }
+#endif
 
 	static CText &Instance()
 	{

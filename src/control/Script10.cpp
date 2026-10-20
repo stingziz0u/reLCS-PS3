@@ -23,6 +23,10 @@
 #include "Weather.h"
 #include "World.h"
 
+#ifdef __PS3__
+extern bool gPS3PauseMenuDisabled;	// Frontend.cpp
+#endif
+
 bool gDeveloperFlag;
 
 int8 CRunningScript::ProcessCommands1600To1699(int32 command)
@@ -341,6 +345,10 @@ int8 CRunningScript::ProcessCommands1600To1699(int32 command)
 	case COMMAND_DISABLE_PAUSE_MENU:
 		CollectParameters(&m_nIp, 1);
 		// FrontEndMenuManager.mDisablePauseMenu = GET_INTEGER_PARAM(0) != 0; // TODO: static + member
+#ifdef __PS3__
+		// main.scm: on from its first line until the intro is over
+		gPS3PauseMenuDisabled = GET_INTEGER_PARAM(0) != 0;
+#endif
 		return 0;
 	case COMMAND_IS_CHANNEL_PLAYING:
 		CollectParameters(&m_nIp, 1);

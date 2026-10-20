@@ -2238,4 +2238,27 @@ cSampleManager::InitialiseSampleBanks(void)
 	return true;
 }
 
+// for the check (ps3_autotest.cpp): the streamed files with no length (not
+// found when audio/sound.cache was made) and the sound bank's empty samples
+void
+PS3_AudioCheck(void)
+{
+	int missing = 0;
+	for(int32 i = 0; i < TOTAL_STREAMED_SOUNDS; i++){
+		if(nStreamLength[i] != 0)
+			continue;
+		missing++;
+		if(missing <= 60)
+			PS3_Logf("[check] audio: stream %d \"%s\" (.VB/.MP3) not found or empty", i, StreamedNameTable[i]);
+	}
+	PS3_Logf("[check] audio: %d of %d streamed files missing", missing, TOTAL_STREAMED_SOUNDS);
+	int empty = 0, first = -1;
+	for(int32 i = 0; i < TOTAL_AUDIO_SAMPLES; i++)
+		if(SampleManager.GetSampleLength(i) == 0){
+			empty++;
+			if(first < 0) first = i;
+		}
+	PS3_Logf("[check] audio: %d of %d samples of the sound bank are empty (first %d)", empty, TOTAL_AUDIO_SAMPLES, first);
+}
+
 #endif

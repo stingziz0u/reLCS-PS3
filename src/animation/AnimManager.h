@@ -137,6 +137,9 @@ class CAnimManager
 	static CAnimBlendAssocGroup *ms_aAnimAssocGroups;
 	static CLinkList<CAnimBlendHierarchy*> ms_animCache;
 public:
+#ifdef __PS3__
+	static int32 PS3_NumAnimBlocks(void) { return ms_numAnimBlocks; }
+#endif
 
 	static void Initialise(void);
 	static void Shutdown(void);
