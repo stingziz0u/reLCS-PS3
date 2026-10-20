@@ -1020,6 +1020,19 @@ PS3_GameMain(void)
 #if PS3_STAGE != 1
 			PS3_AutotestLoaded();
 #endif
+		} else if (gGameState == GS_PLAYING_GAME) {
+			// a new game from the pause menu: the game's own restart (as
+			// when a load fails: ShutDownForRestart, then the scripts and
+			// the world from scratch). The full ShutDown + Initialise the PC
+			// does here died loading DEFAULT.IDE a second time.
+			PS3_Log("[7] new game from the pause menu: restart");
+			FrontEndMenuManager.m_bWantToLoad = false;
+			CGame::ShutDownForRestart();
+			CGame::InitialiseWhenRestarting();
+			FrontEndMenuManager.m_bWantToLoad = false;	// InitialiseWhenRestarting sets it
+			DMAudio.ChangeMusicMode(MUSICMODE_GAME);
+			LoadSplash(GetLevelSplashScreen(CGame::currLevel));
+			PS3_LogMem("[7] game restarted:");
 		} else {
 			if (gGameState == GS_PLAYING_GAME)
 				CGame::ShutDown();

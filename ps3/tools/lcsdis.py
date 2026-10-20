@@ -130,10 +130,48 @@ def fmt(a):
     if k == 's': return f"'{v}'"
     return str(v)
 
+def missions(data):
+    # CTheScripts::ReadMultiScriptFileOffsetsFromScript
+    code = data[8:]
+    var_space = struct.unpack_from('<i', code, 3)[0]
+    obj_size = struct.unpack_from('<i', code, var_space + 3)[0]
+    ip = obj_size + 8
+    ntrue, most, largest, nmis, nexcl = struct.unpack_from('<HHIHH', code, ip); ip += 12
+    return list(struct.unpack_from(f'<{nmis}i', code, ip))
+
+def dis_range(d, ip, end, base=0):
+    while ip < end:
+        try:
+            nip, (start, op, neg, name, args) = d.insn(ip)
+        except Exception as e:
+            print(f'; stop: {e}'); break
+        # mission code: negative jump targets are -(offset in the mission)
+        print(f'{start - base:7d}: {"NOT " if neg else ""}{name} ' + ' '.join(fmt(a) for a in args))
+        ip = nip
+
 def main():
     data = open(sys.argv[1], 'rb').read()
     src = sys.argv[2]
     main_size = struct.unpack_from('<I', data, 0)[0]
+    if len(sys.argv) > 3:
+        # lcsdis.py main.scm src mission N  (or "missions" for the list)
+        offs = missions(data) + [len(data) - 8]
+        d = Dis(data[8:], load_table(src))
+        if sys.argv[3] == 'missions':
+            for i in range(len(offs) - 1):
+                try:
+                    _, ins = d.insn(offs[i])
+                    nm = ins[4][0][1] if ins[3] == 'SCRIPT_NAME' else ''
+                    if not nm:
+                        _, ins2 = d.insn(_)
+                        nm = ins2[4][0][1] if ins2[3] == 'SCRIPT_NAME' else '?'
+                except Exception:
+                    nm = '?'
+                print(f'{i:4d} {offs[i]:8d} {offs[i+1] - offs[i]:6d} {nm}')
+            return
+        n = int(sys.argv[4])
+        dis_range(d, offs[n], offs[n + 1], offs[n])
+        return
     code = data[8:8+main_size]
     d = Dis(code, load_table(src))
     ip = 0

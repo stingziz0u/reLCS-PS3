@@ -1,6 +1,8 @@
 #include "common.h"
 
 #include "Script.h"
+#include "AnimBlendAssociation.h"
+#include "RpAnimBlend.h"
 #include "ScriptCommands.h"
 
 #include "Camera.h"
@@ -949,6 +951,23 @@ int8 CRunningScript::ProcessCommands400To499(int32 command)
 			if (FindPlayerPed()->GetPedState() != PED_JUMP) {
 				FindPlayerPed()->bIsLanding = false;
 				FindPlayerPed()->bIsInTheAir = false;
+#ifdef FIX_BUGS
+				// the glide the ped got for being in the air goes too: LCS
+				// resets the player's animations here (SetIdleAndResetAnim,
+				// the TODOs below). Without it, a player put somewhere by a
+				// cutscene's end in the frame he was "in the air" (Slacker)
+				// keeps falling until he jumps.
+				if (FindPlayerPed()->GetClump()) {
+					static const AnimationId glides[] = { ANIM_STD_JUMP_GLIDE, ANIM_STD_FALL_GLIDE, ANIM_STD_FALL };
+					for (int i = 0; i < ARRAY_SIZE(glides); i++) {
+						CAnimBlendAssociation *glide = RpAnimBlendClumpGetAssociation(FindPlayerPed()->GetClump(), glides[i]);
+						if (glide) {
+							glide->blendDelta = -8.0f;
+							glide->flags |= ASSOC_DELETEFADEDOUT;
+						}
+					}
+				}
+#endif
 			}
 			FindPlayerPed()->RestoreHeadingRate();
 		}

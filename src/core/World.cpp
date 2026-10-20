@@ -2062,7 +2062,7 @@ PS3_PlayerWatch(void)
 	// in the falling animation until he jumps. Logged: the player's state
 	// and animations when they change, and the car he drives every 2 s while
 	// he's on the throttle.
-	static int stateLogs, driveLogs;
+	static int stateLogs, driveLogs;	// driveLogs: per car
 	static int lastState = -1, lastMove = -1, lastFlags = -1, lastAnims[3] = { -2, -2, -2 };
 	static uint32 driveLogMs;
 	uint32 now = CTimer::GetTimeInMilliseconds();
@@ -2099,7 +2099,49 @@ PS3_PlayerWatch(void)
 			lastAnims[i] = anims[i];
 	}
 
-	if (veh && veh->pDriver == player && CPad::GetPad(0)->GetAccelerate() > 64 && driveLogs < 30 && now - driveLogMs > 2000) {
+	// a car on the throttle that doesn't move for 1.5 s (Ren: after VIC1 cars
+	// can be entered but don't move, the engine revs; dying fixes it)
+	static uint32 stuckSince, stuckLogMs;
+	static int stuckLogs;
+	static CVehicle *lastVeh;
+	CPad *pad = CPad::GetPad(0);
+	if (veh != lastVeh) {
+		lastVeh = veh;
+		driveLogs = 0;	// a few lines per car the player gets in
+		stuckSince = 0;
+	}
+	if (veh && pad->GetAccelerate() > 64 && veh->m_vecMoveSpeed.Magnitude() < 0.02f) {
+		if (stuckSince == 0)
+			stuckSince = now;
+		if (now - stuckSince > 1500 && stuckLogs < 20 && now - stuckLogMs > 3000) {
+			stuckLogs++;
+			stuckLogMs = now;
+			CPed *d = veh->pDriver;
+			PS3_Logf("[stuck] model %d (%s) on the throttle 1.5 s, not moving: driver %s (state %d, type %d), status %d, created by %d, "
+			         "locked %d, static %d (waiting %d), moving list %d, infinite mass %d, gravity %d, engine %d, handbrake %d, "
+			         "gas %.2f brake %.2f, gear %d (change %.2f), pad: accel %d brake %d handbrake %d, controls off 0x%x, mode %d",
+			         veh->GetModelIndex(), veh->IsCar() ? "car" : veh->IsBike() ? "bike" : "other",
+			         d == nil ? "none" : d == player ? "player" : "another ped", d ? (int)d->m_nPedState : -1, d ? (int)d->m_nPedType : -1,
+			         veh->GetStatus(), (int)veh->VehicleCreatedBy, (int)veh->bIsLocked, (int)veh->bIsStatic,
+			         (int)veh->bIsStaticWaitingForCollision, veh->m_movingListNode != nil, (int)veh->bInfiniteMass,
+			         (int)veh->bAffectedByGravity, (int)veh->bEngineOn, (int)veh->bIsHandbrakeOn, veh->m_fGasPedal, veh->m_fBrakePedal,
+			         (int)veh->m_nCurrentGear, veh->m_fChangeGearTime, pad->GetAccelerate(), pad->GetBrake(), pad->GetHandBrake(),
+			         (unsigned)pad->DisablePlayerControls, (int)pad->Mode);
+			if (veh->IsCar()) {
+				CAutomobile *car = (CAutomobile*)veh;
+				PS3_Logf("[stuck]   wheels on ground %d, states %d %d %d %d, speeds %.3f %.3f %.3f %.3f, timers %.1f %.1f %.1f %.1f, "
+				         "springs %.2f %.2f %.2f %.2f, mass %.0f, turn speed %.3f",
+				         car->m_nWheelsOnGround, car->m_aWheelState[0], car->m_aWheelState[1], car->m_aWheelState[2], car->m_aWheelState[3],
+				         car->m_aWheelSpeed[0], car->m_aWheelSpeed[1], car->m_aWheelSpeed[2], car->m_aWheelSpeed[3],
+				         car->m_aWheelTimer[0], car->m_aWheelTimer[1], car->m_aWheelTimer[2], car->m_aWheelTimer[3],
+				         car->m_aSuspensionSpringRatio[0], car->m_aSuspensionSpringRatio[1], car->m_aSuspensionSpringRatio[2],
+				         car->m_aSuspensionSpringRatio[3], veh->m_fMass, veh->m_vecTurnSpeed.Magnitude());
+			}
+		}
+	} else
+		stuckSince = 0;
+
+	if (veh && veh->pDriver == player && pad->GetAccelerate() > 64 && driveLogs < 2 && now - driveLogMs > 2000) {
 		driveLogs++;
 		driveLogMs = now;
 		const CVector &p = veh->GetPosition();
