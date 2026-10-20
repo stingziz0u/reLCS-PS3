@@ -117,6 +117,29 @@ bool8 CGame::VarUpdatePlayerCoords;
 
 int gameTxdSlot;
 
+#if defined(__PS3__) && !defined(EXTENDED_PIPELINES)
+static rw::TexDictionary *ps3GenericTxd;
+static rw::Texture *(*ps3DefaultFindCB)(const char *name);
+
+static rw::Texture*
+PS3_GenericFindCB(const char *name)
+{
+	rw::Texture *tex = ps3DefaultFindCB(name);
+	if(tex == nil && ps3GenericTxd)
+		tex = ps3GenericTxd->find(name);
+	return tex;
+}
+
+static void
+PS3_SetGenericTxdFallback(void)
+{
+	ps3GenericTxd = CTxdStore::GetSlot(gameTxdSlot)->texDict;
+	if(ps3DefaultFindCB == nil)
+		ps3DefaultFindCB = rw::Texture::findCB;
+	rw::Texture::findCB = PS3_GenericFindCB;
+}
+#endif
+
 #ifdef SECUROM
 uint8 gameProcessPirateCheck = 0;
 #endif
@@ -400,6 +423,11 @@ bool CGame::Initialise(const char* datFile)
 #ifdef EXTENDED_PIPELINES
 	// for generic fallback
 	CustomPipes::SetTxdFindCallback();
+#elif defined(__PS3__)
+	// LCS cars take their shared textures (xv_*: windows, shattered glass,
+	// engine, plates...) from GENERIC.TXD, not from their own TXD; on PC
+	// that's CustomPipes' find callback, off here
+	PS3_SetGenericTxdFallback();
 #endif
 
 	LoadingScreen("Loading the Game", "Loading particles", nil);

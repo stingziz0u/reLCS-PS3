@@ -606,8 +606,8 @@ CMenuScreenCustom aScreens[] = {
 #ifdef __PS3__
 		MENUACTION_CFO_SELECT,	"FED_MHP", { new CCFOSelect((int8*)&gPS3MapPackages, "Display", "HiddenPackagesOnMap", off_on, 2, false) }, 0, 0, MENUALIGN_LEFT,
 		MENUACTION_CFO_SELECT,	"FED_MRP", { new CCFOSelect((int8*)&gPS3MapRampages, "Display", "RampagesOnMap", off_on, 2, false) }, 0, 0, MENUALIGN_LEFT,
-		// reLCS: no store robberies; the unique jumps' table (ps3_scmblips.h)
-		// is Vice City's main.scm, so those two are left out
+		MENUACTION_CFO_SELECT,	"FED_MUJ", { new CCFOSelect((int8*)&gPS3MapJumps, "Display", "UniqueJumpsOnMap", off_on, 2, false) }, 0, 0, MENUALIGN_LEFT,
+		// reLCS: no store robberies
 #endif
 		MENUACTION_HUD,			"FED_HUD", { nil, SAVESLOT_NONE, MENUPAGE_DISPLAY_SETTINGS }, 0, 0, MENUALIGN_LEFT,
 		MENUACTION_SUBTITLES,	"FED_SUB", { nil, SAVESLOT_NONE, MENUPAGE_DISPLAY_SETTINGS }, 0, 0, MENUALIGN_LEFT,

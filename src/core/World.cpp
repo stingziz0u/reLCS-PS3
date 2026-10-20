@@ -2045,6 +2045,7 @@ PS3_SweepMovingList(void)
 #endif
 
 #ifdef __PS3__
+#include "AnimBlendAssociation.h"
 #include "Automobile.h"
 #include "ColStore.h"
 #include "Pad.h"
@@ -2056,58 +2057,70 @@ PS3_SweepMovingList(void)
 static void
 PS3_PlayerWatch(void)
 {
-	static uint32 driveSince, airSince, driveLogMs, airLogMs;
-	static int driveLogs, airLogs;
+	// Ren: after the first mission cars can be entered but don't move (the
+	// engine revs, bikes are fine) and after the Slacker cutscene Toni stays
+	// in the falling animation until he jumps. Logged: the player's state
+	// and animations when they change, and the car he drives every 2 s while
+	// he's on the throttle.
+	static int stateLogs, driveLogs;
+	static int lastState = -1, lastMove = -1, lastFlags = -1, lastAnims[3] = { -2, -2, -2 };
+	static uint32 driveLogMs;
 	uint32 now = CTimer::GetTimeInMilliseconds();
 	CPlayerPed *player = FindPlayerPed();
-	CVehicle *veh = FindPlayerVehicle();
-	if (veh && player && veh->pDriver == player && CPad::GetPad(0)->GetAccelerate() > 64 &&
-	    veh->m_vecMoveSpeed.Magnitude() < 0.01f) {
-		if (driveSince == 0)
-			driveSince = now;
-		if (now - driveSince > 2000 && driveLogs < 10 && now - driveLogMs > 5000) {
-			driveLogs++;
-			driveLogMs = now;
-			const CVector &p = veh->GetPosition();
-			PS3_Logf("[drive] model %d at %.1f %.1f %.1f: throttle on 2 s, not moving. status %d, static %d (waiting for col %d), "
-			         "moving list %d, uses col %d, infinite mass %d, mass %.0f/%.0f, engine %d, handbrake %d, gas %.2f brake %.2f, "
-			         "gear %d (%.2f), door lock %d, special col %d, col here %d",
-			         veh->GetModelIndex(), p.x, p.y, p.z, veh->GetStatus(), (int)veh->bIsStatic, (int)veh->bIsStaticWaitingForCollision,
-			         veh->m_movingListNode != nil, (int)veh->bUsesCollision, (int)veh->bInfiniteMass, veh->m_fMass, veh->m_fTurnMass,
-			         (int)veh->bEngineOn, (int)veh->bIsHandbrakeOn, veh->m_fGasPedal, veh->m_fBrakePedal,
-			         (int)veh->m_nCurrentGear, veh->m_fChangeGearTime, (int)veh->m_nDoorLock, (int)veh->bUsingSpecialColModel,
-			         (int)CColStore::HasCollisionLoaded(p));
-			if (veh->IsCar()) {
-				CAutomobile *car = (CAutomobile*)veh;
-				CColModel *cm = veh->GetColModel();
-				PS3_Logf("[drive]   wheels on ground %d, spring ratios %.2f %.2f %.2f %.2f, wheel timers %.1f %.1f %.1f %.1f, "
-				         "traction %.2f, col lines %d (line 0 z %.2f..%.2f), spheres %d, boxes %d, triangles %d",
-				         car->m_nWheelsOnGround, car->m_aSuspensionSpringRatio[0], car->m_aSuspensionSpringRatio[1],
-				         car->m_aSuspensionSpringRatio[2], car->m_aSuspensionSpringRatio[3], car->m_aWheelTimer[0],
-				         car->m_aWheelTimer[1], car->m_aWheelTimer[2], car->m_aWheelTimer[3], car->m_fTraction,
-				         cm ? cm->numLines : -1, cm && cm->numLines ? cm->lines[0].p0.z : 0.0f,
-				         cm && cm->numLines ? cm->lines[0].p1.z : 0.0f, cm ? cm->numSpheres : -1,
-				         cm ? cm->numBoxes : -1, cm ? cm->numTriangles : -1);
-			}
+	if (player == nil)
+		return;
+	CVehicle *veh = player->InVehicle() ? player->m_pMyVehicle : nil;
+
+	int anims[3] = { -1, -1, -1 };
+	float blends[3] = { 0.0f, 0.0f, 0.0f };
+	int n = 0;
+	if (player->GetClump())
+		for (CAnimBlendAssociation *a = RpAnimBlendClumpGetFirstAssociation(player->GetClump()); a && n < 3; a = RpAnimBlendGetNextAssociation(a)) {
+			anims[n] = a->animId;
+			blends[n] = a->blendAmount;
+			n++;
 		}
-	} else
-		driveSince = 0;
-	if (player && !player->InVehicle() && !player->bIsStanding && Abs(player->m_vecMoveSpeed.z) < 0.001f) {
-		if (airSince == 0)
-			airSince = now;
-		if (now - airSince > 1500 && airLogs < 10 && now - airLogMs > 5000) {
-			airLogs++;
-			airLogMs = now;
-			const CVector &p = player->GetPosition();
-			PS3_Logf("[air] player at %.1f %.1f %.1f not standing and not falling for 1.5 s: state %d, static %d (waiting for col %d), "
-			         "moving list %d, uses col %d, in the air %d, speed %.3f %.3f %.3f, col here %d, ground %.2f",
-			         p.x, p.y, p.z, player->m_nPedState, (int)player->bIsStatic, (int)player->bIsStaticWaitingForCollision,
-			         player->m_movingListNode != nil, (int)player->bUsesCollision, (int)player->bIsInTheAir,
-			         player->m_vecMoveSpeed.x, player->m_vecMoveSpeed.y, player->m_vecMoveSpeed.z,
-			         (int)CColStore::HasCollisionLoaded(p), CWorld::FindGroundZForCoord(p.x, p.y));
+	int flags = (int)player->bIsStanding | (int)player->bIsInTheAir << 1 | (int)player->bIsStatic << 2 |
+	            (int)player->bUsesCollision << 3 | (int)(veh != nil) << 4 | (int)CPad::GetPad(0)->ArePlayerControlsDisabled() << 5;
+	if (stateLogs < 400 &&
+	    (player->m_nPedState != lastState || player->m_nMoveState != lastMove || flags != lastFlags ||
+	     anims[0] != lastAnims[0] || anims[1] != lastAnims[1] || anims[2] != lastAnims[2])) {
+		stateLogs++;
+		const CVector &p = player->GetPosition();
+		PS3_Logf("[player] %u ms: state %d, move %d, standing %d, in the air %d, static %d, uses col %d, in a car %d, controls off %d, "
+		         "speed z %.3f, at %.1f %.1f %.1f; anims %d (%.2f) %d (%.2f) %d (%.2f)%s",
+		         now, player->m_nPedState, player->m_nMoveState, flags & 1, flags >> 1 & 1, flags >> 2 & 1, flags >> 3 & 1,
+		         flags >> 4 & 1, flags >> 5 & 1, player->m_vecMoveSpeed.z, p.x, p.y, p.z,
+		         anims[0], blends[0], anims[1], blends[1], anims[2], blends[2], n == 3 ? " ..." : "");
+		lastState = player->m_nPedState;
+		lastMove = player->m_nMoveState;
+		lastFlags = flags;
+		for (int i = 0; i < 3; i++)
+			lastAnims[i] = anims[i];
+	}
+
+	if (veh && veh->pDriver == player && CPad::GetPad(0)->GetAccelerate() > 64 && driveLogs < 30 && now - driveLogMs > 2000) {
+		driveLogs++;
+		driveLogMs = now;
+		const CVector &p = veh->GetPosition();
+		PS3_Logf("[drive] model %d (%s) at %.1f %.1f %.1f, speed %.3f: status %d, static %d, moving list %d, uses col %d, "
+		         "mass %.0f, engine %d, handbrake %d (pad %d), gas %.2f brake %.2f, steer %.2f, gear %d, door lock %d, col here %d",
+		         veh->GetModelIndex(), veh->IsCar() ? "car" : veh->IsBike() ? "bike" : "other", p.x, p.y, p.z,
+		         veh->m_vecMoveSpeed.Magnitude(), veh->GetStatus(), (int)veh->bIsStatic, veh->m_movingListNode != nil,
+		         (int)veh->bUsesCollision, veh->m_fMass, (int)veh->bEngineOn, (int)veh->bIsHandbrakeOn,
+		         CPad::GetPad(0)->GetHandBrake(), veh->m_fGasPedal, veh->m_fBrakePedal, veh->m_fSteerAngle,
+		         (int)veh->m_nCurrentGear, (int)veh->m_nDoorLock, (int)CColStore::HasCollisionLoaded(p));
+		if (veh->IsCar()) {
+			CAutomobile *car = (CAutomobile*)veh;
+			PS3_Logf("[drive]   wheels on ground %d, states %d %d %d %d, speeds %.3f %.3f %.3f %.3f, springs %.2f %.2f %.2f %.2f, "
+			         "traction %.2f, wheels damaged %d %d %d %d",
+			         car->m_nWheelsOnGround, car->m_aWheelState[0], car->m_aWheelState[1], car->m_aWheelState[2], car->m_aWheelState[3],
+			         car->m_aWheelSpeed[0], car->m_aWheelSpeed[1], car->m_aWheelSpeed[2], car->m_aWheelSpeed[3],
+			         car->m_aSuspensionSpringRatio[0], car->m_aSuspensionSpringRatio[1], car->m_aSuspensionSpringRatio[2],
+			         car->m_aSuspensionSpringRatio[3], car->m_fTraction,
+			         car->Damage.GetWheelStatus(0), car->Damage.GetWheelStatus(1), car->Damage.GetWheelStatus(2), car->Damage.GetWheelStatus(3));
 		}
-	} else
-		airSince = 0;
+	}
 }
 #endif
 

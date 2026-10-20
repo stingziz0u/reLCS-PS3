@@ -652,10 +652,34 @@ struct PS3CollectibleIter {
 	int kind, i;
 	bool Next(CVector &pos)
 	{
-		static int8 jumpsOk = -1, storesOk = -1;
+		static int8 packsOk = -1, jumpsOk = -1, storesOk = -1;
 		const CVector &me = FindPlayerCentreOfWorld_NoSniperShift();
 		switch (kind) {
 		case 0:
+			// LCS (main.scm's H_PACKS script): package n of 100 is the pickup
+			// whose handle is global 562+n and is collected when global 11+n
+			// is 1 (H_PACKS' HAS_PICKUP_BEEN_COLLECTED $g562[1@] at 93766)
+			if (packsOk < 0) {
+				static const uint8 collectedCheck[] = { 0x19, 0x02, 0xE8, 0x32, 0x01, 0x64 };
+				packsOk = CTheScripts::MainScriptSize > 93766 + sizeof(collectedCheck) &&
+				          memcmp(&CTheScripts::ScriptSpace[93766], collectedCheck, sizeof(collectedCheck)) == 0;
+				PS3_Logf("[map] hidden packages: %s", packsOk ? "100 in main.scm" : "main.scm isn't the original one, the package model's pickups are shown");
+			}
+			if (packsOk) {
+				const int32 *g = (const int32*)CTheScripts::ScriptSpace;
+				for (; i < 100; i++) {
+					if (g[11 + i] != 0 || g[562 + i] == 0)
+						continue;	// collected, or not placed yet
+					int idx = CPickups::GetActualPickupIndex(g[562 + i]);
+					if (idx < 0 || CPickups::aPickUps[idx].m_eType == PICKUP_NONE || CPickups::aPickUps[idx].m_bRemoved)
+						continue;
+					pos = CPickups::aPickUps[idx].m_vecPos;
+					i++;
+					return true;
+				}
+				return false;
+			}
+			// fall through
 		case 1:
 			for (; i < NUMPICKUPS; i++) {
 				CPickup &p = CPickups::aPickUps[i];
@@ -672,15 +696,27 @@ struct PS3CollectibleIter {
 			}
 			return false;
 		case 2:
-			if (jumpsOk < 0)
-				jumpsOk = PS3_ScmTableOk(ps3UsjFlags, ARRAY_SIZE(ps3UsjFlags), "unique jumps");
+			// LCS (main.scm's USJ script, ps3/tools/lcsdis.py): jump n of 26
+			// takes off at globals 662+n, 688+n, 714+n (x, y, z, set by the
+			// starting mission) and is done when global 183+n is 1 (USJ's
+			// SET_VAR_INT $g183[5@] 1 at 121600, checked once: another
+			// main.scm leaves these blips off)
+			if (jumpsOk < 0) {
+				static const uint8 doneSet[] = { 0x04, 0x00, 0xE6, 0xB7, 0x05, 0x1A };
+				jumpsOk = CTheScripts::MainScriptSize > 121600 + sizeof(doneSet) &&
+				          memcmp(&CTheScripts::ScriptSpace[121600], doneSet, sizeof(doneSet)) == 0;
+				PS3_Logf("[map] unique jumps: %s", jumpsOk ? "26 in main.scm" : "main.scm isn't the original one, not shown on the map");
+			}
 			if (!jumpsOk)
 				return false;
-			for (; i < (int)ARRAY_SIZE(ps3UsjPoints); i++) {
-				const PS3ScmPoint &t = ps3UsjPoints[i];
-				if (PS3_ScmDone(ps3UsjFlags[t.n - 1]))
+			for (; i < 26; i++) {
+				const int32 *g = (const int32*)CTheScripts::ScriptSpace;
+				if (g[183 + i] != 0)
 					continue;
-				pos = CVector(t.x, t.y, t.z > -999.0f ? t.z : me.z);
+				float x = *(const float*)&g[662 + i], y = *(const float*)&g[688 + i], z = *(const float*)&g[714 + i];
+				if (x == 0.0f && y == 0.0f)
+					continue;	// not set yet
+				pos = CVector(x, y, z);
 				i++;
 				return true;
 			}
@@ -709,6 +745,33 @@ static void
 PS3_DrawCollectibles(void)
 {
 	bool map = FrontEndMenuManager.m_bMenuMapActive;
+	static int enterLogged;
+	if (map && enterLogged < 2) {
+		enterLogged++;
+		const int32 *g = (const int32*)CTheScripts::ScriptSpace;
+		int placed = 0, collected = 0, jumpsSet = 0, jumpsDone = 0, firstModel = -1;
+		for (int n = 0; n < 100; n++) {
+			if (g[11 + n])
+				collected++;
+			int idx = g[562 + n] ? CPickups::GetActualPickupIndex(g[562 + n]) : -1;
+			if (idx >= 0) {
+				placed++;
+				if (firstModel < 0)
+					firstModel = CPickups::aPickUps[idx].m_eModelIndex;
+			}
+		}
+		for (int n = 0; n < 26; n++) {
+			if (g[662 + n] || g[688 + n])
+				jumpsSet++;
+			if (g[183 + n])
+				jumpsDone++;
+		}
+		PS3_Logf("[map] collectibles: packages %d, rampages %d, jumps %d; player in the stadium %d, on a mission %d, frenzy %d, nasty game %d; "
+		         "packages placed %d (model %d), collected %d; jumps set %d, done %d",
+		         (int)gPS3MapPackages, (int)gPS3MapRampages, (int)gPS3MapJumps, (int)CTheScripts::bPlayerIsInTheStatium,
+		         (int)CTheScripts::IsPlayerOnAMission(), (int)CDarkel::FrenzyOnGoing(), (int)CGame::nastyGame,
+		         placed, firstModel, collected, jumpsSet, jumpsDone);
+	}
 	if (CTheScripts::bPlayerIsInTheStatium && map)
 		return;
 	static const int8 *on[4] = { &gPS3MapPackages, &gPS3MapRampages, &gPS3MapJumps, &gPS3MapRobberies };
