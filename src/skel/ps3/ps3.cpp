@@ -1073,8 +1073,8 @@ PS3_GameThread(void *arg)
 	PS3_Log("[3] USRDIR writable");
 
 	if (!PS3_CheckData()) {
-		PS3_Log("[4] FATAL: LCS data missing or unreadable: copy the converted game "
-		        "(reLCS Asset Converter: data/, models/, anim/, text/, audio/...) to " PS3_USRDIR);
+		PS3_Log("[4] FATAL: LCS data missing or unreadable: copy the "
+		        "LCS data that works with reLCS (data/, models/, anim/, text/, audio/...) to " PS3_USRDIR);
 		sysThreadExit(1);
 	}
 	PS3_Logf("[4] game data found, free user mem ~%u MB", PS3_FreeUserMemMB());

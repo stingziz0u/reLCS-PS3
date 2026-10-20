@@ -233,6 +233,9 @@ enum eMenuScreen
 #ifdef MISSION_REPLAY
 	MENUPAGE_MISSION_RETRY,
 #endif
+#ifdef __PS3__
+	MENUPAGE_STICK_SETTINGS,	// Gamepad settings > STICK SETTINGS (sensitivity, dead zones)
+#endif
 
 	MENUPAGE_OUTRO, // Originally 34, but CFO needs last screen to be empty to count number of menu pages
 	MENUPAGES

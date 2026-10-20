@@ -3320,9 +3320,36 @@ int16 CPad::SniperModeLookUpDown(void)
 		return dpad;
 }
 
+#ifdef __PS3__
+// Gamepad settings > STICK SETTINGS > RIGHT STICK DEAD ZONE: it replaces the
+// game's thresholds for the camera (85 of 128, two thirds of the way, or
+// 10/40 with the free cam): the camera starts turning there, and the
+// stick's full deflection still turns it as fast as before
+// ((128 - 85) * 127/32).
+static bool
+PS3_LookAround(int16 axis, bool lookBehind, int16 *out)
+{
+	float dz = PS3_PadDeadzone(true);
+	float d = dz * 128.0f;
+	float a = Min((float)Abs(axis), 128.0f);
+	if (a <= d || lookBehind && !TheCamera.Cams[0].Using3rdPersonMouseCam()) {
+		*out = 0;
+		return true;
+	}
+	float v = (a - d) / (128.0f - d) * (128.0f - 85.0f) * (127.0f / 32.0f);
+	*out = (int16)(axis > 0 ? v : -v);
+	return true;
+}
+#endif
+
 int16 CPad::LookAroundLeftRight(void)
 {
 	float axis = GetPad(0)->NewState.RightStickX;
+#ifdef __PS3__
+	int16 ps3Out;
+	if (PS3_LookAround((int16)axis, GetLookBehindForPed(), &ps3Out))
+		return ps3Out;
+#endif
 
 	if ( Abs(axis) > 85 && !GetLookBehindForPed() )
 		return (int16) ( (axis + ( ( axis > 0 ) ? -85 : 85) )
@@ -3343,6 +3370,11 @@ int16 CPad::LookAroundUpDown(void)
 #endif
 	if (CPad::bInvertLook4Pad)
 		axis = -axis;
+#ifdef __PS3__
+	int16 ps3Out;
+	if (PS3_LookAround(axis, GetLookBehindForPed(), &ps3Out))
+		return ps3Out;
+#endif
 
 	if ( Abs(axis) > 85 && !GetLookBehindForPed() )
 		return (int16) ( (axis + ( ( axis > 0 ) ? -85 : 85) )

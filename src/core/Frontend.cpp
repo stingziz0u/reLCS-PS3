@@ -69,6 +69,7 @@ const CRGBA SCROLLBAR_COLOR = LABEL_COLOR;
 
 #define MAP_MIN_SIZE 162.f
 #define MAP_SIZE_TO_ALLOW_X_MOVE 297.f
+#define PS3_MAP_START_SIZE 310.f
 
 #define MAX_VISIBLE_LIST_ROW 30
 #define SCROLLBAR_MAX_HEIGHT 263.0f // not in end result
@@ -600,9 +601,22 @@ CMenuManager::Initialise(void)
 #else
 	m_bShowMouse = true;
 #endif
+#ifdef __PS3__
+	// the map keeps its zoom and position from one pause to the next, and
+	// starts closer than all the way out (Ren's photo: the three islands
+	// across the screen)
+	static bool ps3MapSet;
+	if (!ps3MapSet) {
+		ps3MapSet = true;
+		m_fMapSize = MENU_Y(PS3_MAP_START_SIZE);
+		m_fMapCenterX = MENU_X_LEFT_ALIGNED(320.0f);
+		m_fMapCenterY = MENU_Y(225.0f);
+	}
+#else
 	m_fMapSize = MENU_Y(162.0f); // Y because of HOR+
 	m_fMapCenterX = MENU_X_LEFT_ALIGNED(320.0f);
 	m_fMapCenterY = MENU_Y(225.0f);
+#endif
 	CPad::StopPadsShaking();
 #ifdef MISSION_REPLAY
 	if (!m_OnlySaveMenu) {
@@ -857,6 +871,11 @@ CMenuManager::DisplayHelperText(char *text)
 		default:
 			if (aScreens[m_nCurrScreen].m_aEntries[m_nCurrOption].m_Action == MENUACTION_NO)
 				return;
+#ifdef __PS3__
+			// not under the gamepad picture
+			if (m_nCurrScreen == MENUPAGE_CONTROLLER_SETTINGS)
+				return;
+#endif
 
 			if (aScreens[m_nCurrScreen].m_aEntries[m_nCurrOption].m_Action == MENUACTION_MUSICVOLUME ||
 				aScreens[m_nCurrScreen].m_aEntries[m_nCurrOption].m_Action == MENUACTION_SFXVOLUME) {
@@ -3419,6 +3438,11 @@ CMenuManager::PrintBriefs()
 	}
 }
 
+#ifdef __PS3__
+static CRGBA ps3CtrlOutline;
+static void PS3_CtrlOutlined(float x, float y, wchar *str, bool fromBottom);
+#endif
+
 void
 CMenuManager::PrintStats()
 {
@@ -3503,11 +3527,22 @@ CMenuManager::PrintStats()
 			if (y >= MENU_Y(STATS_TOP_Y + STATS_FADING_AREA_LENGTH) && y <= MENU_Y(STATS_BOTTOM_Y - STATS_FADING_AREA_LENGTH))
 				alpha = 255.0f;
 
+#ifdef __PS3__
+			// white with a black outline, as the rest of the menu: black on
+			// LCS's dark list box can't be read
+			CFont::SetColor(CRGBA(255, 255, 255, FadeIn(Min(255.f, alpha))));
+			ps3CtrlOutline = CRGBA(0, 0, 0, FadeIn(Min(255.f, alpha)));
+			CFont::SetRightJustifyOff();
+			PS3_CtrlOutlined(MENU_X_LEFT_ALIGNED(STATS_ROW_LEFT_MARGIN), y, gUString, false);
+			CFont::SetRightJustifyOn();
+			PS3_CtrlOutlined(MENU_X_RIGHT_ALIGNED(STATS_ROW_RIGHT_MARGIN), y, gUString2, false);
+#else
 			CFont::SetColor(CRGBA(0, 0, 0, FadeIn(Min(255.f, alpha))));
 			CFont::SetRightJustifyOff();
 			CFont::PrintString(MENU_X_LEFT_ALIGNED(STATS_ROW_LEFT_MARGIN), y, gUString);
 			CFont::SetRightJustifyOn();
 			CFont::PrintString(MENU_X_RIGHT_ALIGNED(STATS_ROW_RIGHT_MARGIN), y, gUString2);
+#endif
 		}
 	}
 	CFont::SetColor(CRGBA(MENUOPTION_COLOR.r, MENUOPTION_COLOR.g, MENUOPTION_COLOR.b, FadeIn(255)));
@@ -3535,10 +3570,15 @@ CMenuManager::PrintStats()
 #else
 	CFont::SetScale(MENU_X(SMALLTEXT_X_SCALE), MENU_Y(SMALLTEXT_Y_SCALE));
 #endif
-	CFont::SetColor(CRGBA(0, 0, 0, FadeIn(255)));
 	CFont::SetDropShadowPosition(0);
-
+#ifdef __PS3__
+	CFont::SetColor(CRGBA(255, 255, 255, FadeIn(255)));
+	ps3CtrlOutline = CRGBA(0, 0, 0, FadeIn(255));
+	PS3_CtrlOutlined(MENU_X_LEFT_ALIGNED(STATS_RATING_X) - CFont::GetStringWidth(gUString2, true) / 2.f, MENU_Y(STATS_RATING_Y_2), gUString2, false);
+#else
+	CFont::SetColor(CRGBA(0, 0, 0, FadeIn(255)));
 	CFont::PrintString(MENU_X_LEFT_ALIGNED(STATS_RATING_X) - CFont::GetStringWidth(gUString2, true) / 2.f, MENU_Y(STATS_RATING_Y_2), gUString2);
+#endif
 }
 
 void
@@ -4149,7 +4189,12 @@ CMenuManager::ProcessList(bool &optionSelected, bool &goBack)
 		m_bShowMouse = 0;
 		optionSelected = true;
 	}
+#ifdef __PS3__
+	// no keyboard: square clears the binding (FET_CIG, ps3_textfallback.h)
+	if ((CPad::GetPad(0)->GetBackspaceJustDown() || CPad::GetPad(0)->GetSquareJustDown()) && m_nCurrScreen == MENUPAGE_KEYBOARD_CONTROLS && !field_159) {
+#else
 	if (CPad::GetPad(0)->GetBackspaceJustDown() && m_nCurrScreen == MENUPAGE_KEYBOARD_CONTROLS && !field_159) {
+#endif
 		if (m_nCurrExLayer == HOVEROPTION_LIST) {
 			m_nHoverOption = HOVEROPTION_NOT_HOVERING;
 			m_bWaitingForNewKeyBind = true;
@@ -6144,7 +6189,6 @@ const char* controllerTypesPaths[] = {
 
 // PrintController's labels (PS3: with an outline; res's CFont has none)
 #ifdef __PS3__
-static CRGBA ps3CtrlOutline;
 static void
 PS3_CtrlOutlined(float x, float y, wchar *str, bool fromBottom)
 {
@@ -6182,7 +6226,7 @@ CMenuManager::PrintController(void)
 	const float CONTROLLER_SIZE_Y = 175.2f;
 	const float CONTROLLER_POS_X = (DEFAULT_SCREEN_WIDTH - CONTROLLER_SIZE_X) / 2.0f;
 #ifdef __PS3__
-	const float CONTROLLER_POS_Y = 270.0f;	// below the page's options (two more since 1.1.2)
+	const float CONTROLLER_POS_Y = 255.0f;	// below the page's options (Ren: a little higher than 270)
 #else
 	const float CONTROLLER_POS_Y = 220.0f;
 #endif

@@ -78,8 +78,8 @@ static wchar *Sens3rdDraw(bool *disabled, bool userHovering) { return SensDraw(g
 static wchar *Sens1stDraw(bool *disabled, bool userHovering) { return SensDraw(gPS3Sens1st); }
 static void Sens3rdPress(int8 action) { SensPress(&gPS3Sens3rd, action); }
 static void Sens1stPress(int8 action) { SensPress(&gPS3Sens1st, action); }
-// stick dead zones: 5% to 50% in steps of 5 (percent / 5, ps3_pad.cpp),
-// X back to 30%, the game's own
+// stick dead zones (ps3_pad.cpp): 5% to 70% in steps of 5 (percent / 5), X
+// back to 30%, the game's own
 extern int8 gPS3DeadzoneL, gPS3DeadzoneR;
 static wchar *
 DeadzoneDraw(int8 value)
@@ -88,18 +88,18 @@ DeadzoneDraw(int8 value)
 	static int which;
 	char str[16];
 	which ^= 1;
-	sprintf(str, "%d%%", 5*Clamp((int)value, 1, 10));
+	sprintf(str, "%d%%", 5*(value < 1 || value > 14 ? 6 : value));
 	AsciiToUnicode(str, text[which]);
 	return text[which];
 }
 static void
 DeadzonePress(int8 *value, int8 action)
 {
-	if (*value < 1 || *value > 10)
+	if (*value < 1 || *value > 14)
 		*value = 6;
 	if (action == FEOPTION_ACTION_LEFT && *value > 1)
 		(*value)--;
-	else if (action == FEOPTION_ACTION_RIGHT && *value < 10)
+	else if (action == FEOPTION_ACTION_RIGHT && *value < 14)
 		(*value)++;
 	else if (action == FEOPTION_ACTION_SELECT)
 		*value = 6;	// 30%
@@ -797,7 +797,11 @@ CMenuScreenCustom aScreens[] = {
 		 MENUACTION_CHANGEMENU,		"FET_GFX", {nil, SAVESLOT_NONE, MENUPAGE_GRAPHICS_SETTINGS}, 0, 0, MENUALIGN_CENTER,
 #endif
 		 MENUACTION_CHANGEMENU,		"FEO_LAN", {nil, SAVESLOT_NONE, MENUPAGE_LANGUAGE_SETTINGS}, 0, 0, MENUALIGN_CENTER,
+#ifndef __PS3__
+		 // reLCS: no skins in LCS (outfits are player models; res never
+		 // puts the skin on Toni, and the preview had no texture: white)
 		 MENUACTION_PLAYERSETUP,	"FET_PS", {nil, SAVESLOT_NONE, MENUPAGE_SKIN_SELECT}, 0, 0, MENUALIGN_CENTER,
+#endif
 		 MENUACTION_GOBACK,			"FEDS_TB", {nil, SAVESLOT_NONE, 0}, 0, 0, MENUALIGN_CENTER,
    },
 
@@ -848,6 +852,9 @@ CMenuScreenCustom aScreens[] = {
 #ifdef GAMEPAD_MENU
 #ifdef GTA_HANDHELD
 	{ "FET_AGS", MENUPAGE_OPTIONS, new CCustomScreenLayout({40, 78, 25, true, true}), nil,
+#elif defined(__PS3__)
+	// rows 23 apart instead of 25: room for the controller picture
+	{ "FET_AGS", MENUPAGE_CONTROLLER_PC, new CCustomScreenLayout({40, 78, 23, true, true}), nil,
 #else
 	{ "FET_AGS", MENUPAGE_CONTROLLER_PC, new CCustomScreenLayout({40, 78, 25, true, true}), nil,
 #endif
@@ -856,10 +863,7 @@ CMenuScreenCustom aScreens[] = {
 		INVERT_PAD_SELECTOR
 #ifdef __PS3__	// the camera is the pad's
 		FREE_CAM_TOGGLE
-		MENUACTION_CFO_DYNAMIC, "FEC_S3P", { new CCFODynamic((int8*)&gPS3Sens3rd, "Controller", "Sens3rdPct5", Sens3rdDraw, Sens3rdPress) }, 0, 0, MENUALIGN_LEFT,
-		MENUACTION_CFO_DYNAMIC, "FEC_S1P", { new CCFODynamic((int8*)&gPS3Sens1st, "Controller", "Sens1stPct5", Sens1stDraw, Sens1stPress) }, 0, 0, MENUALIGN_LEFT,
-		MENUACTION_CFO_DYNAMIC, "FEC_DZL", { new CCFODynamic((int8*)&gPS3DeadzoneL, "Controller", "DeadzoneLPct5", DeadzoneLDraw, DeadzoneLPress) }, 0, 0, MENUALIGN_LEFT,
-		MENUACTION_CFO_DYNAMIC, "FEC_DZR", { new CCFODynamic((int8*)&gPS3DeadzoneR, "Controller", "DeadzoneRPct5", DeadzoneRDraw, DeadzoneRPress) }, 0, 0, MENUALIGN_LEFT,
+		MENUACTION_CHANGEMENU,		"FEC_STK", { nil, SAVESLOT_NONE, MENUPAGE_STICK_SETTINGS }, 0, 0, MENUALIGN_LEFT,
 #endif
 		MENUACTION_CTRLVIBRATION,	"FEC_VIB", { nil, SAVESLOT_NONE, MENUPAGE_CONTROLLER_SETTINGS }, 0, 0, MENUALIGN_LEFT,
 		SELECT_CONTROLLER_TYPE
@@ -974,6 +978,18 @@ CMenuScreenCustom aScreens[] = {
 		MENUACTION_LABEL,			"FESZ_RM",  { nil, SAVESLOT_NONE, MENUPAGE_NONE }, 0, 0, 0,
 		MENUACTION_CHANGEMENU,		"FEM_YES",  { nil, SAVESLOT_NONE, MENUPAGE_LOADING_IN_PROGRESS }, 320, 200, MENUALIGN_CENTER,
 		MENUACTION_REJECT_RETRY,	"FEM_NO",   { nil, SAVESLOT_NONE, MENUPAGE_NONE }, 320, 225, MENUALIGN_CENTER,
+	},
+#endif
+
+#ifdef __PS3__
+	// MENUPAGE_STICK_SETTINGS: out of Gamepad settings, where the rows ran
+	// into the controller picture
+	{ "FET_STK", MENUPAGE_CONTROLLER_SETTINGS, new CCustomScreenLayout({40, 78, 25, true, true}), nil,
+		MENUACTION_CFO_DYNAMIC, "FEC_S3P", { new CCFODynamic((int8*)&gPS3Sens3rd, "Controller", "Sens3rdPct5", Sens3rdDraw, Sens3rdPress) }, 0, 0, MENUALIGN_LEFT,
+		MENUACTION_CFO_DYNAMIC, "FEC_S1P", { new CCFODynamic((int8*)&gPS3Sens1st, "Controller", "Sens1stPct5", Sens1stDraw, Sens1stPress) }, 0, 0, MENUALIGN_LEFT,
+		MENUACTION_CFO_DYNAMIC, "FEC_DZL", { new CCFODynamic((int8*)&gPS3DeadzoneL, "Controller", "DeadzoneLPct5", DeadzoneLDraw, DeadzoneLPress) }, 0, 0, MENUALIGN_LEFT,
+		MENUACTION_CFO_DYNAMIC, "FEC_DZR", { new CCFODynamic((int8*)&gPS3DeadzoneR, "Controller", "DeadzoneRight", DeadzoneRDraw, DeadzoneRPress) }, 0, 0, MENUALIGN_LEFT,
+		MENUACTION_GOBACK,		"FEDS_TB", { nil, SAVESLOT_NONE, MENUPAGE_NONE }, 320, 0, MENUALIGN_CENTER,
 	},
 #endif
 

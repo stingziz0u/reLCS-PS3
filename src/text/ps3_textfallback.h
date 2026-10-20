@@ -21,6 +21,8 @@ static const struct { const char *key; const char *text; } ps3TextFallback[] = {
 	{ "FEC_S3P", "3RD PERSON SENSITIVITY" },	// reVC-PS3's own
 	{ "FEC_S1P", "1ST PERSON SENSITIVITY" },	// reVC-PS3's own
 	{ "FEC_DZL", "LEFT STICK DEAD ZONE" },	// reVC-PS3's own
+	{ "FEC_STK", "STICK SETTINGS" },	// reVC-PS3's own
+	{ "FET_STK", "STICK SETTINGS" },	// reVC-PS3's own
 	{ "FEC_DZR", "RIGHT STICK DEAD ZONE" },	// reVC-PS3's own
 	{ "FEC_SN0", "50%" },	// reVC-PS3's own
 	{ "FEC_SN1", "75%" },	// reVC-PS3's own
@@ -346,4 +348,14 @@ static const struct { const char *key; const char *text; } ps3TextFallback[] = {
 	{ "HOTRING", "Hotring Racer" },
 	{ "ITBEG", "In the beginning..." },
 	{ "MAP_LEG", "Map Legend" },
+};
+
+// reVC-PS3: keys whose PC text names the keyboard or the mouse. These win over
+// the GXT (CText::Get): the pad's buttons instead.
+static const struct { const char *key; const char *text; } ps3TextOverride[] = {
+	{ "FET_MIG", "LEFT / RIGHT TO ADJUST" },	// "LEFT,RIGHT,MOUSEWHEEL TO ADJUST"
+	{ "FET_APP", "~X~ TO APPLY THE NEW SETTING" },	// "LMB,RETURN TO APPLY..."
+	{ "FET_CIG", "~Q~ TO CLEAR - ~X~ TO CHANGE" },	// "BACKSPACE TO CLEAR - LMB,RETURN TO CHANGE"
+	{ "FET_RIG", "PRESS THE NEW BUTTON FOR THIS ACTION" },	// "...OR ESC TO CANCEL"
+	{ "FEH_SSA", "UP / DOWN TO SCROLL" },	// "CURSORS TO MOVE - S TO SAVE TO FILE"
 };

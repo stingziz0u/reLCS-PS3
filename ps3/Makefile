@@ -214,9 +214,9 @@ $(OUT_PKG): $(OBJDIR)/$(TARGET).pkg
 # the folders the user fills are created empty.
 $(OBJDIR)/$(TARGET).pkg: pkgfiles
 
-# the folders of the converted LCS data (reLCS Asset Converter, from the
-# user's PS2 game; created empty)
-DATA_DIRS := anim audio data models mp3 skins text txd
+# the folders of the user's LCS data (created empty); mp3 for the MP3
+# player radio. No skins: LCS has none.
+DATA_DIRS := anim audio data models mp3 text txd
 # the port's own files: PlayStation button icons for the on-screen help, and
 # the DualShock 3 picture of the gamepad settings page (reVC's)
 RES_FILES := ps3btns.txd frontend_ds3.txd
