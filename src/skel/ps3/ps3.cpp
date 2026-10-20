@@ -620,7 +620,7 @@ PS3_CheckData(void)
 	// required = the game can't start without it; the rest is only logged
 	static const struct { const char *name; bool required; } files[] = {
 		{ "models/gta3.img", true }, { "models/gta3.dir", true },
-		{ "data/gta3.dat", true }, { "data/main.scm", true },
+		{ "data/gta_lcs.dat", true }, { "data/main.scm", true },
 		{ "data/timecyc.dat", false }, { "anim/ped.ifp", true }, { "anim/cuts.img", false },
 		{ "anim/cuts.dir", false }, { "text/american.gxt", true },
 		{ "audio/sfx.raw", false }, { "audio/sfx.sdt", false },
