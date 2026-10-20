@@ -3937,6 +3937,28 @@ CMenuManager::PrintRadioSelector(void)
 		rightMostSprite = MENUSPRITE_WAVE;
 		rightMostStation = WAVE;
 	}
+#ifdef __PS3__
+	// reLCS has no radio icons of its own (FRONTEN2.TXD's are Vice City's):
+	// the station's name, as the game shows it in a car
+	{
+		static const char *names[] = { "FEA_FM0", "FEA_FM1", "FEA_FM2", "FEA_FM3", "FEA_FM4",
+		                               "FEA_FM5", "FEA_FM6", "FEA_FM7", "FEA_FM8", "FEA_FM9", "FEA_MP3" };
+		int st = m_PrefsRadioStation;
+		if (st < 0 || st >= (int)ARRAY_SIZE(names))
+			st = 0;
+		CFont::SetFontStyle(FONT_LOCALE(FONT_HEADING));
+		CFont::SetScale(MENU_X(BIGTEXT_X_SCALE), MENU_Y(BIGTEXT_Y_SCALE));
+		CFont::SetCentreOn();
+		CFont::SetCentreSize(SCREEN_WIDTH);
+		CFont::SetDropShadowPosition(2);
+		CFont::SetDropColor(CRGBA(0, 0, 0, FadeIn(255)));
+		CFont::SetColor(CRGBA(255, 255, 255, FadeIn(255)));
+		CFont::PrintString(MENU_X_LEFT_ALIGNED(333.f), MENU_Y(MENURADIO_SELECTOR_START_Y + MENURADIO_SELECTOR_HEIGHT / 2 - 12.f),
+		                   TheText.Get(names[st]));
+		CFont::SetCentreOff();
+		CFont::SetDropShadowPosition(0);
+	}
+#else
  #ifdef THIS_IS_STUPID
 
 	// First radio
@@ -4043,6 +4065,7 @@ CMenuManager::PrintRadioSelector(void)
 			CRGBA(255, 255, 255, FadeIn(255)));
 	}
 #endif
+#endif // __PS3__
 
 	static bool radioChangeRequested = false;
 	static uint32 lastScrollCheck = 0;
@@ -5864,6 +5887,50 @@ CMenuManager::DrawQuitGameScreen(void)
 	m_AllowNavigation = false;
 }
 
+#ifdef __PS3__
+extern int32 gRadarTxdIds[64];
+// The map of the pause menu from the game's own radar tiles: 8 x 8 of 500 m,
+// -2000..2000 (re3-PS3's). Loaded the first time, kept while the map is
+// open; the radar's streaming lets go of the far ones once the game runs.
+static void
+PS3DrawRadarTileMap(float centerX, float centerY, float size, uint8 alpha)
+{
+	bool requested = false;
+	for (int i = 0; i < 64; i++) {
+		int32 id = gRadarTxdIds[i];
+		if (id >= 0 && !CStreaming::HasTxdLoaded(id)) {
+			CStreaming::RequestTxd(id, STREAMFLAGS_DONT_REMOVE | STREAMFLAGS_DEPENDENCY);
+			requested = true;
+		}
+	}
+	if (requested)
+		CStreaming::LoadAllRequestedModels(false);
+
+	float tile = size * 2.0f / 8.0f;
+	RwRenderStateSet(rwRENDERSTATETEXTUREADDRESS, (void*)rwTEXTUREADDRESSCLAMP);
+	CSprite2d sprite;
+	for (int y = 0; y < 8; y++) {
+		for (int x = 0; x < 8; x++) {
+			float x0 = centerX - size + x * tile;
+			float y0 = centerY - size + y * tile;
+			if (x0 > SCREEN_WIDTH || y0 > SCREEN_HEIGHT || x0 + tile < 0.0f || y0 + tile < 0.0f)
+				continue;
+			int32 id = gRadarTxdIds[x + 8 * y];
+			if (id < 0 || !CStreaming::HasTxdLoaded(id) || CTxdStore::GetSlot(id)->texDict == nil)
+				continue;
+			RwTexture *tex = GetFirstTexture(CTxdStore::GetSlot(id)->texDict);
+			if (tex == nil)
+				continue;
+			sprite.m_pTexture = tex;
+			// half a pixel of overlap: no seams between the tiles
+			sprite.Draw(CRect(x0, y0, x0 + tile + 0.5f, y0 + tile + 0.5f), CRGBA(255, 255, 255, alpha));
+		}
+	}
+	sprite.m_pTexture = nil;	// the radar's, not ours to delete
+	RwRenderStateSet(rwRENDERSTATETEXTUREADDRESS, (void*)rwTEXTUREADDRESSWRAP);
+}
+#endif
+
 void
 CMenuManager::PrintMap(void)
 {
@@ -5874,6 +5941,13 @@ CMenuManager::PrintMap(void)
 	float halfTile = m_fMapSize * 2.f / 3.f / 2.f;
 
 	RwRenderStateSet(rwRENDERSTATETEXTUREFILTER, (void*)rwFILTERLINEAR);
+#ifdef __PS3__
+	// reLCS: the map from the game's own radar tiles (FRONTEN2.TXD's 3 x 3
+	// map is Vice City's); the MENU_MAP_ constants of Radar.h match them
+	PS3DrawRadarTileMap(m_fMapCenterX, m_fMapCenterY, m_fMapSize, FadeIn(255));
+	if (0)
+#endif
+	{
 
 	if (SCREEN_WIDTH >= m_fMapCenterX - m_fMapSize || SCREEN_HEIGHT >= m_fMapCenterY - m_fMapSize) {
 		m_aFrontEndSprites[MENUSPRITE_MAPTOP01].Draw(CRect(m_fMapCenterX - m_fMapSize, m_fMapCenterY - m_fMapSize,
@@ -5918,6 +5992,7 @@ CMenuManager::PrintMap(void)
 	if (SCREEN_WIDTH >= m_fMapCenterX + halfTile || SCREEN_HEIGHT >= m_fMapCenterY + halfTile) {
 		m_aFrontEndSprites[MENUSPRITE_MAPBOT03].Draw(CRect(m_fMapCenterX + halfTile, m_fMapCenterY + halfTile,
 			m_fMapCenterX + m_fMapSize, m_fMapCenterY + m_fMapSize), CRGBA(255, 255, 255, FadeIn(255)));
+	}
 	}
 
 	CRadar::DrawBlips();
@@ -6013,6 +6088,17 @@ CMenuManager::ChangeRadioStation(int8 increaseBy)
 		m_LeftMostRadioX = MENU_X_LEFT_ALIGNED(MENURADIO_ICON_FIRST_X - (2 * MENURADIO_ICON_SIZE));
 	}
 
+#ifdef __PS3__
+	// reLCS: ten stations (0-9, the streams HEAD to LCFR), the MP3 player 10;
+	// the eRadioStation names are still Vice City's (WAVE 8, USERTRACK 9)
+	{
+		int8 last = DMAudio.IsMP3RadioChannelAvailable() ? 10 : 9;
+		if (m_PrefsRadioStation < 0)
+			m_PrefsRadioStation = last;
+		if (m_PrefsRadioStation > last)
+			m_PrefsRadioStation = 0;
+	}
+#else
 	if (DMAudio.IsMP3RadioChannelAvailable()) {
 		if (m_PrefsRadioStation < WILDSTYLE)
 			m_PrefsRadioStation = USERTRACK;
@@ -6024,6 +6110,7 @@ CMenuManager::ChangeRadioStation(int8 increaseBy)
 		if (m_PrefsRadioStation > WAVE)
 			m_PrefsRadioStation = WILDSTYLE;
 	}
+#endif
 	DMAudio.StopFrontEndTrack();
 	DMAudio.PlayFrontEndSound(SOUND_RADIO_CHANGE, 0);
 }

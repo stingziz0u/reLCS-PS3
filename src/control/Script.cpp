@@ -743,6 +743,13 @@ PS3_ScriptTime(CRunningScript *s, int32 command, uint64 ticks)
 		ps3OpCount[command]++;
 	}
 	ps3AllTotal++;
+}
+
+// a script's whole CRunningScript::Process (its commands and what's around them)
+static uint64 ps3SegTicks[4];	// CTheScripts::Process: before the scripts, the scripts, after, all of it
+static void
+PS3_ScriptProcessTime(CRunningScript *s, uint64 ticks, uint32 commands)
+{
 	int i;
 	for (i = 0; i < ps3NumScriptTimes; i++)
 		if (strncmp(ps3ScriptTimes[i].name, (const char*)s->m_abScriptName, 8) == 0)
@@ -757,7 +764,7 @@ PS3_ScriptTime(CRunningScript *s, int32 command, uint64 ticks)
 		ps3NumScriptTimes++;
 	}
 	ps3ScriptTimes[i].ticks += ticks;
-	ps3ScriptTimes[i].count++;
+	ps3ScriptTimes[i].count += commands;
 }
 
 static void
@@ -784,7 +791,11 @@ PS3_ScriptTimeReport(void)
 		ps3OpTicks[best] = 0;
 	}
 	PS3_Log(line);
-	len = snprintf(line, sizeof(line), "[script]   slowest scripts (name x commands = ms):");
+	PS3_Logf("[script]   CTheScripts::Process in 10 s: %.0f ms (before the scripts %.0f, the scripts %.0f, after %.0f)",
+	         ps3SegTicks[3] * usPerTick / 1000.0, ps3SegTicks[0] * usPerTick / 1000.0,
+	         ps3SegTicks[1] * usPerTick / 1000.0, ps3SegTicks[2] * usPerTick / 1000.0);
+	memset(ps3SegTicks, 0, sizeof(ps3SegTicks));
+	len = snprintf(line, sizeof(line), "[script]   slowest scripts, whole time (name x commands = ms):");
 	for (int k = 0; k < 10 && len < (int)sizeof(line) - 32; k++) {
 		int best = -1;
 		for (int i = 0; i < ps3NumScriptTimes; i++)
@@ -1347,6 +1358,7 @@ void CTheScripts::Process()
 		return;
 #ifdef __PS3__
 	PS3_ScriptReport();
+	uint64 ps3P0 = PS3_Tb();
 #endif
 	CommandsExecuted = 0;
 	ScriptsUpdated = 0;
@@ -1423,11 +1435,22 @@ void CTheScripts::Process()
 
 	CRunningScript* script = pActiveScripts;
 	InTheScripts = true;
+#ifdef __PS3__
+	uint64 ps3P1 = PS3_Tb();
+	ps3SegTicks[0] += ps3P1 - ps3P0;
+#endif
 	while (script != nil){
 		CRunningScript* next = script->GetNext();
 		++ScriptsUpdated;
+#ifdef __PS3__
+		uint64 ps3S0 = PS3_Tb();
+		uint32 ps3C0 = ps3AllTotal;
+#endif
 		script->UpdateTimers(timeStep);
 		script->Process();
+#ifdef __PS3__
+		PS3_ScriptProcessTime(script, PS3_Tb() - ps3S0, ps3AllTotal - ps3C0);
+#endif
 #ifdef __PS3__
 		if (pScriptBroken != nil && pScriptBroken == script) {
 			// as TERMINATE_THIS_SCRIPT, plus what a mission's cleanup does
@@ -1450,11 +1473,22 @@ void CTheScripts::Process()
 			script = nil;
 	}
 	InTheScripts = false;
+#ifdef __PS3__
+	uint64 ps3P2 = PS3_Tb();
+	ps3SegTicks[1] += ps3P2 - ps3P1;
+#endif
 	for (base::cSList<script_corona>::tSItem* i = CTheScripts::mCoronas.first; i; i = i->next) {
 		CCoronas::RegisterCorona((uint32)(uintptr)i, i->item.r, i->item.g, i->item.b, 255, CVector(i->item.x, i->item.y, i->item.z),
 			-i->item.size, 450.0f, i->item.type, i->item.flareType, 1, 0, 0, 0.0f);
 	}
 	DbgFlag = false;
+#ifdef __PS3__
+	{
+		uint64 ps3P3 = PS3_Tb();
+		ps3SegTicks[2] += ps3P3 - ps3P2;
+		ps3SegTicks[3] += ps3P3 - ps3P0;
+	}
+#endif
 
 #ifdef USE_ADVANCED_SCRIPT_DEBUG_OUTPUT
 	LogAfterScriptProcessing();
