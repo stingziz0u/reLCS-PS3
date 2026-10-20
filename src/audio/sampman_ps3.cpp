@@ -1,20 +1,19 @@
-// sampman_ps3.cpp -- reVC's sample manager on the PS3 (stage 2, AUDIO_PS3).
+// sampman_ps3.cpp -- reLCS's sample manager on the PS3 (AUDIO_PS3).
 //
-// sampman_oal.cpp's logic (sample banks, ped comment slots, streams, the
-// MP3 player radio), with OpenAL replaced by a software mixer (the same one
-// as re3-PS3):
+// sampman_oal.cpp's logic (sample banks, ped comment slots, mission audio
+// slots, the stream, the MP3 player radio), with OpenAL replaced by a
+// software mixer (the one of re3-PS3 and reVC-PS3):
 //
 //  - one audio port, 2 channels, 16 blocks of 256 float samples at 48000 Hz,
-//    fed by a thread woken once per block (Doom64-PS3 / Quake2PS3's scheme,
-//    proven on hardware);
-//  - 28 + 1 sample channels: 16 bit samples from sfx.raw (little-endian on
-//    disc, swapped once when loaded), linear interpolation for the pitch,
-//    the 3D ones attenuated like OpenAL's inverse distance clamped model
-//    and panned from their position (sampman_oal's OpenAL setup);
-//  - 3 streams (radio, ambience and cutscene speech, mission speech): WAV
-//    (PCM / IMA ADPCM), MP3 and the radio's ADF (an MP3 with every byte
-//    XORed with 0x22), decoded ahead by their own thread (minimp3) into a
-//    ring the mixer reads; looped when the game asks (the radio stations);
+//    fed by a thread woken once per block;
+//  - 41 3D channels + 3 2D ones (police radio, mission audio 1 and 2): 16 bit
+//    samples from sfx.raw (little-endian on disc, swapped once when loaded),
+//    linear interpolation for the pitch, the 3D ones attenuated like
+//    OpenAL's inverse distance clamped model and panned from their position;
+//  - 1 stream (radio, cutscenes): the LCS .VB files (PS2 VAG ADPCM, stereo,
+//    0x2000 byte blocks per channel, 32000 Hz) or an .MP3 of the same name,
+//    decoded ahead by their own thread into a ring the mixer reads; looped
+//    when the game asks (the radio stations);
 //  - the MP3 player radio: the .mp3 files of USRDIR/mp3, in name order, one
 //    long station (a position in it = a file + a position in the file).
 
@@ -66,6 +65,89 @@ static uintptr nSampleBankMemoryStartAddress[MAX_SFX_BANKS];
 
 static int32 nPedSlotSfx[MAX_PEDSFX];
 static uint8 nCurrentPedSlot;
+
+// mission audio (LCS): slots 1 and 2 (MISSION_AUDIO_BLOCKSIZE each) and the
+// player's comments, read from sfx.raw when the game asks
+static uint32 nMissionSlotSfx[MISSION_AUDIO_SLOTS] = { UINT32_MAX, UINT32_MAX };
+static uint8 *pMissionSlotData;
+static uint32 gPlayerTalkSfx = UINT32_MAX;
+static uint8 *gPlayerTalkData;
+static uint32 nPlayerTalkSize;	// gPlayerTalkData's size: the biggest player comment
+
+// sampman_oal: the first sample of every engine sound bank (AudioLogic.cpp)
+int gBankStartOffset[67];
+
+static void
+SetUpDebugBanksInfo()
+{
+	gBankStartOffset[0] = SFX_AIR_BRAKES;
+	gBankStartOffset[1] = SFX_EMPTY;
+	gBankStartOffset[2] = SFX_AMBULAN_VOICE_1_VAN_1;
+	gBankStartOffset[3] = SFX_FE_BACK;
+	gBankStartOffset[4] = SFX_CAR_ACCEL_1;
+	gBankStartOffset[5] = SFX_CAR_ACCEL_2;
+	gBankStartOffset[6] = SFX_CAR_ACCEL_3;
+	gBankStartOffset[7] = SFX_CAR_ACCEL_4;
+	gBankStartOffset[8] = SFX_CAR_ACCEL_5;
+	gBankStartOffset[9] = SFX_CAR_ACCEL_6;
+	gBankStartOffset[10] = SFX_CAR_ACCEL_7;
+	gBankStartOffset[11] = SFX_CAR_ACCEL_8;
+	gBankStartOffset[12] = SFX_CAR_ACCEL_9;
+	gBankStartOffset[13] = SFX_CAR_ACCEL_10;
+	gBankStartOffset[14] = SFX_CAR_ACCEL_11;
+	gBankStartOffset[15] = SFX_CAR_ACCEL_12;
+	gBankStartOffset[16] = SFX_CAR_CHAINSAW_IDLE;
+	gBankStartOffset[17] = SFX_RC_IDLE;
+	gBankStartOffset[18] = SFX_CAR_RC_HELI;
+	gBankStartOffset[19] = SFX_CAR_ACCEL_16;
+	gBankStartOffset[20] = SFX_CAR_ACCEL_17;
+	gBankStartOffset[21] = SFX_CAR_ACCEL_18;
+	gBankStartOffset[22] = SFX_CAR_ACCEL_19;
+	gBankStartOffset[23] = SFX_CAR_ACCEL_20;
+	gBankStartOffset[24] = SFX_CAR_ACCEL_21;
+	gBankStartOffset[25] = SFX_CAR_AFTER_ACCEL_21;
+	gBankStartOffset[26] = SFX_CAR_FINGER_OFF_ACCEL_21;
+	gBankStartOffset[27] = SFX_CAR_ACCEL_22;
+	gBankStartOffset[28] = SFX_CAR_AFTER_ACCEL_22;
+	gBankStartOffset[29] = SFX_CAR_FINGER_OFF_ACCEL_22;
+	gBankStartOffset[30] = SFX_HELI_APACHE_1;
+	gBankStartOffset[31] = SFX_HELI_UNUSED_1;
+	gBankStartOffset[32] = SFX_HELI_UNUSED_2;
+	gBankStartOffset[33] = SFX_HELI_UNUSED_3;
+	gBankStartOffset[34] = SFX_HELI_UNUSED_4;
+	gBankStartOffset[35] = SFX_SEAPLANE_LOW;
+	gBankStartOffset[36] = SFX_PLANE_UNUSED_1;
+	gBankStartOffset[37] = SFX_PLANE_UNUSED_2;
+	gBankStartOffset[38] = SFX_PLANE_UNUSED_3;
+	gBankStartOffset[39] = SFX_PLANE_UNUSED_4;
+	gBankStartOffset[40] = SFX_BUILDINGS_BANK_ALARM;
+	gBankStartOffset[41] = SFX_BUILDING_SNORE;
+	gBankStartOffset[42] = SFX_BUILDING_BAR_1;
+	gBankStartOffset[43] = SFX_BUILDING_BAR_2;
+	gBankStartOffset[44] = SFX_BUILDING_BAR_3;
+	gBankStartOffset[45] = SFX_BUILDING_BAR_4;
+	gBankStartOffset[46] = SFX_BUILDING_MALIBU_1;
+	gBankStartOffset[47] = SFX_BUILDING_MALIBU_2;
+	gBankStartOffset[48] = SFX_BUILDING_MALIBU_3;
+	gBankStartOffset[49] = SFX_BUILDING_STRIP_1;
+	gBankStartOffset[50] = SFX_BUILDING_STRIP_2;
+	gBankStartOffset[51] = SFX_BUILDING_STRIP_3;
+	gBankStartOffset[52] = SFX_BUILDING_CHURCH;
+	gBankStartOffset[53] = SFX_BUILDING_FAN_1;
+	gBankStartOffset[54] = SFX_BUILDING_FAN_2;
+	gBankStartOffset[55] = SFX_BUILDING_INSECTS_1;
+	gBankStartOffset[56] = SFX_BUILDING_INSECTS_2;
+	gBankStartOffset[57] = SFX_CLUB_1;
+	gBankStartOffset[58] = SFX_CLUB_2;
+	gBankStartOffset[59] = SFX_CLUB_3;
+	gBankStartOffset[60] = SFX_CLUB_4;
+	gBankStartOffset[61] = SFX_FOOTSTEP_GRASS_1;
+	gBankStartOffset[62] = SFX_FOOTSTEP_GRAVEL_1;
+	gBankStartOffset[63] = SFX_FOOTSTEP_WOOD_1;
+	gBankStartOffset[64] = SFX_FOOTSTEP_METAL_1;
+	gBankStartOffset[65] = SFX_FOOTSTEP_WATER_1;
+	gBankStartOffset[66] = SFX_FOOTSTEP_SAND_1;
+}
 // Ped comments are read by the stream thread (its own handle on sfx.raw):
 // a seek and up to 79 KB from the disk the streaming also reads took the
 // game thread 10-40 ms each time a ped spoke. The slot's sample is set
@@ -77,7 +159,7 @@ static volatile int32 pcSlot;
 static volatile uint32 pcOffset, pcSize;	// in sfx.raw
 static void PedCommentRead(void);
 
-static uint8 nChannelVolume[MAXCHANNELS+MAX2DCHANNELS];
+static uint8 nChannelVolume[NUM_CHANNELS];
 static uint32 nStreamLength[TOTAL_STREAMED_SOUNDS];
 static uint8 nStreamPan[MAX_STREAMS];
 static uint8 nStreamVolume[MAX_STREAMS];
@@ -172,7 +254,7 @@ struct Channel
 	int32 pan;		// 0..127
 };
 
-static Channel channels[MAXCHANNELS+MAX2DCHANNELS];
+static Channel channels[NUM_CHANNELS];
 
 // ============================================================================
 // Stream decoders
@@ -562,12 +644,131 @@ public:
 	}
 };
 
+// LCS .VB (sampman_oal's CVbFile): PS2 VAG ADPCM, no header, the channels
+// interleaved in 0x2000 byte blocks ([L block][R block][L block]...), 16 byte
+// lines of 28 samples each
+#define VB_BLOCK_SIZE	0x2000
+#define VAG_LINE_SIZE	16
+#define VAG_LINE_SAMPLES	28
+#define VB_BLOCK_LINES	(VB_BLOCK_SIZE / VAG_LINE_SIZE)
+#define VB_BLOCK_SAMPLES	(VB_BLOCK_LINES * VAG_LINE_SAMPLES)
+
+class VbDecoder : public Decoder
+{
+	enum { CHANNELS = 2 };
+	FILE *f;
+	uint32 rate;
+	uint32 numBlocks;
+	uint32 block, line;	// the next line to decode
+	bool loaded;		// buf holds block
+	uint32 filePos;
+	uint8 buf[CHANNELS][VB_BLOCK_SIZE];
+	int32 hist[CHANNELS][2];
+
+	static void DecodeLine(const uint8 *in, int16 *out, int32 *h)
+	{
+		static const int32 f0[5] = { 0, 60, 115, 98, 122 };
+		static const int32 f1[5] = { 0, 0, -52, -55, -60 };
+		int32 predict = in[0] >> 4;
+		int32 shift = in[0] & 0xF;
+		int32 flags = in[1];
+		if(predict > 4) predict = 0;
+		if(shift > 12) shift = 12;
+		if(flags == 7){
+			// end marker: a silent line
+			for(int i = 0; i < VAG_LINE_SAMPLES; i++)
+				out[i] = 0;
+			return;
+		}
+		for(int i = 0; i < VAG_LINE_SAMPLES; i++){
+			int32 d = in[2 + i/2];
+			int32 nib = (i & 1) ? d >> 4 : d & 0xF;
+			int32 s = (int16)(nib << 12) >> shift;
+			s += (h[0]*f0[predict] + h[1]*f1[predict] + 32) >> 6;
+			if(s > 32767) s = 32767;
+			if(s < -32768) s = -32768;
+			h[1] = h[0];
+			h[0] = s;
+			out[i] = (int16)s;
+		}
+	}
+
+public:
+	VbDecoder(const char *path, uint32 sampleRate) : f(nil), rate(sampleRate), numBlocks(0), block(0), line(0),
+		loaded(false), filePos(0)
+	{
+		memset(hist, 0, sizeof(hist));
+		f = fopen(path, "rb");
+		if(f == nil)
+			return;
+		fseek(f, 0, SEEK_END);
+		uint32 size = ftell(f);
+		fseek(f, 0, SEEK_SET);
+		numBlocks = size / (CHANNELS * VB_BLOCK_SIZE);
+	}
+	~VbDecoder()
+	{
+		if(f) fclose(f);
+	}
+	bool IsOpened() { return f != nil && numBlocks != 0; }
+	uint32 GetRate() { return rate; }
+	uint32 GetLengthMS() { return (uint32)((uint64)numBlocks * VB_BLOCK_SAMPLES * 1000 / rate); }
+	void Seek(uint32 ms)
+	{
+		uint32 sample = (uint32)((uint64)ms * rate / 1000);
+		uint32 b = sample / VB_BLOCK_SAMPLES;
+		if(b >= numBlocks){
+			b = 0;
+			sample = 0;
+		}
+		if(b != block)
+			loaded = false;
+		block = b;
+		line = (sample - b * VB_BLOCK_SAMPLES) / VAG_LINE_SAMPLES;
+		memset(hist, 0, sizeof(hist));
+	}
+	uint32 Decode(int16 *out, uint32 maxFrames)
+	{
+		int16 pcm[CHANNELS][VAG_LINE_SAMPLES];
+		uint32 n = 0;
+		while(n + VAG_LINE_SAMPLES <= maxFrames && block < numBlocks){
+			if(!loaded){
+				uint32 at = block * CHANNELS * VB_BLOCK_SIZE;
+				if(at != filePos && fseek(f, at, SEEK_SET) != 0)
+					break;
+				filePos = at;
+				if(fread(buf, 1, sizeof(buf), f) != sizeof(buf)){
+					filePos = UINT32_MAX;
+					break;
+				}
+				filePos += sizeof(buf);
+				loaded = true;
+			}
+			for(int c = 0; c < CHANNELS; c++)
+				DecodeLine(&buf[c][line * VAG_LINE_SIZE], pcm[c], hist[c]);
+			for(int i = 0; i < VAG_LINE_SAMPLES; i++){
+				out[n*2] = pcm[0][i];
+				out[n*2+1] = pcm[1][i];
+				n++;
+			}
+			if(++line >= VB_BLOCK_LINES){
+				line = 0;
+				block++;
+				loaded = false;
+			}
+		}
+		return n;
+	}
+};
+
 static Decoder*
 OpenDecoder(const char *filename)
 {
 	size_t len = strlen(filename);
 	Decoder *d = nil;
-	if(len > 4 && strcasecmp(filename + len - 4, ".wav") == 0)
+	if(len > 3 && strcasecmp(filename + len - 3, ".vb") == 0)
+		d = new VbDecoder(filename, 32000);
+	else if(len > 4 && strcasecmp(filename + len - 4, ".wav") == 0)
 		d = new WavDecoder(filename);
 	else if(len > 4 && strcasecmp(filename + len - 4, ".mp3") == 0)
 		d = new Mp3Decoder(filename);
@@ -576,6 +777,20 @@ OpenDecoder(const char *filename)
 	if(d && !d->IsOpened()){
 		delete d;
 		d = nil;
+	}
+	return d;
+}
+
+// a track of StreamedNameTable (no extension there): its .VB, else an .MP3
+static Decoder*
+OpenTrackDecoder(uint32 nFile)
+{
+	char filename[64];
+	sprintf(filename, "%s.VB", StreamedNameTable[nFile]);
+	Decoder *d = OpenDecoder(filename);
+	if(d == nil){
+		sprintf(filename, "%s.MP3", StreamedNameTable[nFile]);
+		d = OpenDecoder(filename);
 	}
 	return d;
 }
@@ -611,13 +826,12 @@ struct Stream
 static Stream *streams[MAX_STREAMS];
 
 static Stream*
-StreamCreate(const char *filename)
+StreamCreate(Decoder *d, const char *name)
 {
-	Decoder *d = OpenDecoder(filename);
 	if(d == nil){
 		static int warned;
 		if(warned++ < 10)
-			PS3_Logf("[audio] can't open stream %s", filename);
+			PS3_Logf("[audio] can't open stream %s", name);
 		return nil;
 	}
 	Stream *s = new Stream;
@@ -630,6 +844,18 @@ StreamCreate(const char *filename)
 	s->pan = 63;
 	s->loopsLeft = 1;
 	return s;
+}
+
+static Stream*
+StreamCreate(const char *filename)
+{
+	return StreamCreate(OpenDecoder(filename), filename);
+}
+
+static Stream*
+StreamCreateTrack(uint32 nFile)
+{
+	return StreamCreate(OpenTrackDecoder(nFile), StreamedNameTable[nFile]);
 }
 
 static void
@@ -884,7 +1110,7 @@ AudioFill(float *dst)
 	{
 		MixLock lock;
 		s_mixing = 1;
-		for(int i = 0; i < MAXCHANNELS+MAX2DCHANNELS; i++)
+		for(int i = 0; i < NUM_CHANNELS; i++)
 			if(channels[i].playing)
 				MixChannel(channels[i]);
 		for(int i = 0; i < MAX_STREAMS; i++)
@@ -1015,13 +1241,13 @@ AudioHangDump(void)
 	uint32 blocks = s_mixBlocks, passes = s_streamPasses;
 	usleep(100000);
 	int playing = 0;
-	for(int i = 0; i < MAXCHANNELS+MAX2DCHANNELS; i++)
+	for(int i = 0; i < NUM_CHANNELS; i++)
 		if(channels[i].playing)
 			playing++;
 	PS3_Logf("[hang] audio: mixer %u blocks in 0.1 s (in the mixer %d), stream thread %u passes (step %d), "
 	         "ped comment read %d, channels playing %d",
 	         s_mixBlocks - blocks, s_mixing, s_streamPasses - passes, s_streamStep, (int)pcRequest, playing);
-	for(int i = 0; i < MAXCHANNELS+MAX2DCHANNELS; i++){
+	for(int i = 0; i < NUM_CHANNELS; i++){
 		Channel &c = channels[i];
 		if(c.playing)
 			PS3_Logf("[hang]   channel %d: freq %u pos %.0f of %d loop %d-%d count %u/%u 3d %d (%.1f %.1f %.1f) vol %u",
@@ -1120,16 +1346,16 @@ void cSampleManager::Set3DProviderName(uint8 id, char *name) { (void)id; (void)n
 int8 cSampleManager::GetCurrent3DProviderIndex(void) { return 0; }
 int8 cSampleManager::SetCurrent3DProvider(uint8 which) { (void)which; return 0; }
 int8 cSampleManager::AutoDetect3DProviders(void) { return 0; }
-bool cSampleManager::IsMP3RadioChannelAvailable(void) { return nNumMP3s != 0; }
+bool8 cSampleManager::IsMP3RadioChannelAvailable(void) { return nNumMP3s != 0; }
 void cSampleManager::ReleaseDigitalHandle(void) { }
 void cSampleManager::ReacquireDigitalHandle(void) { }
-bool cSampleManager::CheckForAnAudioFileOnCD(void) { return true; }
+bool8 cSampleManager::CheckForAnAudioFileOnCD(void) { return TRUE; }
 char cSampleManager::GetCDAudioDriveLetter(void) { return '\0'; }
 
-// stream lengths: measured once (opening ~1200 files: radio, ambiences,
-// cutscene and mission speech), kept in audio/sound.cache (native endian,
-// its own magic: written and read only here, never the PC game's cache)
-#define SOUND_CACHE_MAGIC 0x56433301	// "VC3", version 1
+// stream lengths: measured once (the radio stations and cutscenes, .VB or
+// .MP3), kept in audio/sound.cache (native endian, its own magic: written
+// and read only here, never the PC game's cache)
+#define SOUND_CACHE_MAGIC 0x4C435301	// "LCS", version 1
 static void
 LoadStreamLengths(void)
 {
@@ -1146,9 +1372,9 @@ LoadStreamLengths(void)
 	}
 	int found = 0;
 	uint64 t0 = sysGetSystemTime();
-	PS3_Log("[audio] measuring the streamed files (first boot only, ~1200 files)...");
+	PS3_Log("[audio] measuring the streamed files (first boot only)...");
 	for(int32 i = 0; i < TOTAL_STREAMED_SOUNDS; i++){
-		Decoder *d = OpenDecoder(StreamedNameTable[i]);
+		Decoder *d = OpenTrackDecoder(i);
 		if(d){
 			nStreamLength[i] = d->GetLengthMS();
 			delete d;
@@ -1167,12 +1393,13 @@ LoadStreamLengths(void)
 	}
 }
 
-bool
+bool8
 cSampleManager::Initialise(void)
 {
 	if(_bSampmanInitialised)
 		return true;
 
+	SetUpDebugBanksInfo();
 	CreateMutex(&mixMutex, "resmix");
 	CreateMutex(&streamMutex, "resstrm");
 
@@ -1200,7 +1427,10 @@ cSampleManager::Initialise(void)
 	for(int32 i = 0; i < MAX_PEDSFX; i++)
 		nPedSlotSfx[i] = NO_SAMPLE;
 	nCurrentPedSlot = 0;
-	for(int32 i = 0; i < MAXCHANNELS+MAX2DCHANNELS; i++){
+	for(int32 i = 0; i < MISSION_AUDIO_SLOTS; i++)
+		nMissionSlotSfx[i] = UINT32_MAX;
+	gPlayerTalkSfx = UINT32_MAX;
+	for(int32 i = 0; i < NUM_CHANNELS; i++){
 		nChannelVolume[i] = 0;
 		memset(&channels[i], 0, sizeof(Channel));
 	}
@@ -1226,11 +1456,19 @@ cSampleManager::Initialise(void)
 		return false;
 	}
 	nSampleBankMemoryStartAddress[SFX_BANK_PED_COMMENTS] = (uintptr)malloc(PED_BLOCKSIZE*MAX_PEDSFX);
+	pMissionSlotData = (uint8*)malloc(MISSION_AUDIO_BLOCKSIZE*MISSION_AUDIO_SLOTS);
+	nPlayerTalkSize = 0;
+	for(uint32 i = PLAYER_COMMENTS_START; i <= PLAYER_COMMENTS_END; i++)
+		nPlayerTalkSize = Max(nPlayerTalkSize, m_aSamples[i].nSize);
+	gPlayerTalkData = nPlayerTalkSize ? (uint8*)malloc(nPlayerTalkSize) : nil;
+	if(gPlayerTalkData == nil)
+		nPlayerTalkSize = 0;
 
 	if(!LoadSampleBank(SFX_BANK_0))
 		PS3_Log("[audio] WARNING: the sound bank didn't load");
-	PS3_Logf("[audio] sound bank %d KB, ped comments %d KB", nSampleBankSize[SFX_BANK_0]/1024,
-	         nSampleBankSize[SFX_BANK_PED_COMMENTS]/1024);
+	PS3_Logf("[audio] %u samples, sound bank %d KB, ped comments %d KB on disc, mission audio %d KB, player comments %u KB",
+	         (unsigned)TOTAL_AUDIO_SAMPLES, nSampleBankSize[SFX_BANK_0]/1024, nSampleBankSize[SFX_BANK_PED_COMMENTS]/1024,
+	         pMissionSlotData ? MISSION_AUDIO_BLOCKSIZE*MISSION_AUDIO_SLOTS/1024 : 0, nPlayerTalkSize/1024);
 
 	if(!AudioPortInit()){
 		Terminate();
@@ -1253,9 +1491,14 @@ cSampleManager::Terminate(void)
 			StreamDestroy(streams[i]);
 			streams[i] = nil;
 		}
-		for(int32 i = 0; i < MAXCHANNELS+MAX2DCHANNELS; i++)
+		for(int32 i = 0; i < NUM_CHANNELS; i++)
 			channels[i].playing = false;
 	}
+	free(pMissionSlotData);
+	pMissionSlotData = nil;
+	free(gPlayerTalkData);
+	gPlayerTalkData = nil;
+	nPlayerTalkSize = 0;
 	if(fpPedCommentHandle){
 		fclose(fpPedCommentHandle);
 		fpPedCommentHandle = nil;
@@ -1288,7 +1531,7 @@ cSampleManager::UpdateEffectsVolume(void)
 	if(!_bSampmanInitialised)
 		return;
 	MixLock lock;
-	for(int32 i = 0; i < MAXCHANNELS+MAX2DCHANNELS; i++)
+	for(int32 i = 0; i < NUM_CHANNELS; i++)
 		if(channels[i].playing && nChannelVolume[i] != 0)
 			channels[i].volume = MasterVolume(m_nEffectsFadeVolume, nChannelVolume[i], m_nEffectsVolume);
 }
@@ -1298,7 +1541,7 @@ void cSampleManager::SetMusicMasterVolume(uint8 nVolume) { m_nMusicVolume = nVol
 void cSampleManager::SetMP3BoostVolume(uint8 nVolume) { m_nMP3BoostVolume = nVolume; }
 void cSampleManager::SetEffectsFadeVolume(uint8 nVolume) { m_nEffectsFadeVolume = nVolume; UpdateEffectsVolume(); }
 void cSampleManager::SetMusicFadeVolume(uint8 nVolume) { m_nMusicFadeVolume = nVolume; }
-void cSampleManager::SetMonoMode(uint8 nMode) { m_nMonoMode = nMode; monoMode = nMode; }
+void cSampleManager::SetMonoMode(bool8 nMode) { m_nMonoMode = nMode; monoMode = nMode; }
 
 
 // ---- the sound bank kept an eye on ---------------------------------------------
@@ -1385,7 +1628,7 @@ PS3_BankCheck(const tSample *table)
 	}
 }
 
-bool
+bool8
 cSampleManager::LoadSampleBank(uint8 nBank)
 {
 	if(CTimer::GetIsCodePaused())
@@ -1407,12 +1650,83 @@ cSampleManager::LoadSampleBank(uint8 nBank)
 }
 
 void cSampleManager::UnloadSampleBank(uint8 nBank) { bSampleBankLoaded[nBank] = false; }
-bool cSampleManager::IsSampleBankLoaded(uint8 nBank) { return bSampleBankLoaded[nBank]; }
+int8 cSampleManager::IsSampleBankLoaded(uint8 nBank) { return nBank < MAX_SFX_BANKS && bSampleBankLoaded[nBank] ? LOADING_STATUS_LOADED : LOADING_STATUS_NOT_LOADED; }
 
-bool
+// the channels playing from [start, start+size): stopped before it's read over
+static void
+StopChannelsIn(const uint8 *start, uint32 size)
+{
+	MixLock lock;
+	for(int32 i = 0; i < NUM_CHANNELS; i++)
+		if(channels[i].playing && (const uint8*)channels[i].data >= start &&
+		   (const uint8*)channels[i].data < start + size)
+			channels[i].playing = false;
+}
+
+uint8
+cSampleManager::IsMissionAudioLoaded(uint8 nSlot, uint32 nSample)
+{
+	switch(nSlot){
+	case MISSION_AUDIO_SLOT_1:
+	case MISSION_AUDIO_SLOT_2:
+		return nMissionSlotSfx[nSlot] == nSample ? LOADING_STATUS_LOADED : LOADING_STATUS_NOT_LOADED;
+	case MISSION_AUDIO_PLAYER_COMMENT:
+		return nSample == gPlayerTalkSfx ? LOADING_STATUS_LOADED : LOADING_STATUS_NOT_LOADED;
+	}
+	return LOADING_STATUS_NOT_LOADED;
+}
+
+// read by the game thread, as sampman_oal does (the game plays it the same
+// frame); a mission line is one read of up to 160 KB
+bool8
+cSampleManager::LoadMissionAudio(uint8 nSlot, uint32 nSample)
+{
+	if(nSample >= TOTAL_AUDIO_SAMPLES || fpSampleDataHandle == nil)
+		return FALSE;
+	uint8 *dst;
+	uint32 cap;
+	switch(nSlot){
+	case MISSION_AUDIO_SLOT_1:
+	case MISSION_AUDIO_SLOT_2:
+		if(pMissionSlotData == nil)
+			return FALSE;
+		dst = pMissionSlotData + nSlot*MISSION_AUDIO_BLOCKSIZE;
+		cap = MISSION_AUDIO_BLOCKSIZE;
+		nMissionSlotSfx[nSlot] = UINT32_MAX;
+		break;
+	case MISSION_AUDIO_PLAYER_COMMENT:
+		if(gPlayerTalkData == nil)
+			return FALSE;
+		dst = gPlayerTalkData;
+		cap = nPlayerTalkSize;
+		gPlayerTalkSfx = UINT32_MAX;
+		break;
+	default:
+		return FALSE;
+	}
+	uint32 size = m_aSamples[nSample].nSize;
+	if(size > cap){
+		static int logged;
+		if(logged++ < 8)
+			PS3_Logf("[audio] mission audio %u is %u bytes, the slot %u: cut", nSample, size, cap);
+		size = cap;
+	}
+	StopChannelsIn(dst, cap);
+	if(fseek(fpSampleDataHandle, m_aSamples[nSample].nOffset, SEEK_SET) != 0 ||
+	   fread(dst, 1, size, fpSampleDataHandle) != size)
+		return FALSE;
+	LittleSwap16(dst, size/2);
+	if(nSlot == MISSION_AUDIO_PLAYER_COMMENT)
+		gPlayerTalkSfx = nSample;
+	else
+		nMissionSlotSfx[nSlot] = nSample;
+	return TRUE;
+}
+
+uint8
 cSampleManager::IsPedCommentLoaded(uint32 nComment)
 {
-	return _GetPedCommentSlot(nComment) >= 0;
+	return _GetPedCommentSlot(nComment) >= 0 ? LOADING_STATUS_LOADED : LOADING_STATUS_NOT_LOADED;
 }
 
 int32
@@ -1429,7 +1743,7 @@ cSampleManager::_GetPedCommentSlot(uint32 nComment)
 	return -1;
 }
 
-bool
+bool8
 cSampleManager::LoadPedComment(uint32 nComment)
 {
 	if(CTimer::GetIsCodePaused())
@@ -1441,15 +1755,8 @@ cSampleManager::LoadPedComment(uint32 nComment)
 		return false;
 	if(pcRequest >= 0)
 		return false;	// one at a time: the next frame
-	{
-		// the slot may be playing on a channel: stop those first
-		MixLock lock;
-		uint8 *slotStart = (uint8*)(nSampleBankMemoryStartAddress[SFX_BANK_PED_COMMENTS] + PED_BLOCKSIZE*nCurrentPedSlot);
-		for(int32 i = 0; i < MAXCHANNELS+MAX2DCHANNELS; i++)
-			if(channels[i].playing && (const uint8*)channels[i].data >= slotStart &&
-			   (const uint8*)channels[i].data < slotStart + PED_BLOCKSIZE)
-				channels[i].playing = false;
-	}
+	// the slot may be playing on a channel: stop those first
+	StopChannelsIn((uint8*)(nSampleBankMemoryStartAddress[SFX_BANK_PED_COMMENTS] + PED_BLOCKSIZE*nCurrentPedSlot), PED_BLOCKSIZE);
 	nPedSlotSfx[nCurrentPedSlot] = NO_SAMPLE;
 	pcSlot = nCurrentPedSlot;
 	pcOffset = m_aSamples[nComment].nOffset;
@@ -1492,19 +1799,20 @@ cSampleManager::GetBankContainingSound(uint32 offset)
 	return INVALID_SFX_BANK;
 }
 
-int32 cSampleManager::GetSampleBaseFrequency(uint32 nSample) { if(nSample >= TOTAL_AUDIO_SAMPLES) return 0; return m_aSamples[nSample].nFrequency; }
-int32 cSampleManager::GetSampleLoopStartOffset(uint32 nSample) { if(nSample >= TOTAL_AUDIO_SAMPLES) return 0; return m_aSamples[nSample].nLoopStart; }
+uint32 cSampleManager::GetSampleBaseFrequency(uint32 nSample) { if(nSample >= TOTAL_AUDIO_SAMPLES) return 0; return m_aSamples[nSample].nFrequency; }
+uint32 cSampleManager::GetSampleLoopStartOffset(uint32 nSample) { if(nSample >= TOTAL_AUDIO_SAMPLES) return 0; return m_aSamples[nSample].nLoopStart; }
 int32 cSampleManager::GetSampleLoopEndOffset(uint32 nSample) { if(nSample >= TOTAL_AUDIO_SAMPLES) return 0; return m_aSamples[nSample].nLoopEnd; }
 uint32 cSampleManager::GetSampleLength(uint32 nSample) { if(nSample >= TOTAL_AUDIO_SAMPLES) return 0; return m_aSamples[nSample].nSize / sizeof(uint16); }
 
-bool cSampleManager::UpdateReverb(void) { return false; }
-void cSampleManager::SetChannelReverbFlag(uint32 nChannel, uint8 nReverbFlag) { (void)nChannel; (void)nReverbFlag; }
+bool8 cSampleManager::UpdateReverb(void) { return FALSE; }
+void cSampleManager::SetChannelReverbFlag(uint32 nChannel, bool8 nReverbFlag) { (void)nChannel; (void)nReverbFlag; }
 
-bool
+bool8
 cSampleManager::InitialiseChannel(uint32 nChannel, uint32 nSfx, uint8 nBank)
 {
 	uintptr addr;
-	if(nChannel >= MAXCHANNELS+MAX2DCHANNELS || nSfx >= TOTAL_AUDIO_SAMPLES)
+	uint32 maxSize = 0;	// the slot's size (ped comments, mission audio)
+	if(nChannel >= NUM_CHANNELS || nSfx >= TOTAL_AUDIO_SAMPLES)
 		return false;
 	if(nSfx < SAMPLEBANK_MAX){
 		if(nBank >= MAX_SFX_BANKS || !IsSampleBankLoaded(nBank)){
@@ -1522,19 +1830,34 @@ cSampleManager::InitialiseChannel(uint32 nChannel, uint32 nSfx, uint8 nBank)
 			return false;
 		}
 		addr = nSampleBankMemoryStartAddress[nBank] + rel;
+	}else if(nSfx >= PLAYER_COMMENTS_START && nSfx <= PLAYER_COMMENTS_END){
+		if(!IsMissionAudioLoaded(MISSION_AUDIO_PLAYER_COMMENT, nSfx))
+			return FALSE;
+		addr = (uintptr)gPlayerTalkData;
+		maxSize = nPlayerTalkSize;
 	}else{
-		int32 slot = _GetPedCommentSlot(nSfx);
-		if(slot < 0)
-			return false;
-		addr = nSampleBankMemoryStartAddress[SFX_BANK_PED_COMMENTS] + PED_BLOCKSIZE * slot;
+		int32 slot;
+		for(slot = 0; slot < MISSION_AUDIO_SLOTS; slot++)
+			if(IsMissionAudioLoaded(slot, nSfx))
+				break;
+		if(slot < MISSION_AUDIO_SLOTS){
+			addr = (uintptr)(pMissionSlotData + slot*MISSION_AUDIO_BLOCKSIZE);
+			maxSize = MISSION_AUDIO_BLOCKSIZE;
+		}else{
+			slot = _GetPedCommentSlot(nSfx);
+			if(slot < 0)
+				return FALSE;
+			addr = nSampleBankMemoryStartAddress[SFX_BANK_PED_COMMENTS] + PED_BLOCKSIZE * slot;
+			maxSize = PED_BLOCKSIZE;
+		}
 	}
 	MixLock lock;
 	Channel &c = channels[nChannel];
 	c.playing = false;
 	c.data = (const int16*)addr;
 	c.length = m_aSamples[nSfx].nSize / 2;
-	if(nSfx >= SAMPLEBANK_MAX && c.length > PED_BLOCKSIZE/2)
-		c.length = PED_BLOCKSIZE/2;
+	if(maxSize && c.length > maxSize/2)
+		c.length = maxSize/2;
 	c.baseFreq = m_aSamples[nSfx].nFrequency;
 	c.freq = c.baseFreq;
 	c.pos = 0.0;
@@ -1542,7 +1865,7 @@ cSampleManager::InitialiseChannel(uint32 nChannel, uint32 nSfx, uint8 nBank)
 	c.loopEnd = -1;
 	c.loopCount = 1;
 	c.timesPlayed = 0;
-	c.is3D = nChannel != CHANNEL2D;
+	c.is3D = nChannel < MAXCHANNELS;
 	c.x = c.y = c.z = 0.0f;
 	c.maxDist = c.minDist = 0.0f;
 	c.pan = 63;
@@ -1590,7 +1913,7 @@ cSampleManager::SetChannel3DDistances(uint32 nChannel, float fMax, float fMin)
 void
 cSampleManager::SetChannelVolume(uint32 nChannel, uint32 nVolume)
 {
-	if(nChannel != CHANNEL2D)
+	if(nChannel < CHANNEL_POLICE_RADIO || nChannel >= NUM_CHANNELS)
 		return;
 	uint32 vol = nVolume > MAX_VOLUME ? MAX_VOLUME : nVolume;
 	nChannelVolume[nChannel] = CutsceneVolume(vol);
@@ -1602,7 +1925,7 @@ cSampleManager::SetChannelVolume(uint32 nChannel, uint32 nVolume)
 void
 cSampleManager::SetChannelPan(uint32 nChannel, uint32 nPan)
 {
-	if(nChannel != CHANNEL2D)
+	if(nChannel < CHANNEL_POLICE_RADIO || nChannel >= NUM_CHANNELS)
 		return;
 	MixLock lock;
 	channels[nChannel].pan = nPan > 127 ? 127 : nPan;
@@ -1611,7 +1934,8 @@ cSampleManager::SetChannelPan(uint32 nChannel, uint32 nPan)
 void
 cSampleManager::SetChannelFrequency(uint32 nChannel, uint32 nFreq)
 {
-	if(nFreq == 0 || nFreq > 200000){
+	// 0: paused (mission audio)
+	if(nFreq > 200000){
 		static int logged;
 		if(logged++ < 8)
 			PS3_Logf("[audio] channel %u asked for %u Hz", nChannel, nFreq);
@@ -1635,7 +1959,7 @@ cSampleManager::SetChannelLoopCount(uint32 nChannel, uint32 nLoopCount)
 	channels[nChannel].loopCount = nLoopCount;
 }
 
-bool
+bool8
 cSampleManager::GetChannelUsedFlag(uint32 nChannel)
 {
 	return channels[nChannel].playing;
@@ -1683,8 +2007,7 @@ ReplaceStream(uint8 nStream, Stream *s)
 	StreamDestroy(old);
 }
 
-// sampman_oal (VC): streams 1 and 2 (speech) ignore the effects fade; the
-// music gets the MP3 BOOST setting while the MP3 player plays
+// sampman_oal: the music gets the MP3 BOOST setting while the MP3 player plays
 static void
 ApplyStreamVolume(uint8 nStream, uint8 nEffectFlag, uint8 fxFade, uint8 fxVol, uint8 musFade, uint8 musVol, uint8 boost)
 {
@@ -1692,10 +2015,7 @@ ApplyStreamVolume(uint8 nStream, uint8 nEffectFlag, uint8 fxFade, uint8 fxVol, u
 	if(s == nil)
 		return;
 	if(nEffectFlag){
-		if(nStream == 1 || nStream == 2)
-			s->volume = 128*nStreamVolume[nStream]*fxVol >> 14;
-		else
-			s->volume = MasterVolume(fxFade, nStreamVolume[nStream], fxVol);
+		s->volume = MasterVolume(fxFade, nStreamVolume[nStream], fxVol);
 	}else{
 		float boostMult = 0.0f;
 		if(MusicManager.GetRadioInCar() == USERTRACK && !MusicManager.CheckForMusicInterruptions())
@@ -1710,7 +2030,7 @@ cSampleManager::PreloadStreamedFile(uint32 nFile, uint8 nStream)
 {
 	if(nFile >= TOTAL_STREAMED_SOUNDS || nStream >= MAX_STREAMS)
 		return;
-	Stream *s = StreamCreate(StreamedNameTable[nFile]);
+	Stream *s = StreamCreateTrack(nFile);
 	if(s){
 		s->volume = 0;
 		s->pan = 63;
@@ -1721,7 +2041,7 @@ cSampleManager::PreloadStreamedFile(uint32 nFile, uint8 nStream)
 }
 
 void
-cSampleManager::PauseStream(uint8 nPauseFlag, uint8 nStream)
+cSampleManager::PauseStream(bool8 nPauseFlag, uint8 nStream)
 {
 	MixLock lock;
 	if(nStream < MAX_STREAMS && streams[nStream])
@@ -1736,7 +2056,7 @@ cSampleManager::StartPreloadedStreamedFile(uint8 nStream)
 		streams[nStream]->playing = true;
 }
 
-bool
+bool8
 cSampleManager::StartStreamedFile(uint32 nFile, uint32 nPos, uint8 nStream)
 {
 	if(nFile >= TOTAL_STREAMED_SOUNDS || nStream >= MAX_STREAMS)
@@ -1781,7 +2101,7 @@ cSampleManager::StartStreamedFile(uint32 nFile, uint32 nPos, uint8 nStream)
 	}
 	if(nStream == 0)
 		mp3Active = false;
-	Stream *s = StreamCreate(StreamedNameTable[nFile]);
+	Stream *s = StreamCreateTrack(nFile);
 	// sampman_oal: looped unless SetStreamedFileLoopFlag(0) came right before
 	int32 loops = nStreamLoopedFlag[nStream] ? 0 : 1;
 	nStreamLoopedFlag[nStream] = 1;
@@ -1834,7 +2154,7 @@ cSampleManager::GetStreamedFilePosition(uint8 nStream)
 }
 
 void
-cSampleManager::SetStreamedVolumeAndPan(uint8 nVolume, uint8 nPan, uint8 nEffectFlag, uint8 nStream)
+cSampleManager::SetStreamedVolumeAndPan(uint8 nVolume, uint8 nPan, bool8 nEffectFlag, uint8 nStream)
 {
 	if(nStream >= MAX_STREAMS)
 		return;
@@ -1853,7 +2173,7 @@ cSampleManager::GetStreamedFileLength(uint8 nStream)
 	return nStream < TOTAL_STREAMED_SOUNDS ? nStreamLength[nStream] : 0;
 }
 
-bool
+bool8
 cSampleManager::IsStreamPlaying(uint8 nStream)
 {
 	MixLock lock;
@@ -1866,7 +2186,7 @@ cSampleManager::IsStreamPlaying(uint8 nStream)
 }
 
 void
-cSampleManager::SetStreamedFileLoopFlag(uint8 nLoopFlag, uint8 nStream)
+cSampleManager::SetStreamedFileLoopFlag(bool8 nLoopFlag, uint8 nStream)
 {
 	if(nStream < MAX_STREAMS)
 		nStreamLoopedFlag[nStream] = nLoopFlag;
@@ -1879,7 +2199,7 @@ cSampleManager::Service(void)
 	PS3_BankCheck(m_aSamples);
 }
 
-bool
+bool8
 cSampleManager::InitialiseSampleBanks(void)
 {
 	int32 nBank = SFX_BANK_0;

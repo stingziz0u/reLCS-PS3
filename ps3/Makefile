@@ -93,7 +93,6 @@ GAME_SRCS := $(foreach d,$(GAME_DIRS),$(wildcard $(SRC)/$(d)/*.cpp))
 GAME_SRCS := $(filter-out \
   $(SRC)/core/CdStream.cpp $(SRC)/core/CdStreamPosix.cpp \
   $(SRC)/audio/sampman_oal.cpp $(SRC)/audio/sampman_miles.cpp \
-  $(SRC)/audio/sampman_ps3.cpp \
   $(SRC)/extras/custompipes_d3d9.cpp $(SRC)/extras/custompipes_gl.cpp, $(GAME_SRCS))
 
 PS3_SRCS := $(addprefix $(SRC)/skel/ps3/, \
@@ -115,12 +114,10 @@ COMMON_FLAGS := -O2 -mcpu=cell -mtune=cell -mno-altivec -fno-math-errno -fno-tra
   -D_GLIBCXX11_USE_C99_STDIO \
   $(LIBPSL1GHT_INC) -I$(PORTLIBS)/include
 
-# stage 2: the RSX renderer of librw's PS3 backend
-# Audio: silent for now (sampman_null.cpp). reVC-PS3's mixer (sampman_ps3.cpp,
-# AUDIO_PS3) is still written for Vice City's sample manager: LCS has one
-# stream, its own banks and mission audio.
+# stage 2: the RSX renderer of librw's PS3 backend and the audio mixer
+# (sampman_ps3.cpp, AUDIO_PS3)
 ifneq ($(STAGE),1)
-  COMMON_FLAGS += -DRW_PS3_RSX
+  COMMON_FLAGS += -DRW_PS3_RSX -DAUDIO_PS3
 endif
 
 # The whole EBOOT shares one 64 KB TOC: -mminimal-toc gives each object its
