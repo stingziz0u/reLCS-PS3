@@ -2119,14 +2119,15 @@ PS3_PlayerWatch(void)
 			CPed *d = veh->pDriver;
 			PS3_Logf("[stuck] model %d (%s) on the throttle 1.5 s, not moving: driver %s (state %d, type %d), status %d, created by %d, "
 			         "locked %d, static %d (waiting %d), moving list %d, infinite mass %d, gravity %d, engine %d, handbrake %d, "
-			         "gas %.2f brake %.2f, gear %d (change %.2f), pad: accel %d brake %d handbrake %d, controls off 0x%x, mode %d",
+			         "gas %.2f brake %.2f, gear %d (change %.2f), pad: accel %d brake %d handbrake %d, controls off 0x%x, mode %d, "
+			         "script brakes %d, super brake %d",
 			         veh->GetModelIndex(), veh->IsCar() ? "car" : veh->IsBike() ? "bike" : "other",
 			         d == nil ? "none" : d == player ? "player" : "another ped", d ? (int)d->m_nPedState : -1, d ? (int)d->m_nPedType : -1,
 			         veh->GetStatus(), (int)veh->VehicleCreatedBy, (int)veh->bIsLocked, (int)veh->bIsStatic,
 			         (int)veh->bIsStaticWaitingForCollision, veh->m_movingListNode != nil, (int)veh->bInfiniteMass,
 			         (int)veh->bAffectedByGravity, (int)veh->bEngineOn, (int)veh->bIsHandbrakeOn, veh->m_fGasPedal, veh->m_fBrakePedal,
 			         (int)veh->m_nCurrentGear, veh->m_fChangeGearTime, pad->GetAccelerate(), pad->GetBrake(), pad->GetHandBrake(),
-			         (unsigned)pad->DisablePlayerControls, (int)pad->Mode);
+			         (unsigned)pad->DisablePlayerControls, (int)pad->Mode, (int)pad->bApplyBrakes, (int)veh->m_bSuperBrake);
 			if (veh->IsCar()) {
 				CAutomobile *car = (CAutomobile*)veh;
 				PS3_Logf("[stuck]   wheels on ground %d, states %d %d %d %d, speeds %.3f %.3f %.3f %.3f, timers %.1f %.1f %.1f %.1f, "

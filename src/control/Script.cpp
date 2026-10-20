@@ -467,6 +467,13 @@ void CMissionCleanup::Process()
 	CTheScripts::StoreVehicleWasRandom = true;
 	CTheScripts::UpsideDownCars.Init();
 	CTheScripts::StuckCars.Init();
+#ifdef FIX_BUGS
+	// APPLY_BRAKES_TO_PLAYERS_CAR ends with the mission that asked for it.
+	// VIC1 brakes the player's car at Vincenzo's and passes without letting
+	// go: with nothing else releasing it (dying doesn't), the player's cars
+	// stayed braked for the rest of the game.
+	CPad::GetPad(0)->bApplyBrakes = false;
+#endif
 	for (int i = 0; i < MAX_CLEANUP; i++){
 		if (m_sEntities[i].type == CLEANUP_UNUSED)
 			continue;

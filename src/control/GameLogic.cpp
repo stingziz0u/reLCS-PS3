@@ -370,6 +370,9 @@ CGameLogic::RestorePlayerStuffDuringResurrection(CPlayerPed *pPlayerPed, CVector
 	pPlayerPed->bCancelEnteringCar = false;
 	pPlayerPed->RestartNonPartialAnims();
 	pPlayerInfo->MakePlayerSafe(false);
+#ifdef FIX_BUGS
+	CPad::GetPad(0)->bApplyBrakes = false;	// see CMissionCleanup::Process
+#endif
 	pPlayerPed->bRemoveFromWorld = false;
 	pPlayerPed->ClearWeaponTarget();
 	pPlayerPed->SetInitialState();
