@@ -215,14 +215,17 @@ $(OUT_PKG): $(OBJDIR)/$(TARGET).pkg
 $(OBJDIR)/$(TARGET).pkg: pkgfiles
 
 # the folders of the user's LCS data (created empty); mp3 for the MP3
-# player radio. No skins: LCS has none.
-DATA_DIRS := anim audio data models mp3 text txd
+# player radio. No skins: LCS has none. neo is part of the LCS data (the PC's
+# extra car/world shading); this port doesn't read it.
+DATA_DIRS := anim audio data models mp3 neo text txd
 # the port's own files: PlayStation button icons for the on-screen help, and
 # the DualShock 3 picture of the gamepad settings page (reVC's)
 RES_FILES := ps3btns.txd frontend_ds3.txd
 
+# ppu_rules copies PKGFILES over $(BUILDDIR)/pkg without emptying it: a
+# folder taken out of the list stayed in the PKG (skins). Both start empty.
 pkgfiles:
-	@rm -rf $(PKGFILES)
+	@rm -rf $(PKGFILES) $(BUILDDIR)/pkg
 	@mkdir -p $(PKGFILES)/USRDIR/userfiles
 	@for d in $(DATA_DIRS); do mkdir -p $(PKGFILES)/USRDIR/$$d; done
 	@mkdir -p $(PKGFILES)/USRDIR/mods
