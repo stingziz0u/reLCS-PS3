@@ -1,6 +1,7 @@
 #include "common.h"
 #ifdef __PS3__
 #include "ps3_platform.h"
+#include <sys/systime.h>
 #endif
 
 #include "Script.h"
@@ -716,6 +717,92 @@ static uint16 ps3MissionOps[0x800];
 static uint32 ps3MissionOpsTotal, ps3MissionLogMs;
 static char ps3MissionNames[48];
 
+// every script's commands, timed (Ren: the scripts took 25 ms a frame with
+// ~50 mission commands; the others weren't counted): timebase ticks per
+// opcode and per script name, reported every 10 s with the mission line
+static uint64 ps3OpTicks[0x800];
+static uint32 ps3OpCount[0x800];
+static uint32 ps3AllTotal;
+struct PS3ScriptTime { char name[9]; uint64 ticks; uint32 count; };
+static PS3ScriptTime ps3ScriptTimes[64];
+static int ps3NumScriptTimes;
+
+static inline uint64
+PS3_Tb(void)
+{
+	uint64 tb;
+	__asm__ volatile("mftb %0" : "=r"(tb));
+	return tb;
+}
+
+static void
+PS3_ScriptTime(CRunningScript *s, int32 command, uint64 ticks)
+{
+	if (command >= 0 && command < 0x800) {
+		ps3OpTicks[command] += ticks;
+		ps3OpCount[command]++;
+	}
+	ps3AllTotal++;
+	int i;
+	for (i = 0; i < ps3NumScriptTimes; i++)
+		if (strncmp(ps3ScriptTimes[i].name, (const char*)s->m_abScriptName, 8) == 0)
+			break;
+	if (i == ps3NumScriptTimes) {
+		if (i == (int)ARRAY_SIZE(ps3ScriptTimes))
+			return;
+		memcpy(ps3ScriptTimes[i].name, s->m_abScriptName, 8);
+		ps3ScriptTimes[i].name[8] = '\0';
+		ps3ScriptTimes[i].ticks = 0;
+		ps3ScriptTimes[i].count = 0;
+		ps3NumScriptTimes++;
+	}
+	ps3ScriptTimes[i].ticks += ticks;
+	ps3ScriptTimes[i].count++;
+}
+
+static void
+PS3_ScriptTimeReport(void)
+{
+	if (ps3AllTotal == 0)
+		return;
+	double usPerTick = 1000000.0 / (double)sysGetTimebaseFrequency();
+	uint64 total = 0;
+	for (int i = 0; i < 0x800; i++)
+		total += ps3OpTicks[i];
+	char line[480];
+	int len = snprintf(line, sizeof(line), "[script] all scripts in 10 s: %u commands, %.0f ms; slowest opcodes (opcode x count = ms):",
+	                   ps3AllTotal, total * usPerTick / 1000.0);
+	for (int k = 0; k < 10 && len < (int)sizeof(line) - 24; k++) {
+		int best = -1;
+		for (int i = 0; i < 0x800; i++)
+			if (ps3OpTicks[i] && (best < 0 || ps3OpTicks[i] > ps3OpTicks[best]))
+				best = i;
+		if (best < 0)
+			break;
+		len += snprintf(line + len, sizeof(line) - len, " %04x x%u = %.1f", best, ps3OpCount[best],
+		                ps3OpTicks[best] * usPerTick / 1000.0);
+		ps3OpTicks[best] = 0;
+	}
+	PS3_Log(line);
+	len = snprintf(line, sizeof(line), "[script]   slowest scripts (name x commands = ms):");
+	for (int k = 0; k < 10 && len < (int)sizeof(line) - 32; k++) {
+		int best = -1;
+		for (int i = 0; i < ps3NumScriptTimes; i++)
+			if (ps3ScriptTimes[i].ticks && (best < 0 || ps3ScriptTimes[i].ticks > ps3ScriptTimes[best].ticks))
+				best = i;
+		if (best < 0)
+			break;
+		len += snprintf(line + len, sizeof(line) - len, " %s x%u = %.1f", ps3ScriptTimes[best].name,
+		                ps3ScriptTimes[best].count, ps3ScriptTimes[best].ticks * usPerTick / 1000.0);
+		ps3ScriptTimes[best].ticks = 0;
+	}
+	PS3_Log(line);
+	memset(ps3OpTicks, 0, sizeof(ps3OpTicks));
+	memset(ps3OpCount, 0, sizeof(ps3OpCount));
+	ps3AllTotal = 0;
+	ps3NumScriptTimes = 0;
+}
+
 static void
 PS3_ScriptCountOp(CRunningScript *s, int32 command)
 {
@@ -745,6 +832,7 @@ PS3_ScriptReport(void)
 	if (now - ps3MissionLogMs < 10000)
 		return;
 	ps3MissionLogMs = now;
+	PS3_ScriptTimeReport();
 	if (ps3MissionOpsTotal) {
 		char line[400];
 		int len = snprintf(line, sizeof(line), "[script] mission (%s) in 10 s: %u commands; most run (opcode x count):",
@@ -1434,6 +1522,9 @@ int8 CRunningScript::ProcessOneCommand()
 #ifdef USE_ADVANCED_SCRIPT_DEBUG_OUTPUT
 	LogBeforeProcessingCommand(command);
 #endif
+#ifdef __PS3__
+	uint64 ps3T0 = PS3_Tb();
+#endif
 	if (command < 100)
 		retval = ProcessCommands0To99(command);
 	else if (command < 200)
@@ -1470,6 +1561,9 @@ int8 CRunningScript::ProcessOneCommand()
 		retval = ProcessCommands1600To1699(command);
 	else
 		script_assert(false);
+#ifdef __PS3__
+	PS3_ScriptTime(this, command, PS3_Tb() - ps3T0);
+#endif
 #ifdef USE_MISSION_REPLAY_OVERRIDE_FOR_NON_MOBILE_SCRIPT
 	if (!AlreadySavedGame)
 #endif

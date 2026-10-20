@@ -1404,6 +1404,14 @@ RenderScene(void)
 	PS3_SCENE_STEP("fading in");
 	CRenderer::RenderFadingInEntities();
 	RwRenderStateSet(rwRENDERSTATECULLMODE, (void*)rwCULLMODECULLNONE);
+#ifdef __PS3__
+	// reLCS keeps the vehicles and peds in their own list and draws them in
+	// RenderEffects_new (NEW_RENDERER, off on the PS3): this path never drew
+	// them. After the world and its transparent parts, as there.
+	PS3_SCENE_STEP("vehicles, peds");
+	CRenderer::RenderVehicles();
+	RwRenderStateSet(rwRENDERSTATECULLMODE, (void*)rwCULLMODECULLNONE);
+#endif
 	PS3_SCENE_STEP("rain streaks");
 	CWeather::RenderRainStreaks();
 	CCoronas::RenderSunReflection();

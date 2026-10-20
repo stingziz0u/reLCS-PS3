@@ -4,7 +4,7 @@
 // The pad code is Doom64-PS3's / Quake2PS3's (survived plugging, unplugging
 // and powering pads off and on on hardware):
 //  - ioPadGetInfo2 (per port status, bit 1 = "assignment changed");
-//  - the active port is resolved again every frame;
+//  - only the pad on port 1 (index 0) plays, as on the PS2;
 //  - the data is NOT skipped when len == 0 (the buffer keeps the previous
 //    poll; skipping freezes the sticks);
 //  - if the library keeps failing, it is ended and started again.
@@ -21,27 +21,29 @@
 #include "ps3_platform.h"
 
 #define STICK_CENTER 128
+#define PLAY_PORT 0	// pad number 1
 
 static padInfo2 info;
 static padData data;
 static int initialized;
 static int connected;
 static int port = -1;
-static int failures;
 static int nopad;
 
 static unsigned char buttons[15];
 static float axes[6];
 
-// Gamepad settings: stick dead zones, percent / 5 (1..10 = 5%..50%; 6 = 30%,
-// the 0.3 the game always had). An axis under it reads as centred
+// Gamepad settings > STICK SETTINGS: dead zones, percent / 5, 1..14 = 5%..70%,
+// 6 = 30% (the 0.3 the game always had). An axis under it reads as centred;
+// the right one also sets where the camera starts turning (Pad.cpp,
+// PS3_LookAround: the game itself waited for 85 of 128 there).
 int8 gPS3DeadzoneL = 6, gPS3DeadzoneR = 6;
 
 float
 PS3_PadDeadzone(bool right)
 {
 	int v = right ? gPS3DeadzoneR : gPS3DeadzoneL;
-	if (v < 1 || v > 10)
+	if (v < 1 || v > 14)
 		v = 6;
 	return v * 0.05f;
 }
@@ -62,6 +64,8 @@ PS3_PadInit(void)
 		return;
 	s32 ret = ioPadInit(7);
 	PS3_Logf("[pad] ioPadInit ret=%d", (int)ret);
+	PS3_Logf("[pad] dead zones: left %d%%, right %d%%", (int)(PS3_PadDeadzone(false) * 100.0f + 0.5f),
+	         (int)(PS3_PadDeadzone(true) * 100.0f + 0.5f));
 	if (ret < 0)
 		return;
 	initialized = 1;
@@ -86,26 +90,60 @@ PS3_PadShutdown(void)
 	port = -1;
 }
 
+static padData portData[MAX_PORT_NUM];	// each pad's last poll
+static bool portOn[MAX_PORT_NUM];
+static bool portWaitInput[MAX_PORT_NUM];	// log its first input
+static int portFailures[MAX_PORT_NUM];
+
+static void
+CenterData(padData *d)
+{
+	memset(d, 0, sizeof(*d));
+	d->ANA_R_H = d->ANA_R_V = STICK_CENTER;
+	d->ANA_L_H = d->ANA_L_V = STICK_CENTER;
+}
+
 static void
 PadReinit(const char *why)
 {
 	s32 a = ioPadEnd();
 	s32 b = ioPadInit(7);
-	for (int i = 0; i < MAX_PORT_NUM; i++)
+	for (int i = 0; i < MAX_PORT_NUM; i++) {
 		ioPadSetPressMode(i, PAD_PRESS_MODE_ON);
+		portOn[i] = false;
+		portFailures[i] = 0;
+		CenterData(&portData[i]);
+	}
 	PS3_Logf("[pad] ioPad restarted (%s): end=%d init=%d", why, (int)a, (int)b);
 	port = -1;
-	failures = 0;
 	nopad = 0;
 	connected = 0;
 	ReleaseAll();
 }
 
+static int
+StickOff(unsigned v)
+{
+	int d = (int)v - STICK_CENTER;
+	return d < 0 ? -d : d;
+}
+
+static bool
+HasInput(const padData &d)
+{
+	return d.BTN_CROSS || d.BTN_CIRCLE || d.BTN_SQUARE || d.BTN_TRIANGLE ||
+	       d.BTN_L1 || d.BTN_R1 || d.BTN_L2 || d.BTN_R2 || d.BTN_L3 || d.BTN_R3 ||
+	       d.BTN_START || d.BTN_SELECT || d.BTN_UP || d.BTN_DOWN || d.BTN_LEFT || d.BTN_RIGHT ||
+	       StickOff(d.ANA_L_H) > 48 || StickOff(d.ANA_L_V) > 48 ||
+	       StickOff(d.ANA_R_H) > 48 || StickOff(d.ANA_R_V) > 48;
+}
+
+
 static void
 ReadPad(void)
 {
 	static u32 last_status[MAX_PORT_NUM];
-	int i, p = -1;
+	int i, pads = 0;
 	s32 r;
 
 	if (!initialized) {
@@ -133,50 +171,61 @@ ReadPad(void)
 		// assignment changed: drop that port's stale buffer
 		if (info.port_status[i] & 2)
 			ioPadClearBuf(i);
+
+		// Ren: only the pad on port 1 plays (another pad, or this one
+		// coming back as 2 after a drop-out, is logged and ignored)
+		if (i != PLAY_PORT)
+			continue;
+
+		bool on = (info.port_status[i] & 1) != 0;
+		if (on && !portOn[i]) {
+			portOn[i] = true;
+			portWaitInput[i] = true;
+			portFailures[i] = 0;
+			CenterData(&portData[i]);
+			ioPadClearBuf(i);
+			PS3_Logf("[pad] pad 1 connected: it plays");
+		} else if (!on && portOn[i]) {
+			portOn[i] = false;
+			CenterData(&portData[i]);
+			PS3_Log("[pad] pad 1 gone: no control until a pad is number 1 again");
+		}
+		if (!on)
+			continue;
+		pads++;
+
+		// NOT skipped when len == 0 on purpose, see the header
+		r = ioPadGetData(i, &portData[i]);
+		if (r != 0) {
+			if (portFailures[i] < 5)
+				PS3_Logf("[pad] ioPadGetData(%d) = %d", i, (int)r);
+			if (++portFailures[i] == 180) {
+				PadReinit("GetData failing");
+				return;
+			}
+			// keep the previous state: don't release buttons
+			continue;
+		}
+		portFailures[i] = 0;
+		if (HasInput(portData[i])) {
+			if (portWaitInput[i]) {
+				portWaitInput[i] = false;
+				PS3_Log("[pad] pad 1: first input");
+			}
+		}
 	}
 
-	// keep the current port while it stays connected, otherwise the first
-	// connected one
-	if (port >= 0 && (info.port_status[port] & 1))
-		p = port;
-	else
-		for (i = 0; i < MAX_PORT_NUM; i++)
-			if (info.port_status[i] & 1) {
-				p = i;
-				break;
-			}
-
-	if (p < 0) {
-		if (connected)
-			PS3_Log("[pad] no pad connected");
+	if (pads == 0) {
 		connected = 0;
 		port = -1;
 		ReleaseAll();
 		nopad++;
 		return;
 	}
-
-	if (!connected || p != port) {
-		PS3_Logf("[pad] active pad on port %d (was %d)", p, port);
-		ioPadClearBuf(p);
-		ReleaseAll();
-		failures = 0;
-	}
-	port = p;
+	port = PLAY_PORT;
 	connected = 1;
 	nopad = 0;
-
-	r = ioPadGetData(port, &data);
-	if (r != 0) {
-		if (failures < 5)
-			PS3_Logf("[pad] ioPadGetData(%d) = %d", port, (int)r);
-		if (++failures == 180)
-			PadReinit("GetData failing");
-		// keep the previous state: don't release buttons
-		return;
-	}
-	failures = 0;
-	// NOT bailing out on len == 0 on purpose, see the header
+	data = portData[PLAY_PORT];
 }
 
 static float
@@ -343,9 +392,14 @@ PS3_PadRumble(int large)
 	memset(&act, 0, sizeof(act));
 	act.small_motor = 0;
 	act.large_motor = (u8)large;
-	ioPadSetActDirect(port, &act);
-	if ((large != 0) != (last > 0))
-		PS3_Logf("[pad] vibration %s (%d) on port %d", large ? "on" : "off", large, port);
+	s32 r = (s32)ioPadSetActDirect(port, &act);
+	static int logged;
+	if (((large != 0) != (last > 0) && logged < 40) || (r != 0 && logged < 40)) {
+		logged++;
+		PS3_Logf("[pad] vibration %s (%d) on port %d: ioPadSetActDirect = 0x%x, pad capability 0x%x (vibration %s)",
+		         large ? "on" : "off", large, port, (unsigned)r, (unsigned)info.device_capability[port],
+		         info.device_capability[port] & 0x10 ? "yes" : "no");
+	}
 	last = large;
 	lastPort = port;
 	lastSend = now;
