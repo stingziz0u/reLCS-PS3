@@ -214,10 +214,10 @@ $(OUT_PKG): $(OBJDIR)/$(TARGET).pkg
 # the folders the user fills are created empty.
 $(OBJDIR)/$(TARGET).pkg: pkgfiles
 
-# the folders of the user's LCS data (created empty); mp3 for the MP3
-# player radio. No skins: LCS has none. neo is part of the LCS data (the PC's
-# extra car/world shading); this port doesn't read it.
-DATA_DIRS := anim audio data models mp3 neo text txd
+# the folders of the user's LCS data the port reads (created empty); mp3 for
+# the MP3 player radio. Not skins (LCS has none) nor neo (the PC's extra
+# car/world shading, not read on PS3).
+DATA_DIRS := anim audio data models mp3 text txd
 # the port's own files: PlayStation button icons for the on-screen help, and
 # the DualShock 3 picture of the gamepad settings page (reVC's)
 RES_FILES := ps3btns.txd frontend_ds3.txd
