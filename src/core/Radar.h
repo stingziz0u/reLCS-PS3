@@ -2,19 +2,37 @@
 #include "Sprite2d.h"
 #include "Draw.h"
 
+#ifdef __PS3__	// reLCS-PS3: LCS's blue arrow over its targets, not VC's pink
+#define CARBLIP_MARKER_COLOR_R 40
+#define CARBLIP_MARKER_COLOR_G 130
+#define CARBLIP_MARKER_COLOR_B 255
+#else
 #define CARBLIP_MARKER_COLOR_R 252
 #define CARBLIP_MARKER_COLOR_G 138
 #define CARBLIP_MARKER_COLOR_B 242
+#endif
 #define CARBLIP_MARKER_COLOR_A 255
 
+#ifdef __PS3__	// reLCS-PS3: LCS's blue arrow over its targets, not VC's pink
+#define CHARBLIP_MARKER_COLOR_R 40
+#define CHARBLIP_MARKER_COLOR_G 130
+#define CHARBLIP_MARKER_COLOR_B 255
+#else
 #define CHARBLIP_MARKER_COLOR_R 252
 #define CHARBLIP_MARKER_COLOR_G 138
 #define CHARBLIP_MARKER_COLOR_B 242
+#endif
 #define CHARBLIP_MARKER_COLOR_A 255
 
+#ifdef __PS3__	// reLCS-PS3: LCS's blue arrow over its targets, not VC's pink
+#define OBJECTBLIP_MARKER_COLOR_R 40
+#define OBJECTBLIP_MARKER_COLOR_G 130
+#define OBJECTBLIP_MARKER_COLOR_B 255
+#else
 #define OBJECTBLIP_MARKER_COLOR_R 252
 #define OBJECTBLIP_MARKER_COLOR_G 138
 #define OBJECTBLIP_MARKER_COLOR_B 242
+#endif
 #define OBJECTBLIP_MARKER_COLOR_A 255
 
 #define COORDBLIP_MARKER_COLOR_R 255

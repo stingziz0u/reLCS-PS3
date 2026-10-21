@@ -44,7 +44,15 @@
 #define BLOCK_COUNT 22
 #define SIZE_OF_SIMPLEVARS 0xE8
 
+#ifdef __PS3__
+// the 3DS port's save, sized for its 32-bit ARM structures (201729 bytes).
+// The PS3's are bigger (about 207 KB of blocks): past the end the padding
+// came out negative (huge), and the slot check looked for the checksum in
+// the wrong place, so a written save showed as empty. Room for it here.
+const uint32 SIZE_OF_ONE_GAME_IN_BYTES = 262144;
+#else
 const uint32 SIZE_OF_ONE_GAME_IN_BYTES = 201729;
+#endif
 static const uint32 RESTORIES_3DS_SAVE_MAGIC_V3 = 0x3353434C; // "LCS3"
 static const uint32 RESTORIES_3DS_SAVE_MAGIC_V4 = 0x3453434C; // "LCS4"
 static const uint32 RESTORIES_3DS_SAVE_MAGIC_V5 = 0x3553434C; // "LCS5", native ARM save blocks
@@ -368,6 +376,15 @@ GenericSave(int file)
 #endif
 
 	// Write padding
+#ifdef __PS3__
+	if (totalSize + 4 > SIZE_OF_ONE_GAME_IN_BYTES) {
+		debug("PS3: save blocks take %u bytes, more than the %u of a save\n", totalSize, SIZE_OF_ONE_GAME_IN_BYTES);
+		PcSaveHelper.nErrorCode = SAVESTATUS_ERR_SAVE_WRITE;
+		CloseFile(file);
+		return false;
+	}
+	debug("PS3: save blocks %u bytes of %u\n", totalSize, SIZE_OF_ONE_GAME_IN_BYTES);
+#endif
 	for (int i = 0; i < 4; i++) {
 		size = align4bytes(SIZE_OF_ONE_GAME_IN_BYTES - totalSize - 4);
 		if (size > sizeof(work_buff))

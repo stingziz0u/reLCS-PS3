@@ -2649,7 +2649,16 @@ void CGarages::SetAllDoorsBackToOriginalHeight()
 	}
 }
 
+#ifdef COMPATIBLE_SAVES
 #define GARAGE_SIZE 208
+#else
+// without COMPATIBLE_SAVES each garage is written as it is in memory
+// (WriteSaveBuf(buf, aGarages[i])): its own size, which is 208 only on the
+// 32-bit ARM the 3DS port saves on. The block said 208 and held more on PS3:
+// the save was written, but every block after it was read from the wrong
+// place and the slot came out as corrupt (empty).
+#define GARAGE_SIZE sizeof(CGarage)
+#endif
 
 void CGarages::Save(uint8 * buf, uint32 * size)
 {

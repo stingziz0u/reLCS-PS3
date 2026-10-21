@@ -349,6 +349,7 @@ static const struct { const char *key; const char *text; } ps3TextFallback[] = {
 	{ "ITBEG", "In the beginning..." },
 	{ "MAP_LEG", "Map Legend" },
 	{ "MAP_YAH", "You are here" },	// reLCS-PS3: the map's marker (not in LCS's GXT)
+	{ "FEC_SLC", "SLOT ~1~ CORRUPTED" },	// reLCS-PS3: the save list (not in LCS's GXT)
 };
 
 // reLCS-PS3: keys res asks for (VC's) that LCS's GXT has under another name
