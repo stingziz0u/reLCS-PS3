@@ -4,6 +4,7 @@
 #include "DMAudio.h"
 #include "Clock.h"
 #include "Darkel.h"
+#include "Draw.h"
 #include "Hud.h"
 #ifdef __PS3__
 #include "ps3_platform.h"
@@ -19,6 +20,10 @@
 #include "Sprite2d.h"
 #include "Text.h"
 #include "Timer.h"
+#include "../regta3ds/HudDisplayTimer.h"
+#ifdef _3DS
+#include "../../../../common/3ds/ProfileHintLayout.h"
+#endif
 #include "Script.h"
 #include "TxdStore.h"
 #include "User.h"
@@ -70,7 +75,7 @@ CRGBA BIGMESSAGE_COLOR(255, 150, 225, 255);
 #endif
 CRGBA WASTEDBUSTED_COLOR(0, 207, 133, 255);
 CRGBA ODDJOB_COLOR(0, 207, 133, 255);
-CRGBA ODDJOB2_COLOR(97, 194, 247, 255);
+CRGBA ODDJOB2_COLOR(220, 172, 2, 255);
 CRGBA MISSIONTITLE_COLOR(220, 172, 2, 255);
 
 wchar CHud::m_HelpMessage[HELP_MSG_LENGTH];
@@ -107,6 +112,8 @@ int32 CHud::m_ClockState;
 float BigMessageInUse[6];
 float CHud::BigMessageAlpha[6];
 float CHud::BigMessageX[6];
+uint32 CHud::BigMessageDuration[8];
+bool CHud::BigMessageUsesExactTiming[8];
 float CHud::OddJob2OffTimer;
 bool CHud::CounterOnLastFrame[NUMONSCREENCOUNTERS];
 float CHud::OddJob2XOffset;
@@ -230,9 +237,81 @@ RwTexture *gpLaserSightTex;
 RwTexture *gpLaserDotTex;
 RwTexture *gpViewFinderTex;
 
+#ifdef _3DS
+static void
+DrawSolidRocketSight(float brightness)
+{
+	const float cx = SCREEN_WIDTH / 2.0f;
+	const float cy = SCREEN_HEIGHT / 2.0f;
+	const float halfW = SCREEN_SCALE_X(40.0f);
+	const float halfH = SCREEN_SCALE_Y(40.0f);
+	const float armW = SCREEN_SCALE_X(14.0f);
+	const float armH = SCREEN_SCALE_Y(14.0f);
+	const float thick = 2.0f;
+	const float left = cx - halfW;
+	const float right = cx + halfW;
+	const float top = cy - halfH;
+	const float bottom = cy + halfH;
+	const CRGBA colour(100.0f * brightness, 200.0f * brightness,
+		100.0f * brightness, 255);
+
+	CSprite2d::DrawRect(CRect(left, top, left + armW, top + thick), colour);
+	CSprite2d::DrawRect(CRect(left, top, left + thick, top + armH), colour);
+	CSprite2d::DrawRect(CRect(right - armW, top, right, top + thick), colour);
+	CSprite2d::DrawRect(CRect(right - thick, top, right, top + armH), colour);
+	CSprite2d::DrawRect(CRect(left, bottom - thick, left + armW, bottom), colour);
+	CSprite2d::DrawRect(CRect(left, bottom - armH, left + thick, bottom), colour);
+	CSprite2d::DrawRect(CRect(right - armW, bottom - thick, right, bottom), colour);
+	CSprite2d::DrawRect(CRect(right - thick, bottom - armH, right, bottom), colour);
+}
+
+static void
+DrawSolidStandardSight(float cx, float cy)
+{
+	const int32 segments = 32;
+	const float sizeScale = 0.4f;
+	const float outerRadiusX = SCREEN_SCALE_X(30.0f * sizeScale);
+	const float outerRadiusY = SCREEN_SCALE_Y(30.0f * sizeScale);
+	const float thickness = 1.0f;
+	const float innerRadiusX = Max(outerRadiusX - thickness, 0.0f);
+	const float innerRadiusY = Max(outerRadiusY - thickness, 0.0f);
+	const CRGBA colour(240, 240, 240, 255);
+
+	for(int32 i = 0; i < segments; i++) {
+		const float angle0 = TWOPI * i / segments;
+		const float angle1 = TWOPI * (i + 1) / segments;
+		const float innerX0 = cx + Cos(angle0) * innerRadiusX;
+		const float innerY0 = cy + Sin(angle0) * innerRadiusY;
+		const float innerX1 = cx + Cos(angle1) * innerRadiusX;
+		const float innerY1 = cy + Sin(angle1) * innerRadiusY;
+		const float outerX0 = cx + Cos(angle0) * outerRadiusX;
+		const float outerY0 = cy + Sin(angle0) * outerRadiusY;
+		const float outerX1 = cx + Cos(angle1) * outerRadiusX;
+		const float outerY1 = cy + Sin(angle1) * outerRadiusY;
+		CSprite2d::Draw2DPolygon(innerX0, innerY0, innerX1, innerY1,
+			outerX0, outerY0, outerX1, outerY1, colour);
+	}
+
+	CSprite2d::DrawRect(CRect(cx - 0.5f, cy - 0.5f,
+		cx + 0.5f, cy + 0.5f), colour);
+}
+
+static void
+DrawLaserScopeCenterCross()
+{
+	const float cx = SCREEN_WIDTH / 2.0f;
+	const float cy = SCREEN_HEIGHT / 2.0f;
+	const CRGBA colour(255, 0, 0, 255);
+
+	CSprite2d::DrawRect(CRect(cx - 1.5f, cy - 0.5f, cx + 1.5f, cy + 0.5f), colour);
+	CSprite2d::DrawRect(CRect(cx - 0.5f, cy - 1.5f, cx + 0.5f, cy + 1.5f), colour);
+}
+#endif
+
 // TODO(LCS): some things were reversed from LCS but not all
 void CHud::Draw()
 {
+	HudDisplayTimer::Sample();
 	RwRenderStateSet(rwRENDERSTATETEXTUREFILTER, (void*)rwFILTERNEAREST);
 	RwRenderStateSet(rwRENDERSTATETEXTUREADDRESS, (void*)rwTEXTUREADDRESSCLAMP);
 	RwRenderStateSet(rwRENDERSTATEVERTEXALPHAENABLE, (void*)FALSE);
@@ -243,6 +322,9 @@ void CHud::Draw()
 
 	if (CReplay::IsPlayingBack())
 		return;
+	CPlayerPed *playerPed = FindPlayerPed();
+	if(playerPed == nil)
+		return;
 
 	if (m_Wants_To_Draw_Hud && !TheCamera.m_WideScreenOn) {
 		// unused statics in here
@@ -250,7 +332,6 @@ void CHud::Draw()
 		bool CrossHairHidesHud = false;
 		bool DrawCrossHairPC = false;
 
-		CPlayerPed *playerPed = FindPlayerPed();
 		eWeaponType WeaponType = playerPed->GetWeapon()->m_eWeaponType;
 		int32 Mode = TheCamera.Cams[TheCamera.ActiveCam].Mode;
 
@@ -300,6 +381,9 @@ void CHud::Draw()
 						0.0f, 0.0f,  1.0f, 0.0f,  0.0f, 1.0f,  1.0f, 1.0f);
 				}
 				else {
+#ifdef _3DS
+					DrawSolidStandardSight(f3rdX, f3rdY);
+#else
 					rect.left = f3rdX - SCREEN_SCALE_X(32.0f * 0.4f);
 					rect.top = f3rdY - SCREEN_SCALE_Y(32.0f  * 0.4f);
 					rect.right = f3rdX + SCREEN_SCALE_X(32.0f * 0.4f);
@@ -307,6 +391,7 @@ void CHud::Draw()
 
 					Sprites[HUD_SITEM16].Draw(CRect(rect), CRGBA(255, 255, 255, 255),
 						0.0f, 0.0f,  1.0f, 0.0f,  0.0f, 1.0f,  1.0f, 1.0f);
+#endif
 				}
 			} else {
 				if (Mode == CCam::MODE_M16_1STPERSON ||
@@ -329,6 +414,9 @@ void CHud::Draw()
 						0.0f, 0.0f,  1.0f, 0.0f,  0.0f, 1.0f,  1.0f, 1.0f);
 				}
 				else if (Mode == CCam::MODE_ROCKETLAUNCHER || Mode == CCam::MODE_ROCKETLAUNCHER_RUNABOUT) {
+#ifdef _3DS
+					DrawSolidRocketSight(fMultBright);
+#else
 					RwRenderStateSet(rwRENDERSTATEVERTEXALPHAENABLE, (void *)TRUE);
 					RwRenderStateSet(rwRENDERSTATESRCBLEND, (void *)rwBLENDONE);
 					RwRenderStateSet(rwRENDERSTATEDESTBLEND, (void *)rwBLENDONE);
@@ -339,6 +427,7 @@ void CHud::Draw()
 					CSprite::RenderOneXLUSprite(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, 1.0f, SCREEN_SCALE_X(40.0f), SCREEN_SCALE_Y(40.0f), (100.0f * fMultBright), (200.0f * fMultBright), (100.0f * fMultBright), 255, 1.0f, 255);
 					RwRenderStateSet(rwRENDERSTATEVERTEXALPHAENABLE, (void*)FALSE);
 					RwRenderStateSet(rwRENDERSTATEZWRITEENABLE, (void*)TRUE);
+#endif
 				}
 				else {
 					int sprite = HUD_SITESNIPER;
@@ -406,6 +495,10 @@ void CHud::Draw()
 
 						RwRenderStateSet(rwRENDERSTATEVERTEXALPHAENABLE, (void*)FALSE);
 					}
+#ifdef _3DS
+					if (FindPlayerPed()->GetWeapon()->m_eWeaponType == WEAPONTYPE_LASERSCOPE)
+						DrawLaserScopeCenterCross();
+#endif
 				}
 			}
 			RwRenderStateSet(rwRENDERSTATESRCBLEND, (void *)rwBLENDSRCALPHA);
@@ -430,6 +523,7 @@ void CHud::Draw()
 		char sTemp[16];
 		float alpha;
 
+#ifndef ENABLE_3DS_BOTTOM_RADAR
 		if (m_LastDisplayScore == CWorld::Players[CWorld::PlayerInFocus].m_nVisibleMoney) {
 			alpha = DrawFadeState(HUD_SCORE_FADING, 0);
 		} else {
@@ -630,6 +724,8 @@ void CHud::Draw()
 			}
 		}
 
+#endif
+
 		/*
 			DrawWantedLevel
 		*/
@@ -640,24 +736,48 @@ void CHud::Draw()
 			m_LastWanted = playerPed->m_pWanted->GetWantedLevel();
 		}
 
-		if (m_WantedState != FADED_OUT) {
+		if (m_WantedState != FADED_OUT
+#ifdef ENABLE_3DS_BOTTOM_RADAR
+			&& playerPed->m_pWanted->GetWantedLevel() > 0
+#endif
+		) {
 			char wantedStar[] = "\x16";
-			float starX = 441.0f;
 			for (int i = 0; i < 6; i++) {
 				if (FrontEndMenuManager.m_PrefsShowHud) {
+#ifdef ENABLE_3DS_BOTTOM_RADAR
+					/* Use reVC's physical edge offsets and stock spacing.  LCS uses
+					 * a sprite glyph instead of a font glyph, so draw that atlas cell
+					 * at the same anchor and keep all six slots visible while wanted. */
+					/* reVC right-justifies its font glyph at this anchor.  Use the
+					 * anchor as our sprite's right edge too, then enlarge the LCS atlas
+					 * cell to compensate for its transparent padding. */
+					/* Keep the rightmost star fixed and spread the remaining slots
+					 * farther to its left for clearer separation on the top screen. */
+					const float right = SCREEN_SCALE_FROM_RIGHT(24.0f + 33.0f * i);
+					const float y = SCREEN_SCALE_Y(28.0f);
+					const float w = 16.0f;
+					const float h = 12.0f;
+					const float x = right - w;
+					CRGBA starColour(70, 58, 34, alpha);
+					if (playerPed->m_pWanted->GetWantedLevel() > i &&
+						(CTimer::GetTimeInMilliseconds() > playerPed->m_pWanted->m_nLastWantedLevelChange + 2000 || FRAMECOUNTER & 4))
+						starColour = CRGBA(192, 155, 54, alpha);
+					else if (playerPed->m_pWanted->m_nMinWantedLevel > i && FRAMECOUNTER & 4)
+						starColour = CRGBA(62, 141, 188, alpha);
+					Sprites[HUD_HUDNUMBERS].Draw(CRect(x, y, x + w, y + h), starColour,
+						0.75f, 0.53125f, 0.875f, 0.53125f,
+						0.75f, 0.796875f, 0.875f, 0.796875f);
+#else
 					if (playerPed->m_pWanted->GetWantedLevel() > i
 						&& (CTimer::GetTimeInMilliseconds() > playerPed->m_pWanted->m_nLastWantedLevelChange
 							+ 2000 || FRAMECOUNTER & 4)) {
 
-						DrawTimeAndCashNumbers(wantedStar, starX, 63.0f, false);
+						DrawTimeAndCashNumbers(wantedStar, 456.0f - 23.0f * i, 28.0f, false);
 
 					} else if (playerPed->m_pWanted->m_nMinWantedLevel > i && FRAMECOUNTER & 4) {
-						DrawTimeAndCashNumbers(wantedStar, starX, 63.0f, true);
+						DrawTimeAndCashNumbers(wantedStar, 456.0f - 23.0f * i, 28.0f, true);
 					}
-					if (FrontEndMenuManager.m_PrefsUseWideScreen)
-						starX -= 11.0f;
-					else
-						starX -= 13.5f;
+#endif
 				}
 			}
 		}
@@ -749,7 +869,7 @@ void CHud::Draw()
 					}
 					break;
 				case 2:
-					m_ZoneFadeTimer += CTimer::GetTimeStepInMilliseconds();
+					m_ZoneFadeTimer += HudDisplayTimer::GetTimeStepInMilliseconds();
 					if (m_ZoneFadeTimer > 1000.0f) {
 						m_ZoneState = 1;
 						m_ZoneFadeTimer = 1000;
@@ -757,7 +877,7 @@ void CHud::Draw()
 					fZoneAlpha = m_ZoneFadeTimer * 0.001f * 255.0f;
 					break;
 				case 3:
-					m_ZoneFadeTimer -= CTimer::GetTimeStepInMilliseconds();
+					m_ZoneFadeTimer -= HudDisplayTimer::GetTimeStepInMilliseconds();
 					if (m_ZoneFadeTimer < 0.0f) {
 						m_ZoneState = 0;
 						m_ZoneFadeTimer = 0;
@@ -765,7 +885,7 @@ void CHud::Draw()
 					fZoneAlpha = m_ZoneFadeTimer * 0.001f * 255.0f;
 					break;
 				case 4:
-					m_ZoneFadeTimer -= CTimer::GetTimeStepInMilliseconds();
+					m_ZoneFadeTimer -= HudDisplayTimer::GetTimeStepInMilliseconds();
 					if (m_ZoneFadeTimer < 0.0f) {
 						m_ZoneFadeTimer = 0;
 						m_ZoneToPrint = m_pLastZoneName;
@@ -780,7 +900,7 @@ void CHud::Draw()
 
 				if (!m_Message[0] && BigMessageInUse[1] == 0.0f && BigMessageInUse[2] == 0.0f) {
 
-					m_ZoneNameTimer += CTimer::GetTimeStepInMilliseconds();
+					m_ZoneNameTimer += HudDisplayTimer::GetTimeStepInMilliseconds();
 					CFont::SetJustifyOff();
 					CFont::SetPropOn();
 					CFont::SetBackgroundOff();
@@ -850,7 +970,7 @@ void CHud::Draw()
 					fVehicleAlpha = 255.0f;
 					break;
 				case 2:
-					m_VehicleFadeTimer += CTimer::GetTimeStepInMilliseconds();
+					m_VehicleFadeTimer += HudDisplayTimer::GetTimeStepInMilliseconds();
 					if (m_VehicleFadeTimer > 1000) {
 						m_VehicleState = 1;
 						m_VehicleFadeTimer = 1000;
@@ -858,7 +978,7 @@ void CHud::Draw()
 					fVehicleAlpha = m_VehicleFadeTimer * 0.001f * 255.0f;
 					break;
 				case 3:
-					m_VehicleFadeTimer -= CTimer::GetTimeStepInMilliseconds();
+					m_VehicleFadeTimer -= HudDisplayTimer::GetTimeStepInMilliseconds();
 					if (m_VehicleFadeTimer < 0) {
 						m_VehicleState = 0;
 						m_VehicleFadeTimer = 0;
@@ -866,7 +986,7 @@ void CHud::Draw()
 					fVehicleAlpha = m_VehicleFadeTimer * 0.001f * 255.0f;
 					break;
 				case 4:
-					m_VehicleFadeTimer -= CTimer::GetTimeStepInMilliseconds();
+					m_VehicleFadeTimer -= HudDisplayTimer::GetTimeStepInMilliseconds();
 					if (m_VehicleFadeTimer < 0) {
 						m_VehicleFadeTimer = 0;
 						m_pVehicleNameToPrint = m_pLastVehicleName;
@@ -880,7 +1000,7 @@ void CHud::Draw()
 				}
 
 				if (!m_Message[0]) {
-					m_VehicleNameTimer += CTimer::GetTimeStepInMilliseconds();
+					m_VehicleNameTimer += HudDisplayTimer::GetTimeStepInMilliseconds();
 					CFont::SetJustifyOff();
 					CFont::SetPropOn();
 					CFont::SetBackgroundOff();
@@ -918,10 +1038,12 @@ void CHud::Draw()
 		/*
 			DrawClock
 		*/
+#ifndef ENABLE_3DS_BOTTOM_RADAR
 		if (m_ClockState) {
 			if (FrontEndMenuManager.m_PrefsShowHud)
 				DrawTime();
 		}
+#endif
 
 		/*
 			DrawOnScreenTimer
@@ -1080,6 +1202,7 @@ void CHud::Draw()
 		/*
 			DrawRadar
 		*/
+#ifndef ENABLE_3DS_BOTTOM_RADAR
 		if (FrontEndMenuManager.m_PrefsRadarMode != 2 &&
 			!m_HideRadar && (m_ItemToFlash == ITEM_RADAR && FRAMECOUNTER & 8 || m_ItemToFlash != ITEM_RADAR)) {
 
@@ -1102,6 +1225,7 @@ void CHud::Draw()
 			}
 			CRadar::DrawBlips();
 		}
+#endif
 	}
 
 	/*
@@ -1291,7 +1415,7 @@ void CHud::Draw()
 					if (TheCamera.m_WideScreenOn)
 						break;
 
-					m_HelpMessageFadeTimer += 2 * CTimer::GetTimeStepInMilliseconds();
+					m_HelpMessageFadeTimer += 2 * HudDisplayTimer::GetTimeStepInMilliseconds();
 					if (m_HelpMessageFadeTimer > 0) {
 						m_HelpMessageState = 1;
 						m_HelpMessageFadeTimer = 0;
@@ -1299,7 +1423,7 @@ void CHud::Draw()
 					fAlpha = m_HelpMessageFadeTimer * 0.001f * 225.0f;
 					break;
 				case 3:
-					m_HelpMessageFadeTimer -= 2 * CTimer::GetTimeStepInMilliseconds();
+					m_HelpMessageFadeTimer -= 2 * HudDisplayTimer::GetTimeStepInMilliseconds();
 					if (m_HelpMessageFadeTimer < 0 || TheCamera.m_WideScreenOn) {
 						m_HelpMessageState = 0;
 						m_HelpMessageFadeTimer = 0;
@@ -1307,7 +1431,7 @@ void CHud::Draw()
 					fAlpha = m_HelpMessageFadeTimer * 0.001f * 225.0f;
 					break;
 				case 4:
-					m_HelpMessageFadeTimer -= 2 * CTimer::GetTimeStepInMilliseconds();
+					m_HelpMessageFadeTimer -= 2 * HudDisplayTimer::GetTimeStepInMilliseconds();
 					if (m_HelpMessageFadeTimer < 0) {
 						m_HelpMessageState = 2;
 						m_HelpMessageFadeTimer = 0;
@@ -1320,7 +1444,7 @@ void CHud::Draw()
 				}
 
 				if (!TheCamera.m_WideScreenOn) {
-					m_HelpMessageTimer += CTimer::GetTimeStepInMilliseconds();
+					m_HelpMessageTimer += HudDisplayTimer::GetTimeStepInMilliseconds();
 
 					CFont::SetAlphaFade(fAlpha);
 					CFont::SetCentreOff();
@@ -1350,6 +1474,11 @@ void CHud::Draw()
 					CFont::SetDropShadowPosition(0);
 					CFont::SetBackgroundColor(CRGBA(0, 0, 0, fAlpha * 0.9f));
 					CFont::SetColor(CRGBA(175, 175, 175, 255));
+#ifdef _3DS
+					if(!ProfileHintLayout3DS::Draw(m_HelpMessageToPrint, SCREEN_SCALE_X(34.0f), SCREEN_SCALE_Y(28.0f + (150.0f - PagerXOffset) * 0.6f),
+						SCREEN_WIDTH - SCREEN_SCALE_X(16.0f), SCREEN_SCALE_X(8.0f),
+						SCREEN_SCALE_X(0.52f), SCREEN_SCALE_Y(1.1f), fAlpha))
+#endif
 					CFont::PrintString(SCREEN_SCALE_X(34.0f), SCREEN_SCALE_Y(28.0f + (150.0f - PagerXOffset) * 0.6f), m_HelpMessageToPrint);
 					CFont::SetAlphaFade(255.0f);
 					CFont::SetWrapx(SCREEN_WIDTH);
@@ -1381,11 +1510,13 @@ void CHud::Draw()
 				// Appearently sliding text in here was abandoned very early, since this text is centered now.
 
 				if (BigMessageX[0] >= SCALE_AND_CENTER_X(620.0f)) {
-					BigMessageInUse[0] += CTimer::GetTimeStep();
+					BigMessageInUse[0] += BigMessageUsesExactTiming[0]
+						? HudDisplayTimer::GetTimeStepInMilliseconds()
+						: HudDisplayTimer::GetTimeStep();
 
-					if (BigMessageInUse[0] >= 120.0f) {
+					if (!BigMessageUsesExactTiming[0] && BigMessageInUse[0] >= 120.0f) {
 						BigMessageInUse[0] = 120.0f;
-						BigMessageAlpha[0] -= (CTimer::GetTimeStepInMilliseconds() * 0.3f);
+						BigMessageAlpha[0] -= (HudDisplayTimer::GetTimeStepInMilliseconds() * 0.3f);
 					}
 
 					if (BigMessageAlpha[0] <= 0.0f) {
@@ -1394,8 +1525,8 @@ void CHud::Draw()
 					}
 				}
 				else {
-					BigMessageX[0] += SCREEN_SCALE_X((CTimer::GetTimeStepInMilliseconds() * 0.3f));
-					BigMessageAlpha[0] += (CTimer::GetTimeStepInMilliseconds() * 0.3f);
+					BigMessageX[0] += SCREEN_SCALE_X((HudDisplayTimer::GetTimeStepInMilliseconds() * 0.3f));
+					BigMessageAlpha[0] += (HudDisplayTimer::GetTimeStepInMilliseconds() * 0.3f);
 
 					if (BigMessageAlpha[0] > 255.0f)
 						BigMessageAlpha[0] = 255.0f;
@@ -1419,7 +1550,7 @@ void CHud::Draw()
 		// WastedBustedText
 		if (m_BigMessage[2][0]) {
 			if (BigMessageInUse[2] != 0.0f) {
-				BigMessageAlpha[2] += (CTimer::GetTimeStepInMilliseconds() * 0.4f);
+				BigMessageAlpha[2] += (HudDisplayTimer::GetTimeStepInMilliseconds() * 0.4f);
 
 				if (BigMessageAlpha[2] > 255.0f)
 					BigMessageAlpha[2] = 255.0f;
@@ -1673,6 +1804,7 @@ CHud::DrawTime()
 
 void CHud::DrawAfterFade()
 {
+	HudDisplayTimer::Sample();
 	RwRenderStateSet(rwRENDERSTATETEXTUREFILTER, (void*)rwFILTERNEAREST);
 	RwRenderStateSet(rwRENDERSTATETEXTUREADDRESS, (void*)rwTEXTUREADDRESSCLAMP);
 	RwRenderStateSet(rwRENDERSTATEVERTEXALPHAENABLE, (void*)FALSE);
@@ -1772,7 +1904,7 @@ void CHud::DrawAfterFade()
 
 	// Oddjob result
 	if (OddJob2OffTimer > 0)
-		OddJob2OffTimer -= CTimer::GetTimeStepInMilliseconds();
+		OddJob2OffTimer -= HudDisplayTimer::GetTimeStepInMilliseconds();
 
 	float fStep;
 	if (m_BigMessage[5][0] && OddJob2OffTimer <= 0.0f) {
@@ -1792,7 +1924,7 @@ void CHud::DrawAfterFade()
 				}
 				break;
 			case 2:
-				OddJob2Timer += CTimer::GetTimeStepInMilliseconds();
+				OddJob2Timer += HudDisplayTimer::GetTimeStepInMilliseconds();
 				if (OddJob2Timer > 1500) {
 					OddJob2On = 3;
 				}
@@ -1847,11 +1979,11 @@ void CHud::DrawAfterFade()
 			CFont::SetScale(FrontEndMenuManager.m_PrefsLanguage == CMenuManager::LANGUAGE_AMERICAN ? SCREEN_SCALE_X(1.7f) : SCREEN_SCALE_X(1.5f), SCREEN_SCALE_Y(1.8f));
 
 			if (BigMessageX[1] >= SCREEN_SCALE_FROM_RIGHT(20.0f)) {
-				BigMessageInUse[1] += CTimer::GetTimeStep();
+				BigMessageInUse[1] += HudDisplayTimer::GetTimeStepInMilliseconds();
 
-				if (BigMessageInUse[1] >= 120.0f) {
-					BigMessageInUse[1] = 120.0f;
-					BigMessageAlpha[1] -= CTimer::GetTimeStepInMilliseconds();
+				if (BigMessageInUse[1] >= BigMessageDuration[1]) {
+					BigMessageInUse[1] = BigMessageDuration[1];
+					BigMessageAlpha[1] -= HudDisplayTimer::GetTimeStepInMilliseconds() * 0.3f;
 				}
 				if (BigMessageAlpha[1] <= 0.0f) {
 					m_BigMessage[1][0] = 0;
@@ -1859,8 +1991,8 @@ void CHud::DrawAfterFade()
 					BigMessageAlpha[1] = 0.0f;
 				}
 			} else {
-				BigMessageX[1] += SCREEN_SCALE_X((CTimer::GetTimeStepInMilliseconds() * 0.3f));
-				BigMessageAlpha[1] += CTimer::GetTimeStepInMilliseconds();
+				BigMessageX[1] += SCREEN_SCALE_X((HudDisplayTimer::GetTimeStepInMilliseconds() * 0.3f));
+				BigMessageAlpha[1] += HudDisplayTimer::GetTimeStepInMilliseconds();
 
 				if (BigMessageAlpha[1] > 255.0f)
 					BigMessageAlpha[1] = 255.0f;
@@ -1868,9 +2000,15 @@ void CHud::DrawAfterFade()
 
 			CFont::SetColor(CRGBA(40, 40, 40, BigMessageAlpha[1])); // what was that for?
 
+			/* DrawAfterFade is intentionally above the camera fade rectangle.  Scale
+			 * the title alpha by that same fade value so the whole title fades as one
+			 * object.  Without this, the camera only blacks out its reduced widescreen
+			 * viewport and can leave the part over the letterbox border looking cut. */
+			const float screenFade = (255.0f - CDraw::FadeValue) / 255.0f;
+			const uint8 titleAlpha = (uint8)Clamp(BigMessageAlpha[1] * screenFade, 0.0f, 255.0f);
 			CFont::SetDropShadowPosition(2);
-			CFont::SetDropColor(CRGBA(0, 0, 0, BigMessageAlpha[1]));
-			CFont::SetColor(CRGBA(MISSIONTITLE_COLOR.r, MISSIONTITLE_COLOR.g, MISSIONTITLE_COLOR.b, BigMessageAlpha[1]));
+			CFont::SetDropColor(CRGBA(0, 0, 0, titleAlpha));
+			CFont::SetColor(CRGBA(MISSIONTITLE_COLOR.r, MISSIONTITLE_COLOR.g, MISSIONTITLE_COLOR.b, titleAlpha));
 			CFont::PrintString(SCREEN_SCALE_FROM_RIGHT(20.0f), SCREEN_SCALE_FROM_BOTTOM(140.0f), m_BigMessage[1]);
 		} else {
 			m_ZoneFadeTimer = 0;
@@ -2085,8 +2223,38 @@ wchar LastBigMessage[8][128];
 void CHud::SetBigMessage(wchar *message, uint16 style)
 {
 	int i = 0;
+	bool changed = false;
+	for (i = 0; i < 128; i++) {
+		if (m_BigMessage[style][i] != message[i]) {
+			changed = true;
+			break;
+		}
+		if (message[i] == 0)
+			break;
+	}
 
-	if (BigMessageInUse[style] != 0.0f)
+	if (style == 0 && BigMessageUsesExactTiming[0]) {
+		if (message[0] == 0) {
+			m_BigMessage[0][0] = 0;
+			BigMessageInUse[0] = 0.0f;
+			BigMessageAlpha[0] = 0.0f;
+			BigMessageUsesExactTiming[0] = false;
+			return;
+		}
+		if (changed) {
+			BigMessageX[0] = SCALE_AND_CENTER_X(620.0f);
+			BigMessageInUse[0] = 1.0f;
+			BigMessageAlpha[0] = 255.0f;
+		}
+	}
+	i = 0;
+
+	// Mission result and mission title own their hold/fade lifetime in the HUD,
+	// so an expired CMessages entry must not erase them before that fade ends.
+	// Non-empty replacements must still pass through: LCS race scripts can use
+	// either of these slots for the live "3", "2", "1", "GO" sequence.
+	if ((style == 0 || style == 1) && !BigMessageUsesExactTiming[style] &&
+	    BigMessageInUse[style] != 0.0f && message[0] == 0)
 		return;
 
 	if (style == 5) {
@@ -2270,7 +2438,7 @@ float CHud::DrawFadeState(DRAW_FADE_STATE fadingElement, int forceFadingIn)
 				}
 				break;
 			case FADING_IN:
-				fadeTimer += CTimer::GetTimeStepInMilliseconds();
+				fadeTimer += HudDisplayTimer::GetTimeStepInMilliseconds();
 				if (fadeTimer > 1000.0f) {
 					operation = START_FADE_OUT;
 					fadeTimer = 1000;
@@ -2278,7 +2446,7 @@ float CHud::DrawFadeState(DRAW_FADE_STATE fadingElement, int forceFadingIn)
 				alpha = fadeTimer / 1000.0f * 255.0f;
 				break;
 			case FADING_OUT:
-				fadeTimer -= CTimer::GetTimeStepInMilliseconds();
+				fadeTimer -= HudDisplayTimer::GetTimeStepInMilliseconds();
 				if (fadeTimer < 0.0f) {
 					fadeTimer = 0;
 					operation = FADED_OUT;
@@ -2288,7 +2456,7 @@ float CHud::DrawFadeState(DRAW_FADE_STATE fadingElement, int forceFadingIn)
 			default:
 				break;
 		}
-		timer += CTimer::GetTimeStepInMilliseconds();
+		timer += HudDisplayTimer::GetTimeStepInMilliseconds();
 	}
 
 	switch (fadingElement) {

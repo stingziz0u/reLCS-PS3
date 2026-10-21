@@ -120,6 +120,9 @@ CPlayerSkin::GetSkinTexture(const char *texName)
 		RwImageFindRasterFormat(image, rwRASTERTYPETEXTURE, &width, &height, &depth, &format);
 		raster = RwRasterCreate(width, height, depth, format);
 		RwRasterSetFromImage(raster, image);
+#ifdef RW_3DS
+		rw::c3d::TexSetShrinkProtected(GETC3DRASTEREXT(raster));
+#endif
 
 		tex = RwTextureCreate(raster);
 		RwTextureSetName(tex, texName);

@@ -37,6 +37,7 @@ public:
 	static bool LoadTxd(int slot, const char *filename);
 	static bool StartLoadTxd(int slot, RwStream *stream);
 	static bool FinishLoadTxd(int slot, RwStream *stream);
+	static bool IsTxdLoadInProgress(int slot);
 	static void RemoveTxd(int slot, bool notChunk = false);
 
 	static void Load(RwTexDictionary *stored, CPool<TxdDef> *pool);

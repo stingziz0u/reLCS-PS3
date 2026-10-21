@@ -17,6 +17,7 @@ tMessage CMessages::BriefMessages[NUMBRIEFMESSAGES];
 tPreviousBrief CMessages::PreviousBriefs[NUMPREVIOUSBRIEFS];
 tBigMessage CMessages::BIGMessages[NUMBIGMESSAGES];
 char CMessages::PreviousMissionTitle[16]; // unused
+bool CMessages::MissionTitleWaitPending;
 
 void
 CMessages::Init()
@@ -78,6 +79,40 @@ CMessages::WideStringCompare(wchar *str1, wchar *str2, uint16 size)
 	return true;
 }
 
+bool
+CMessages::IsRaceBigMessage(wchar *text)
+{
+	if (text == nil)
+		return false;
+
+	static const char *raceKeys[] = {
+		"RACE_FL", "RACE_Y", "RACE_Y1", "RACE_Y2", "RACE_Y3",
+		"TRCR1", "TRCR2", "TRCR3", "TRCRGO",
+		"MRACEC1", "MRACEC2", "MRACEC3", "MRACEGO",
+	};
+	for (uint32 i = 0; i < ARRAY_SIZE(raceKeys); i++)
+		if (text == TheText.Get(raceKeys[i]))
+			return true;
+	return false;
+}
+
+bool
+CMessages::ConsumeMissionTitleScriptWait(void)
+{
+	if (!MissionTitleWaitPending)
+		return false;
+	MissionTitleWaitPending = false;
+	return true;
+}
+
+static uint32
+GetBigMessageTime(wchar *text, uint32 time, uint16 style)
+{
+	if (text == TheText.Get("RACE_FL"))
+		return 1000u;
+	return style == 1 ? Max(time, 1500u) : time;
+}
+
 void
 CMessages::Process()
 {
@@ -137,6 +172,17 @@ CMessages::Display()
 			outstr);
 		InsertStringInString(outstr, BIGMessages[i].m_Stack[0].m_pString);
 		InsertPlayerControlKeysInString(outstr);
+		if (BIGMessages[i].m_Stack[0].m_pText != nil) {
+			const bool useExactTiming = IsRaceBigMessage(BIGMessages[i].m_Stack[0].m_pText);
+			if (i < 6 && CHud::BigMessageUsesExactTiming[i] && !useExactTiming) {
+				BigMessageInUse[i] = 0.0f;
+				CHud::BigMessageAlpha[i] = 0.0f;
+			}
+			CHud::BigMessageUsesExactTiming[i] = useExactTiming;
+		}
+		CHud::BigMessageDuration[i] = CHud::BigMessageUsesExactTiming[i]
+			? BIGMessages[i].m_Stack[0].m_nTime
+			: Max(BIGMessages[i].m_Stack[0].m_nTime, 1500u);
 		CHud::SetBigMessage(outstr, i);
 	}
 
@@ -254,6 +300,7 @@ CMessages::AddMessageSoon(wchar *msg, uint32 time, uint16 flag)
 void
 CMessages::ClearMessages()
 {
+	MissionTitleWaitPending = false;
 	for (int32 i = 0; i < NUMBIGMESSAGES; i++) {
 		for (int32 j = 0; j < 4; j++) {
 			BIGMessages[i].m_Stack[j].m_pText = nil;
@@ -275,6 +322,9 @@ CMessages::ClearSmallMessagesOnly()
 void
 CMessages::AddBigMessage(wchar *msg, uint32 time, uint16 style)
 {
+	time = GetBigMessageTime(msg, time, style);
+	if (style == 1)
+		MissionTitleWaitPending = true;
 	wchar outstr[512]; // unused
 	WideStringCopy(outstr, msg, 256);
 	InsertPlayerControlKeysInString(outstr);
@@ -296,6 +346,9 @@ CMessages::AddBigMessage(wchar *msg, uint32 time, uint16 style)
 void
 CMessages::AddBigMessageQ(wchar *msg, uint32 time, uint16 style)
 {
+	time = GetBigMessageTime(msg, time, style);
+	if (style == 1)
+		MissionTitleWaitPending = true;
 	wchar outstr[512]; // unused
 	WideStringCopy(outstr, msg, 256);
 	InsertPlayerControlKeysInString(outstr);
@@ -501,6 +554,149 @@ CMessages::GetTokenPadKeyString(const wchar *in, wchar *out)
 	return i;
 }
 
+#ifdef _3DS
+static bool
+Is3DSTouchInstruction(const wchar *text)
+{
+	static const char prefix[] = "TOUCH, THEN TAP ";
+	for (uint32 i = 0; i < sizeof(prefix) - 1; i++)
+		if (text[i] != prefix[i])
+			return false;
+	return true;
+}
+
+static wchar*
+Normalize3DSTouchInstructionPrefix(wchar *begin, wchar *end)
+{
+	struct tRewrite { const char *from, *to; };
+	static const tRewrite rewrites[] = {
+		{ "by pressing~h~ ", "when you~h~ " },
+		{ "Press the ~h~", "~h~" }, { "Press the ~w~", "~w~" },
+		{ "Press the~h~ ", "~h~" }, { "Press~h~ ", "~h~" },
+		{ "press the ~h~", "~h~" }, { "press the~h~ ", "~h~" },
+		{ "press~h~ ", "~h~" }, { "tap the ~h~", "~h~" },
+		{ "tap~h~ ", "~h~" }, { "Use~h~ ", "~h~" }, { "Use the ", "" },
+	};
+	for (uint32 i = 0; i < ARRAY_SIZE(rewrites); i++) {
+		const uint16 fromSize = strlen(rewrites[i].from);
+		if (end - begin < fromSize)
+			continue;
+		bool match = true;
+		for (uint16 j = 0; j < fromSize; j++)
+			if (end[-fromSize + j] != rewrites[i].from[j]) {
+				match = false;
+				break;
+			}
+		if (!match)
+			continue;
+		end -= fromSize;
+		for (const char *p = rewrites[i].to; *p; p++)
+			*(end++) = *p;
+		break;
+	}
+	return end;
+}
+
+static uint16
+Get3DSControlTokenString(const wchar *in, wchar *out)
+{
+	char token[ACTIONNAME_LENGTH + 1];
+	const uint16 tokenOffset = in[0] == '~' ? 1 : 0;
+	uint16 tokenSize = 0;
+	while (in[tokenOffset + tokenSize] != '\0' && in[tokenOffset + tokenSize] != '~' && tokenSize < ACTIONNAME_LENGTH) {
+		token[tokenSize] = (char)in[tokenOffset + tokenSize];
+		tokenSize++;
+	}
+	token[tokenSize] = '\0';
+
+	struct tTokenAction {
+		const char *token;
+		int16 firstAction;
+		int16 secondAction;
+	};
+	static const tTokenAction actionTokens[] = {
+		{ "ANS", PED_ANSWER_PHONE, -1 },
+		{ "CVEIW", CAMERA_CHANGE_VIEW_ALL_SITUATIONS, -1 },
+		{ "FREE1", PED_DUCK, -1 },
+		{ "PDCTL", PED_CYCLE_TARGET_LEFT, PED_CYCLE_TARGET_RIGHT },
+		{ "PDCWE", PED_CYCLE_WEAPON_LEFT, PED_CYCLE_WEAPON_RIGHT },
+		{ "PDFW", PED_FIREWEAPON, -1 },
+		{ "PDLT", PED_LOCK_TARGET, -1 },
+		{ "PDSPR", PED_SPRINT, -1 },
+		{ "PED_FIREWEAPON", PED_FIREWEAPON, -1 },
+		/* LCS uses the same mode-dependent control as answering the phone
+		 * for accepting a weapon pickup. */
+		{ "PUCF", PED_ANSWER_PHONE, -1 },
+		{ "SNZI", PED_SNIPER_ZOOM_IN, -1 },
+		{ "SNZO", PED_SNIPER_ZOOM_OUT, -1 },
+		{ "TGSUB", TOGGLE_SUBMISSIONS, -1 },
+		{ "VEACC", VEHICLE_ACCELERATE, -1 },
+		{ "VEBRK", VEHICLE_BRAKE, -1 },
+		{ "VECRS", VEHICLE_CHANGE_RADIO_STATION, -1 },
+		{ "VEEE", VEHICLE_ENTER_EXIT, -1 },
+		{ "VEHB", VEHICLE_HANDBRAKE, -1 },
+		{ "VEHN", VEHICLE_HORN, -1 },
+		{ "VELB", VEHICLE_LOOKLEFT, VEHICLE_LOOKRIGHT },
+		{ "VELL", VEHICLE_LOOKLEFT, -1 },
+		{ "VELR", VEHICLE_LOOKRIGHT, -1 },
+		{ "VEWEP", VEHICLE_FIREWEAPON, -1 },
+	};
+	struct tFixedToken {
+		const char *token;
+		const char *label;
+	};
+	static const tFixedToken fixedTokens[] = {
+		{ "AMBUY", "A" },
+		{ "AMEXI", "B" },
+		{ "AMMOV", "CIRCLE PAD" },
+		{ "FREE2", "CIRCLE PAD" },
+		{ "PDLOO", "C-STICK" },
+		{ "TRSK", "A" },
+		{ "VESTR", "CIRCLE PAD" },
+		{ "VEWEA", "C-STICK" },
+		{ "VEWEI", "CIRCLE PAD UP / DOWN" },
+	};
+
+	for (uint32 i = 0; i < ARRAY_SIZE(fixedTokens); i++) {
+		if (strcmp(token, fixedTokens[i].token) == 0) {
+			AsciiToUnicode(fixedTokens[i].label, out);
+			return tokenOffset + tokenSize;
+		}
+	}
+	for (uint32 i = 0; i < ARRAY_SIZE(actionTokens); i++) {
+		if (strcmp(token, actionTokens[i].token) != 0)
+			continue;
+		ControlsManager.GetWideStringOfCommandKeys(actionTokens[i].firstAction, out, 256);
+		if (actionTokens[i].secondAction >= 0) {
+			wchar second[32];
+			memset(second, 0, sizeof(second));
+			ControlsManager.GetWideStringOfCommandKeys(actionTokens[i].secondAction, second, ARRAY_SIZE(second));
+			uint16 outSize = CMessages::GetWideStringLength(out);
+			if (outSize != 0 && second[0] != '\0') {
+				out[outSize++] = ' ';
+				out[outSize++] = '+';
+				out[outSize++] = ' ';
+				CMessages::WideStringCopy(&out[outSize], second, 256 - outSize);
+			}
+		}
+		return tokenOffset + tokenSize;
+	}
+
+	/* Also accept reVC-style full action names used by a few carried-over
+	 * strings and by any future corrected text archive. */
+	for (int32 action = 0; action < MAX_CONTROLLERACTIONS; action++) {
+		uint16 actionSize = CMessages::GetWideStringLength(ControlsManager.m_aActionNames[action]);
+		if (actionSize == tokenSize &&
+			CMessages::WideStringCompare((wchar*)&in[tokenOffset], ControlsManager.m_aActionNames[action], actionSize)) {
+			ControlsManager.GetWideStringOfCommandKeys(action, out, 256);
+			return tokenOffset + tokenSize;
+		}
+	}
+
+	return tokenOffset + tokenSize;
+}
+#endif
+
 void
 CMessages::InsertPlayerControlKeysInString(wchar *str)
 {
@@ -515,35 +711,41 @@ CMessages::InsertPlayerControlKeysInString(wchar *str)
 	wchar *_outstr = outstr;
 	for (i = 0; i < strSize;) {
 #ifdef MORE_LANGUAGES
-		if ((CFont::IsJapanese() && str[i] == (0x8000 | '~') && str[i + 1] == (0x8000 | 'k') && str[i + 2] == (0x8000 | '~')) ||
+		if (i + 2 < strSize && ((CFont::IsJapanese() && str[i] == (0x8000 | '~') && str[i + 1] == (0x8000 | 'k') && str[i + 2] == (0x8000 | '~')) ||
 			(!CFont::IsJapanese() && str[i] == '~' && str[i + 1] == 'k' && str[i + 2] == '~')) {
 #else
-		if (str[i] == '~' && str[i + 1] == 'k' && str[i + 2] == '~') {
+		if (i + 2 < strSize && str[i] == '~' && str[i + 1] == 'k' && str[i + 2] == '~') {
 #endif
 			memset(keybuf, 0, 256 * sizeof(wchar));
 			i += 4;
+#ifdef _3DS
+			const uint16 tokenStart = i;
+			uint16 tokenSpan = Get3DSControlTokenString(&str[i], keybuf);
+			i += tokenSpan + 1;
+			uint16 keybufSize = GetWideStringLength(keybuf);
+			if (keybufSize != 0 && Is3DSTouchInstruction(keybuf))
+				_outstr = Normalize3DSTouchInstructionPrefix(outstr, _outstr);
+			if (keybufSize == 0) {
+				/* Keep an unknown token visible for diagnosis without falling back
+				 * to the PS2-specific C0/C1 text entries. */
+				const uint16 tokenOffset = str[tokenStart] == '~' ? 1 : 0;
+				*(_outstr++) = '[';
+				for (uint16 j = 0; j < tokenSpan - tokenOffset; j++)
+					*(_outstr++) = str[tokenStart + tokenOffset + j];
+				*(_outstr++) = ']';
+			} else {
+				for (uint16 j = 0; j < keybufSize; j++)
+					*(_outstr++) = keybuf[j];
+			}
+#else
 			i += GetTokenPadKeyString(&str[i], keybuf) + 1;
 			uint16 keybuf_size = GetWideStringLength(keybuf);
 			for (uint16 j = 0; j < keybuf_size; j++) {
 				*(_outstr++) = keybuf[j];
 				keybuf[j] = '\0';
 			}
+#endif
 
-			/*for (int32 cont = 0; cont < MAX_CONTROLLERACTIONS && !done; cont++) {
-				uint16 contSize = GetWideStringLength(ControlsManager.m_aActionNames[cont]);
-				if (contSize != 0) {
-					if (WideStringCompare(&str[i], ControlsManager.m_aActionNames[cont], contSize)) {
-						done = true;
-						ControlsManager.GetWideStringOfCommandKeys(cont, keybuf, 256);
-						uint16 keybuf_size = GetWideStringLength(keybuf);
-						for (uint16 j = 0; j < keybuf_size; j++) {
-							*(_outstr++) = keybuf[j];
-							keybuf[j] = '\0';
-						}
-						i += contSize + 1;
-					}
-				}
-			}*/
 		} else {
 			*(_outstr++) = str[i++];
 		}
@@ -658,6 +860,9 @@ CMessages::AddMessageSoonWithNumber(wchar *str, uint32 time, uint16 flag, int32 
 void
 CMessages::AddBigMessageWithNumber(wchar *str, uint32 time, uint16 style, int32 n1, int32 n2, int32 n3, int32 n4, int32 n5, int32 n6)
 {
+	time = GetBigMessageTime(str, time, style);
+	if (style == 1)
+		MissionTitleWaitPending = true;
 	wchar outstr[512]; // unused
 	InsertNumberInString(str, n1, n2, n3, n4, n5, n6, outstr);
 	InsertPlayerControlKeysInString(outstr);
@@ -679,6 +884,9 @@ CMessages::AddBigMessageWithNumber(wchar *str, uint32 time, uint16 style, int32 
 void
 CMessages::AddBigMessageWithNumberQ(wchar *str, uint32 time, uint16 style, int32 n1, int32 n2, int32 n3, int32 n4, int32 n5, int32 n6)
 {
+	time = GetBigMessageTime(str, time, style);
+	if (style == 1)
+		MissionTitleWaitPending = true;
 	wchar outstr[512]; // unused
 	InsertNumberInString(str, n1, n2, n3, n4, n5, n6, outstr);
 	InsertPlayerControlKeysInString(outstr);
@@ -889,4 +1097,3 @@ CMessages::ClearThisBigPrintNow(uint32 id)
 	CHud::m_BigMessage[id][0] = '\0';
 	BigMessageInUse[id] = 0.0f;
 }
-

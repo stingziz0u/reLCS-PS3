@@ -1,4 +1,5 @@
 #include "common.h"
+#include "../regta3ds/EffectBudget.h"	// the 3DS port's (no-op off the 3DS)
 
 #include "main.h"
 #include "General.h"
@@ -17,6 +18,7 @@
 #include "Shadows.h"
 #include "Clock.h"
 #include "Bridge.h"
+#include "Renderer.h"
 
 struct FlareDef
 {
@@ -158,6 +160,10 @@ CCoronas::RegisterCorona(uint32 id, uint8 red, uint8 green, uint8 blue, uint8 al
 	if(i == NUMCORONAS){
 		// add a new one
 
+		int active = 0;
+		for(int slot = 0; slot < NUMCORONAS; ++slot)
+			if(aCoronas[slot].id != 0) ++active;
+		if(active >= EffectBudget3DS::Limit(NUMCORONAS)) return;
 		// find empty slot
 		for(i = 0; i < NUMCORONAS; i++)
 			if(aCoronas[i].id == 0)
@@ -742,6 +748,22 @@ CEntity::ProcessLightsForEntity(void)
 
 	if(bRenderDamaged || !bIsVisible || GetUp().z < 0.96f)
 		return;
+#ifdef _3DS
+	// Keep authored coronas and light pools attached to their carrier model
+	// when adaptive pressure shortens that model's effective LOD distance.
+	if(IsBuilding() || IsDummy()){
+		CBaseModelInfo *base = CModelInfo::GetModelInfo(GetModelIndex());
+		if(base && base->IsSimple()){
+			CSimpleModelInfo *mi = (CSimpleModelInfo*)base;
+			const float dist = (GetPosition()-TheCamera.GetPosition()).Magnitude();
+			const float lodDist = CRenderer::GetNew3DSWorldDistance(this,dist) /
+				CRenderer::GetNew3DSWorldLodScale(mi,GetModelIndex(),this);
+			if(mi->GetAtomicFromDistance(lodDist) == nil &&
+			   (mi->m_noFade || mi->GetAtomicFromDistance(lodDist-FADE_DISTANCE) == nil))
+				return;
+		}
+	}
+#endif
 
 	flashTimer1 = 0;
 	flashTimer2 = 0;

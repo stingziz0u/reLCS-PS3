@@ -58,7 +58,9 @@ CPlayerInfo::Clear(void)
 	m_bUnusedTaxiThing = false;
 	m_nUnusedTaxiTimer = 0;
 	m_nCollectedPackages = 0;
-	m_nTotalPackages = 3;
+	/* LCS has 100 hidden packages.  The inherited test value of 3 leaked into
+	 * converted saves and made the equality-based completion reward impossible. */
+	m_nTotalPackages = 100;
 	m_nTimeLastHealthLoss = 0;
 	m_nTimeLastArmourLoss = 0;
 	m_nNextSexFrequencyUpdateTime = 0;
@@ -576,6 +578,11 @@ CPlayerInfo::LoadPlayerInfo(uint8 *buf, uint32 size)
 	CopyFromBuf(buf, CWorld::Players[CWorld::PlayerInFocus].m_nVisibleMoney);
 	CopyFromBuf(buf, CWorld::Players[CWorld::PlayerInFocus].m_nCollectedPackages);
 	CopyFromBuf(buf, CWorld::Players[CWorld::PlayerInFocus].m_nTotalPackages);
+	/* Repair saves created while Clear() still advertised the test total.  Keep
+	 * every other stored value intact so genuine foreign formats remain the
+	 * converter's responsibility. */
+	if (CWorld::Players[CWorld::PlayerInFocus].m_nTotalPackages == 3)
+		CWorld::Players[CWorld::PlayerInFocus].m_nTotalPackages = 100;
 	CopyFromBuf(buf, CWorld::Players[CWorld::PlayerInFocus].m_bInfiniteSprint);
 	CopyFromBuf(buf, CWorld::Players[CWorld::PlayerInFocus].m_bFastReload);
 	CopyFromBuf(buf, CWorld::Players[CWorld::PlayerInFocus].m_bFireproof);
@@ -659,6 +666,12 @@ FindPlayerCoors(void)
 		return TheCamera.GetPosition();
 #endif
 	CPlayerPed *ped = FindPlayerPed();
+	/* The New3DS loading pipeline can span the restart across multiple frames.
+	 * During that short window the old player has been destroyed and the loaded
+	 * player has not been created yet.  Camera position is the same fallback
+	 * CPlayerInfo::GetPos uses for this lifecycle state. */
+	if(ped == nil)
+		return TheCamera.GetPosition();
 	if(ped->InVehicle())
 		return ped->m_pMyVehicle->GetPosition();
 	else
@@ -668,12 +681,14 @@ FindPlayerCoors(void)
 const CVector &
 FindPlayerSpeed(void)
 {
-#ifdef FIX_BUGS
 	static CVector vecTmpVector(0.0f, 0.0f, 0.0f);
+#ifdef FIX_BUGS
 	if (CReplay::IsPlayingBack())
 		return vecTmpVector;
 #endif
 	CPlayerPed *ped = FindPlayerPed();
+	if(ped == nil)
+		return vecTmpVector;
 	if(ped->InVehicle())
 		return ped->m_pMyVehicle->m_vecMoveSpeed;
 	else
@@ -692,6 +707,8 @@ CEntity *
 FindPlayerEntity(void)
 {
 	CPlayerPed *ped = FindPlayerPed();
+	if(ped == nil)
+		return nil;
 	if(ped->InVehicle())
 		return ped->m_pMyVehicle;
 	else
@@ -722,6 +739,7 @@ FindPlayerCentreOfWorld(int32 player)
 	if(CCarCtrl::bCarsGeneratedAroundCamera) return TheCamera.GetPosition();
 	if(CWorld::Players[player].m_pRemoteVehicle) return CWorld::Players[player].m_pRemoteVehicle->GetPosition();
 	if(FindPlayerVehicle()) return FindPlayerVehicle()->GetPosition();
+	if(CWorld::Players[player].m_pPed == nil) return TheCamera.GetPosition();
 	return CWorld::Players[player].m_pPed->GetPosition();
 }
 
@@ -735,6 +753,7 @@ FindPlayerCentreOfWorld_NoSniperShift(void)
 	if(CWorld::Players[CWorld::PlayerInFocus].m_pRemoteVehicle)
 		return CWorld::Players[CWorld::PlayerInFocus].m_pRemoteVehicle->GetPosition();
 	if(FindPlayerVehicle()) return FindPlayerVehicle()->GetPosition();
+	if(FindPlayerPed() == nil) return TheCamera.GetPosition();
 	return FindPlayerPed()->GetPosition();
 }
 
@@ -744,6 +763,7 @@ FindPlayerHeading(void)
 	if(CWorld::Players[CWorld::PlayerInFocus].m_pRemoteVehicle)
 		return CWorld::Players[CWorld::PlayerInFocus].m_pRemoteVehicle->GetForward().Heading();
 	if(FindPlayerVehicle()) return FindPlayerVehicle()->GetForward().Heading();
+	if(FindPlayerPed() == nil) return TheCamera.GetForward().Heading();
 	return FindPlayerPed()->GetForward().Heading();
 }
 

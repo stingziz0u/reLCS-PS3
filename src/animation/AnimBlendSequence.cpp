@@ -26,23 +26,28 @@ CAnimBlendSequence::SetName(char *name)
 	strncpy(this->name, name, 24);
 }
 
-void
+bool
 CAnimBlendSequence::SetNumFrames(int numFrames, bool translation, bool compressed)
 {
 	if(translation){
 		type |= KF_ROT | KF_TRANS;
 		if(compressed)
-			keyFramesCompressed = RwMalloc(sizeof(KeyFrameTrans) * numFrames);
+			keyFramesCompressed = RwMalloc(sizeof(KeyFrameTransCompressed) * numFrames);
 		else
 			keyFrames = RwMalloc(sizeof(KeyFrameTrans) * numFrames);
 	}else{
 		type |= KF_ROT;
 		if(compressed)
-			keyFramesCompressed = RwMalloc(sizeof(KeyFrame) * numFrames);
+			keyFramesCompressed = RwMalloc(sizeof(KeyFrameCompressed) * numFrames);
 		else
 			keyFrames = RwMalloc(sizeof(KeyFrame) * numFrames);
 	}
+	if((compressed && keyFramesCompressed == nil) || (!compressed && keyFrames == nil)){
+		this->numFrames = 0;
+		return false;
+	}
 	this->numFrames = numFrames;
+	return true;
 }
 
 void

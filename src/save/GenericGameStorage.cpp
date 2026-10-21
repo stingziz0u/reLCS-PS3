@@ -45,6 +45,121 @@
 #define SIZE_OF_SIMPLEVARS 0xE8
 
 const uint32 SIZE_OF_ONE_GAME_IN_BYTES = 201729;
+static const uint32 RESTORIES_3DS_SAVE_MAGIC_V3 = 0x3353434C; // "LCS3"
+static const uint32 RESTORIES_3DS_SAVE_MAGIC_V4 = 0x3453434C; // "LCS4"
+static const uint32 RESTORIES_3DS_SAVE_MAGIC_V5 = 0x3553434C; // "LCS5", native ARM save blocks
+static const uint32 RESTORIES_3DS_SAVE_MAGIC_V6 = 0x3653434C; // "LCS6", full LCS resident-model set
+static const uint32 RESTORIES_3DS_SAVE_MAGIC_V7 = 0x3753434C; // "LCS7", restored script timer
+
+void
+EncodeSaveNameField(wchar *field, const wchar *title, const char *gxtKey)
+{
+	memset(field, 0, sizeof(wchar) * SAVE_NAME_FIELD_WCHARS);
+	int32 len = UnicodeStrlen(title);
+	if(len < SAVE_NAME_FIELD_WCHARS){
+		memcpy(field, title, sizeof(wchar) * len);
+		return;
+	}
+	memcpy(field, title, sizeof(wchar) * (SAVE_NAME_KEY_OFFSET - 1));
+	field[SAVE_NAME_KEY_OFFSET] = SAVE_NAME_KEY_MARKER;
+	for(int32 i = 0; i < SAVE_NAME_KEY_LENGTH && gxtKey[i]; i++)
+		field[SAVE_NAME_KEY_OFFSET + 1 + i] = (uint8)gxtKey[i];
+}
+
+void
+DecodeSaveNameField(wchar *name, const wchar *field)
+{
+	if(field[SAVE_NAME_KEY_OFFSET] == SAVE_NAME_KEY_MARKER){
+		char key[SAVE_NAME_KEY_LENGTH + 1];
+		int32 i;
+		for(i = 0; i < SAVE_NAME_KEY_LENGTH &&
+		    field[SAVE_NAME_KEY_OFFSET + 1 + i]; i++)
+			key[i] = (char)field[SAVE_NAME_KEY_OFFSET + 1 + i];
+		key[i] = '\0';
+		const wchar *title = TheText.Get(key);
+		if(title[0]){
+			TextCopy(name, title);
+			return;
+		}
+	}
+	if(field[18] == '.' && field[19] == '.' && field[20] == '.'){
+		static const char *keys[] = {
+			"TOUR", "VIC7", "MAC2", "RAYS4", "DONS1", "NEDS2", "SALH4",
+			"DONH3", "TOSH1"
+		};
+		for(int32 key = 0; key < ARRAY_SIZE(keys); key++){
+			const wchar *title = TheText.Get(keys[key]);
+			int32 i;
+			for(i = 0; i < 18 && field[i] == title[i]; i++);
+			if(i == 18){
+				TextCopy(name, title);
+				return;
+			}
+		}
+	}
+	memcpy(name, field, sizeof(wchar) * SAVE_NAME_FIELD_WCHARS);
+	name[SAVE_NAME_FIELD_WCHARS] = '\0';
+}
+
+struct LCSHiddenPackageReward
+{
+	CVector pos;
+	int16 model;
+	uint32 quantity;
+};
+
+static void
+RestoreLCSHiddenPackageRewards(void)
+{
+	/* Converted completion saves can legitimately contain the 100-package
+	 * PlayerInfo state while their 3DS template pickup block predates the
+	 * safehouse reward creation.  Rebuild only the eleven stock LCS rewards;
+	 * never transplant saved CObject pool handles from another save. */
+	if (CWorld::Players[CWorld::PlayerInFocus].m_nCollectedPackages < 100)
+		return;
+
+	static const LCSHiddenPackageReward rewards[] = {
+		{ CVector(284.80f, -443.81f, 25.80f), 264,   0 },
+		{ CVector(282.80f, -443.81f, 25.80f), 274,  24 },
+		{ CVector(280.80f, -443.81f, 25.80f), 277,  12 },
+		{ CVector(278.80f, -443.81f, 25.80f), 587,   0 },
+		{ CVector(276.80f, -443.81f, 25.80f), 284, 120 },
+		{ CVector(284.80f, -450.51f, 25.80f), 275,  24 },
+		{ CVector(282.80f, -450.51f, 25.80f), 280, 150 },
+		{ CVector(280.80f, -450.51f, 25.80f), 286,  28 },
+		{ CVector(278.80f, -450.51f, 25.80f), 288, 700 },
+		{ CVector(276.80f, -450.51f, 25.80f), 287,   8 },
+		{ CVector(276.36f, -446.86f, 25.80f), 289, 150 },
+	};
+	bool missing[ARRAY_SIZE(rewards)];
+	bool anyMissing = false;
+	for (uint32 i = 0; i < ARRAY_SIZE(rewards); i++) {
+		missing[i] = true;
+		for (int32 j = 0; j < NUMPICKUPS; j++) {
+			if (CPickups::aPickUps[j].m_eType != PICKUP_NONE &&
+			    CPickups::aPickUps[j].m_eModelIndex == rewards[i].model &&
+			    (CPickups::aPickUps[j].m_vecPos - rewards[i].pos).MagnitudeSqr() < SQR(0.25f)) {
+				missing[i] = false;
+				break;
+			}
+		}
+		if (missing[i]) {
+			anyMissing = true;
+			CStreaming::RequestModel(rewards[i].model, STREAMFLAGS_DONT_REMOVE);
+		}
+	}
+	if (!anyMissing)
+		return;
+
+	CStreaming::LoadAllRequestedModels(false);
+	for (uint32 i = 0; i < ARRAY_SIZE(rewards); i++) {
+		if (!missing[i])
+			continue;
+		CPickups::GenerateNewOne(rewards[i].pos, rewards[i].model,
+			PICKUP_ON_STREET_SLOW, rewards[i].quantity);
+		CStreaming::SetModelIsDeletable(rewards[i].model);
+	}
+}
 
 #ifdef MISSION_REPLAY
 int8 IsQuickSave;
@@ -137,8 +252,7 @@ GenericSave(int file)
 	uint32 totalSize;
 	
 	wchar *lastMissionPassed;
-	wchar suffix[6];
-	wchar saveName[24];
+	wchar saveName[SAVE_NAME_FIELD_WCHARS];
 	SYSTEMTIME saveTime;
 	CPad *currPad;
 
@@ -148,23 +262,12 @@ GenericSave(int file)
 	PS3_CRUMB("save: simple vars", 0);
 
 	// Save simple vars
-	lastMissionPassed = TheText.Get(CStats::LastMissionPassedName[0] ? CStats::LastMissionPassedName : "ITBEG");
-	AsciiToUnicode("...'", suffix);
-	suffix[3] = L'\0';
-#ifdef FIX_BUGS
-	// fix buffer overflow
-	int len = UnicodeStrlen(lastMissionPassed);
-	if (len > ARRAY_SIZE(saveName)-1)
-		len = ARRAY_SIZE(saveName)-1;
-	memcpy(saveName, lastMissionPassed, sizeof(wchar) * len);
-#else
-	TextCopy(saveName, lastMissionPassed);
-	int len = UnicodeStrlen(saveName);
-#endif
-	saveName[len] = '\0';
-	if (len > ARRAY_SIZE(saveName)-2)
-		TextCopy(&saveName[ARRAY_SIZE(saveName)-ARRAY_SIZE(suffix)], suffix);
-	saveName[ARRAY_SIZE(saveName)-1] = '\0';
+	/* The first legal LCS save point is unlocked by Home Sweet Home.  ITBEG is
+	 * a Vice City fallback left in the inherited frontend and must never become
+	 * an LCS save title when an old/broken stats block has an empty mission key. */
+	lastMissionPassed = TheText.Get(CStats::LastMissionPassedName[0] ? CStats::LastMissionPassedName : "VIC1");
+	EncodeSaveNameField(saveName, lastMissionPassed,
+		CStats::LastMissionPassedName[0] ? CStats::LastMissionPassedName : "VIC1");
 	WriteDataToBufferPointer(buf, saveName);
 	GetLocalTime(&saveTime);
 	WriteDataToBufferPointer(buf, saveTime);
@@ -216,6 +319,10 @@ GenericSave(int file)
 	WriteDataToBufferPointer(buf, CTimeCycle::m_ExtraColourInter);
 	PopulateRadioStationPositionList();
 	WriteDataToBufferPointer(buf, RadioStationPosition);
+	/* Match the native LCS memory-card state: script and clock timing share the
+	 * same saved CTimer timeline. */
+	WriteDataToBufferPointer(buf, CTimer::m_snTimeInMilliseconds);
+	WriteDataToBufferPointer(buf, RESTORIES_3DS_SAVE_MAGIC_V7);
 	//assert(buf - work_buff == SIZE_OF_SIMPLEVARS);
 
 	// Save scripts, block is nested within the same block as simple vars for some reason
@@ -232,28 +339,28 @@ GenericSave(int file)
 	totalSize = buf - work_buff;
 
 	// Save the rest
-	//WriteSaveDataBlock(CPools::SavePedPool, "PedPoolSize");
+	WriteSaveDataBlock(CPools::SavePedPool, "PedPoolSize");
 	WriteSaveDataBlock(CGarages::Save, "GaragesSize");
-	//WriteSaveDataBlock(CGameLogic::Save, "GameLogicSize");
-	//WriteSaveDataBlock(CPools::SaveVehiclePool, "VehPoolSize");
-	//WriteSaveDataBlock(CPools::SaveObjectPool, "ObjectPoolSize");
-	//WriteSaveDataBlock(ThePaths.Save, "ThePathsSize");
-	//WriteSaveDataBlock(CCranes::Save, "CranesSize");
-	//WriteSaveDataBlock(CPickups::Save, "PickUpsSize");
-	//WriteSaveDataBlock(gPhoneInfo.Save, "PhoneInfoSize");
-	//WriteSaveDataBlock(CRestart::SaveAllRestartPoints, "RestartPointsBufferSize");
-	//WriteSaveDataBlock(CRadar::SaveAllRadarBlips, "RadarBlipsBufferSize");
-	//WriteSaveDataBlock(CTheZones::SaveAllZones, "AllZonesBufferSize");
-	//WriteSaveDataBlock(CGangs::SaveAllGangData, "AllGangDataSize");
-	//WriteSaveDataBlock(CTheCarGenerators::SaveAllCarGenerators, "AllCarGeneratorsSize");
-	//WriteSaveDataBlock(CParticleObject::SaveParticle, "ParticlesSize");
-	//WriteSaveDataBlock(cAudioScriptObject::SaveAllAudioScriptObjects, "AllAudioScriptObjectsSize");
-	//WriteSaveDataBlock(CScriptPaths::Save, "ScriptPathsSize");
+	/* Preserve the complete PS2/PSP LCS memory-card object graph.  These blocks
+	 * preserve safehouse objects, pickups, exits and the
+	 * streaming ownership referenced by the restored script handles. */
+	WriteSaveDataBlock(CPools::SaveVehiclePool, "VehPoolSize");
+	WriteSaveDataBlock(CPools::SaveObjectPool, "ObjectPoolSize");
+	WriteSaveDataBlock(ThePaths.Save, "ThePathsSize");
+	WriteSaveDataBlock(CCranes::Save, "CranesSize");
+	WriteSaveDataBlock(CPickups::Save, "PickUpsSize");
+	WriteSaveDataBlock(gPhoneInfo.Save, "PhoneInfoSize");
+	WriteSaveDataBlock(CRestart::SaveAllRestartPoints, "RestartPointsBufferSize");
+	WriteSaveDataBlock(CRadar::SaveAllRadarBlips, "RadarBlipsBufferSize");
+	WriteSaveDataBlock(CTheZones::SaveAllZones, "AllZonesBufferSize");
+	WriteSaveDataBlock(CGangs::SaveAllGangData, "AllGangDataSize");
+	WriteSaveDataBlock(CTheCarGenerators::SaveAllCarGenerators, "AllCarGeneratorsSize");
+	WriteSaveDataBlock(CParticleObject::SaveParticle, "ParticlesSize");
+	WriteSaveDataBlock(cAudioScriptObject::SaveAllAudioScriptObjects, "AllAudioScriptObjectsSize");
 	WriteSaveDataBlock(CWorld::Players[CWorld::PlayerInFocus].SavePlayerInfo, "PlayerInfoSize");
 	WriteSaveDataBlock(CStats::SaveStats, "StatsSize");
-	//WriteSaveDataBlock(CSetPieces::Save, "SetPiecesSize");
-	//WriteSaveDataBlock(CStreaming::MemoryCardSave, "StreamingSize");
-	//WriteSaveDataBlock(CPedType::Save, "PedTypeSize");
+	WriteSaveDataBlock(CStreaming::MemoryCardSave, "StreamingSize");
+	WriteSaveDataBlock(CPedType::Save, "PedTypeSize");
 
 	// sure just write garbage data repeatedly ...
 #ifndef THIS_IS_STUPID
@@ -370,6 +477,49 @@ GenericLoad()
 	ReadDataFromBufferPointer(buf, CTimeCycle::m_bExtraColourOn);
 	ReadDataFromBufferPointer(buf, CTimeCycle::m_ExtraColourInter);
 	ReadDataFromBufferPointer(buf, RadioStationPosition);
+	uint32 timerOrMagic;
+	ReadDataFromBufferPointer(buf, timerOrMagic);
+	uint32 saveMagic;
+	if(timerOrMagic == RESTORIES_3DS_SAVE_MAGIC_V3 ||
+	   timerOrMagic == RESTORIES_3DS_SAVE_MAGIC_V4 ||
+	   timerOrMagic == RESTORIES_3DS_SAVE_MAGIC_V5 ||
+	   timerOrMagic == RESTORIES_3DS_SAVE_MAGIC_V6) {
+		/* LCS6 and older omitted CTimer.  CClock's saved tick is derived from the
+		 * same timeline and trails it by less than one game minute, so it safely
+		 * wakes existing saves without changing their on-card format. */
+		saveMagic = timerOrMagic;
+		CTimer::m_snTimeInMilliseconds = CClock::ms_nLastClockTick;
+	} else {
+		CTimer::m_snTimeInMilliseconds = timerOrMagic;
+		ReadDataFromBufferPointer(buf, saveMagic);
+	}
+	CTimer::m_snPreviousTimeInMilliseconds = CTimer::m_snTimeInMilliseconds;
+	CTimer::m_snTimeInMillisecondsNonClipped = CTimer::m_snTimeInMilliseconds;
+	bool has3DSPlayerPool = saveMagic == RESTORIES_3DS_SAVE_MAGIC_V6 ||
+		saveMagic == RESTORIES_3DS_SAVE_MAGIC_V7;
+	bool hasLCSNativeBlocks = has3DSPlayerPool;
+	/* LCS3/LCS4 used the cross-platform PC layout.  LCS5 used native ARM blocks
+	 * but only saved the first 300 model states, so its safehouse geometry cannot
+	 * be reconstructed reliably.  All three can be converted offline. */
+	if(saveMagic == RESTORIES_3DS_SAVE_MAGIC_V3 ||
+	   saveMagic == RESTORIES_3DS_SAVE_MAGIC_V4 ||
+	   saveMagic == RESTORIES_3DS_SAVE_MAGIC_V5) {
+		CloseFile(file);
+		PcSaveHelper.nErrorCode = SAVESTATUS_ERR_LOAD_READ;
+		return false;
+	}
+#ifdef __PS3__
+	// reLCS-PS3 loads only its own saves since it has the 3DS port's save
+	// format (patch 18): the earlier ones have no ped pool (the player
+	// isn't in them) and the 3DS port's are its CPU's byte order. Either
+	// one is a failed load, not a broken game.
+	if(saveMagic != RESTORIES_3DS_SAVE_MAGIC_V7) {
+		debug("PS3: not a save of this version (magic %08x)\n", saveMagic);
+		CloseFile(file);
+		PcSaveHelper.nErrorCode = SAVESTATUS_ERR_LOAD_READ;
+		return false;
+	}
+#endif
 	//assert(buf - work_buff == SIZE_OF_SIMPLEVARS);
 #ifdef MISSION_REPLAY
 	WaitForSave = 0;
@@ -379,54 +529,80 @@ GenericLoad()
 	ReadDataFromBlock("Loading Scripts \n", CTheScripts::LoadAllScripts);
 
 	// Load the rest
-	//LoadSaveDataBlock();
-	//ReadDataFromBlock("Loading PedPool \n", CPools::LoadPedPool);
+	if(has3DSPlayerPool) {
+		LoadSaveDataBlock();
+		ReadDataFromBlock("Loading PedPool \n", CPools::LoadPedPool);
+	} else {
+		/* Legacy reStories saves omitted the ped block entirely. Recreate Tony
+		 * near the stored camera so their restored scripts have a valid player;
+		 * native LCS5 saves restore the complete player instead. */
+		if(!CStreaming::HasModelLoaded(MI_PLAYER)) {
+			CStreaming::RequestSpecialModel(MI_PLAYER, "player",
+				STREAMFLAGS_DONT_REMOVE | STREAMFLAGS_DEPENDENCY);
+			CStreaming::LoadAllRequestedModels(false);
+		}
+		CPlayerPed::SetupPlayerPed(0);
+		CPlayerPed *player = CWorld::Players[0].m_pPed;
+		/* SetupPlayerPed defaults to the main map.  Legacy saves still contain
+		 * currArea and the saved camera position, so assign the restored area
+		 * before resolving its floor.  Otherwise an interior save creates Tony
+		 * in the exterior world while scripts correctly remain in the safehouse. */
+		player->m_area = CGame::currArea;
+		CVector position = TheCamera.GetPosition();
+		position.z = CWorld::FindGroundZForCoord(position.x, position.y) +
+			player->GetDistanceFromCentreOfMassToBaseOfModel();
+		player->SetPosition(position);
+		player->CharCreatedBy = MISSION_CHAR;
+	}
+	/* Script globals are loaded before PedPool.  Recreate LCS's runtime player
+	 * handle now that the current Tony has a definitive pool reference. */
+	CTheScripts::RebindPlayerPedScriptHandle();
 	LoadSaveDataBlock();
 	ReadDataFromBlock("Loading Garages \n", CGarages::Load);
-	//LoadSaveDataBlock();
-	//ReadDataFromBlock("Loading GameLogic \n", CGameLogic::Load);
-	//LoadSaveDataBlock();
-	//ReadDataFromBlock("Loading Vehicles \n", CPools::LoadVehiclePool);
-	//LoadSaveDataBlock();
+	if(hasLCSNativeBlocks) {
+		LoadSaveDataBlock();
+		ReadDataFromBlock("Loading Vehicles \n", CPools::LoadVehiclePool);
+	}
 	CProjectileInfo::RemoveAllProjectiles();
 	CObject::DeleteAllTempObjects();
-	//ReadDataFromBlock("Loading Objects \n", CPools::LoadObjectPool);
-	//LoadSaveDataBlock();
-	//ReadDataFromBlock("Loading Paths \n", ThePaths.Load);
-	//LoadSaveDataBlock();
-	//ReadDataFromBlock("Loading Cranes \n", CCranes::Load);
-	//LoadSaveDataBlock();
-	//ReadDataFromBlock("Loading Pickups \n", CPickups::Load);
-	//LoadSaveDataBlock();
-	//ReadDataFromBlock("Loading Phoneinfo \n", gPhoneInfo.Load);
-	//LoadSaveDataBlock();
-	//ReadDataFromBlock("Loading Restart \n", CRestart::LoadAllRestartPoints);
-	//LoadSaveDataBlock();
-	//ReadDataFromBlock("Loading Radar Blips \n", CRadar::LoadAllRadarBlips);
-	//LoadSaveDataBlock();
-	//ReadDataFromBlock("Loading Zones \n", CTheZones::LoadAllZones);
-	//LoadSaveDataBlock();
-	//ReadDataFromBlock("Loading Gang Data \n", CGangs::LoadAllGangData);
-	//LoadSaveDataBlock();
-	//ReadDataFromBlock("Loading Car Generators \n", CTheCarGenerators::LoadAllCarGenerators);
-	//CParticle::ReloadConfig();
-	//LoadSaveDataBlock();
-	//ReadDataFromBlock("Loading Particles \n", CParticleObject::LoadParticle);
-	//LoadSaveDataBlock();
-	//ReadDataFromBlock("Loading AudioScript Objects \n", cAudioScriptObject::LoadAllAudioScriptObjects);
-	//LoadSaveDataBlock();
-	//ReadDataFromBlock("Loading ScriptPaths \n", CScriptPaths::Load);
+	if(hasLCSNativeBlocks) {
+		LoadSaveDataBlock();
+		ReadDataFromBlock("Loading Objects \n", CPools::LoadObjectPool);
+		LoadSaveDataBlock();
+		ReadDataFromBlock("Loading Paths \n", ThePaths.Load);
+		LoadSaveDataBlock();
+		ReadDataFromBlock("Loading Cranes \n", CCranes::Load);
+		LoadSaveDataBlock();
+		ReadDataFromBlock("Loading Pickups \n", CPickups::Load);
+		LoadSaveDataBlock();
+		ReadDataFromBlock("Loading Phoneinfo \n", gPhoneInfo.Load);
+		LoadSaveDataBlock();
+		ReadDataFromBlock("Loading Restart \n", CRestart::LoadAllRestartPoints);
+		LoadSaveDataBlock();
+		ReadDataFromBlock("Loading Radar Blips \n", CRadar::LoadAllRadarBlips);
+		LoadSaveDataBlock();
+		ReadDataFromBlock("Loading Zones \n", CTheZones::LoadAllZones);
+		LoadSaveDataBlock();
+		ReadDataFromBlock("Loading Gang Data \n", CGangs::LoadAllGangData);
+		LoadSaveDataBlock();
+		ReadDataFromBlock("Loading Car Generators \n", CTheCarGenerators::LoadAllCarGenerators);
+		LoadSaveDataBlock();
+		ReadDataFromBlock("Loading Particles \n", CParticleObject::LoadParticle);
+		LoadSaveDataBlock();
+		ReadDataFromBlock("Loading AudioScript Objects \n", cAudioScriptObject::LoadAllAudioScriptObjects);
+	}
 	LoadSaveDataBlock();
 	ReadDataFromBlock("Loading Player Info \n", CWorld::Players[CWorld::PlayerInFocus].LoadPlayerInfo);
 	LoadSaveDataBlock();
 	ReadDataFromBlock("Loading Stats \n", CStats::LoadStats);
-	//LoadSaveDataBlock();
-	//ReadDataFromBlock("Loading Set Pieces \n", CSetPieces::Load);
-	//LoadSaveDataBlock();
-	//ReadDataFromBlock("Loading Streaming Stuff \n", CStreaming::MemoryCardLoad);
-	//LoadSaveDataBlock();
-	//ReadDataFromBlock("Loading PedType Stuff \n", CPedType::Load);
-	CStreaming::ReInit();
+	if(hasLCSNativeBlocks) {
+		LoadSaveDataBlock();
+		ReadDataFromBlock("Loading Streaming Stuff \n", CStreaming::MemoryCardLoad);
+		LoadSaveDataBlock();
+		ReadDataFromBlock("Loading PedType Stuff \n", CPedType::Load);
+	}
+	/* The native LCS memory-card load proceeds directly from restored streaming
+	 * and ped-type blocks to menu finalisation and one script-processing pass. */
 	DMAudio.SetMusicMasterVolume(FrontEndMenuManager.m_PrefsMusicVolume);
 	DMAudio.SetEffectsMasterVolume(FrontEndMenuManager.m_PrefsSfxVolume);
 	if (!CloseFile(file)) {
@@ -434,7 +610,12 @@ GenericLoad()
 		return false;
 	}
 
-	//DoGameSpecificStuffAfterSucessLoad();
+	DoGameSpecificStuffAfterSucessLoad();
+	CTheScripts::RebindWorldDoorScriptHandles(true);
+	/* Native LCS performs one resident-script pass before reporting load success;
+	 * this is where safehouse doors, pickups and building swaps are recreated. */
+	CTheScripts::Process();
+	RestoreLCSHiddenPackageRewards();
 	debug("Game successfully loaded \n");
 	return true;
 }
@@ -651,7 +832,7 @@ RestoreForStartLoad()
 			PcSaveHelper.nErrorCode = SAVESTATUS_ERR_LOAD_CLOSE;
 		return false;
 	} else {
-		uint8 *_buf = buf + sizeof(int32) + sizeof(wchar[24]) + sizeof(SYSTEMTIME) + sizeof(SIZE_OF_ONE_GAME_IN_BYTES);
+		uint8 *_buf = buf + sizeof(int32) + sizeof(wchar[SAVE_NAME_FIELD_WCHARS]) + sizeof(SYSTEMTIME) + sizeof(SIZE_OF_ONE_GAME_IN_BYTES);
 		ReadDataFromBufferPointer(_buf, CGame::currLevel);
 		ReadDataFromBufferPointer(_buf, TheCamera.GetMatrix().GetPosition().x);
 		ReadDataFromBufferPointer(_buf, TheCamera.GetMatrix().GetPosition().y);

@@ -2514,12 +2514,26 @@ CAutomobile::PreRender(void)
 			}
 		}
 
-		if(this == FindPlayerVehicle() && !alarmOff){
+		CVehicle *playerVehicle = FindPlayerVehicle();
+		if(playerVehicle != nil && this != playerVehicle && !alarmOff &&
+		   (Damage.GetLightStatus(VEHLIGHT_FRONT_LEFT) == LIGHT_STATUS_OK ||
+		    Damage.GetLightStatus(VEHLIGHT_FRONT_RIGHT) == LIGHT_STATUS_OK)){
+			CVector toPlayer = playerVehicle->GetPosition() - GetPosition();
+			float distToPlayer = toPlayer.Magnitude2D();
+			float facingPlayer = GetForward().x*toPlayer.x + GetForward().y*toPlayer.y;
+			if(distToPlayer > 0.001f && distToPlayer < 18.0f && facingPlayer > 0.15f*distToPlayer){
+				CVector lightPos = GetPosition() + GetForward()*headLightPos.y + GetUp()*headLightPos.z;
+				CPointLights::AddLight(CPointLights::LIGHT_POINT, lightPos, GetForward(),
+					18.0f, 1.0f, 1.0f, 0.9f, CPointLights::FOG_NONE, true, true);
+			}
+		}
+
+		if(this == playerVehicle && !alarmOff){
 			if(Damage.GetLightStatus(VEHLIGHT_FRONT_LEFT) == LIGHT_STATUS_OK ||
 			   Damage.GetLightStatus(VEHLIGHT_FRONT_RIGHT) == LIGHT_STATUS_OK)
 				CPointLights::AddLight(CPointLights::LIGHT_DIRECTIONAL, GetPosition(), GetForward(),
 					gHeadlightRange, gHeadlightColour.x, gHeadlightColour.y, gHeadlightColour.z,
-					FindPlayerVehicle()->m_vecMoveSpeed.MagnitudeSqr2D() < sq(0.45f) ? CPointLights::FOG_NORMAL : CPointLights::FOG_NONE,
+				playerVehicle->m_vecMoveSpeed.MagnitudeSqr2D() < sq(0.45f) ? CPointLights::FOG_NORMAL : CPointLights::FOG_NONE,
 					false);
 			CVector pos = GetPosition() - 4.0f*GetForward();
 			if(Damage.GetLightStatus(VEHLIGHT_REAR_LEFT) == LIGHT_STATUS_OK ||

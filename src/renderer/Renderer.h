@@ -1,14 +1,25 @@
 #pragma once
 
 class CEntity;
+class CSimpleModelInfo;
 
 #ifdef FIX_BUGS
+#ifdef _3DS
+/* The sector scan must reach the 1.2x vegetation envelope.  Individual world
+ * models are still culled at their per-class budgets in Renderer.cpp. */
+#define LOD_DISTANCE (360.0f*TheCamera.LODDistMultiplier)
+#else
 #define LOD_DISTANCE (300.0f*TheCamera.LODDistMultiplier)
+#endif
 #else
 #define LOD_DISTANCE 300.0f
 #endif
 #define FADE_DISTANCE 20.0f
+#ifdef _3DS
+#define STREAM_DISTANCE 24.0f
+#else
 #define STREAM_DISTANCE 30.0f
+#endif
 
 extern bool gbShowPedRoadGroups;
 extern bool gbShowCarRoadGroups;
@@ -45,6 +56,11 @@ class CRenderer
 public:
 	static float ms_lodDistScale;
 	static bool m_loadingPriority;
+#ifdef _3DS
+	static float GetNew3DSWorldLodScale(CSimpleModelInfo *mi, int16 modelId, CEntity *ent = nil);
+	static float GetNew3DSWorldDistance(CEntity *ent, float originDistance);
+	static bool ShouldRenderAttachedWindowLights(CEntity *ent);
+#endif
 
 	static void Init(void);
 	static void Shutdown(void);

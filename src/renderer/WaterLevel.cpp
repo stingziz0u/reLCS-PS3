@@ -511,6 +511,11 @@ CWaterLevel::CreateWavyAtomic()
 		ms_pWavyAtomic = RpAtomicCreate();
 		RpAtomicSetGeometry(ms_pWavyAtomic, wavyGeometry, 0);
 		RpAtomicSetFrame(ms_pWavyAtomic, wavyFrame);
+#ifdef _3DS
+		/* PICA200's default byte-prelight path saturates the dynamic near-water
+		 * mesh.  Use the already stable texture/material-colour path instead. */
+		RpMatFXAtomicEnableEffects(ms_pWavyAtomic);
+#endif
 		RpMaterialDestroy(wavyMaterial);
 		RpGeometryDestroy(wavyGeometry);
 	}
@@ -924,7 +929,7 @@ CWaterLevel::RenderWater()
 	
 	if ( !CGame::CanSeeWaterFromCurrArea() )
 		return;
-	
+
 	_GetCamBounds(&bUseCamStartY, &bUseCamEndY, &bUseCamStartX, &bUseCamEndX);
 
 	float fHugeSectorMaxRenderDist    = _GetWaterDrawDist();
@@ -1099,9 +1104,9 @@ CWaterLevel::RenderWater()
 			{
 				CVector2D vecExtraHugeSectorCentre(fX + EXTRAHUGE_SECTOR_SIZE/2, fY + EXTRAHUGE_SECTOR_SIZE/2);
 				
-				float fCamDistToSector = (vecExtraHugeSectorCentre - camPos).Magnitude();
+				float fCamDistToSectorSqr = (vecExtraHugeSectorCentre - camPos).MagnitudeSqr();
 				
-				if ( fCamDistToSector < fHugeSectorMaxRenderDistSqr )
+				if ( fCamDistToSectorSqr < fHugeSectorMaxRenderDistSqr )
 				{
 					if ( TheCamera.IsSphereVisible(CVector(vecExtraHugeSectorCentre.x, vecExtraHugeSectorCentre.y, 0.0f), SectorRadius(EXTRAHUGE_SECTOR_SIZE)) )
 					{
@@ -1118,9 +1123,9 @@ CWaterLevel::RenderWater()
 			{
 				CVector2D vecExtraHugeSectorCentre(fX + EXTRAHUGE_SECTOR_SIZE/2, -(fY + EXTRAHUGE_SECTOR_SIZE/2));
 				
-				float fCamDistToSector = (vecExtraHugeSectorCentre - camPos).Magnitude();
+				float fCamDistToSectorSqr = (vecExtraHugeSectorCentre - camPos).MagnitudeSqr();
 				
-				if ( fCamDistToSector < fHugeSectorMaxRenderDistSqr )
+				if ( fCamDistToSectorSqr < fHugeSectorMaxRenderDistSqr )
 				{
 					if ( TheCamera.IsSphereVisible(CVector(vecExtraHugeSectorCentre.x, vecExtraHugeSectorCentre.y, 0.0f), SectorRadius(EXTRAHUGE_SECTOR_SIZE)) )
 					{
@@ -1147,9 +1152,9 @@ CWaterLevel::RenderWater()
 			{
 				CVector2D vecExtraHugeSectorCentre(fX + EXTRAHUGE_SECTOR_SIZE/2, fY + EXTRAHUGE_SECTOR_SIZE/2);
 				
-				float fCamDistToSector = (vecExtraHugeSectorCentre - camPos).Magnitude();
+				float fCamDistToSectorSqr = (vecExtraHugeSectorCentre - camPos).MagnitudeSqr();
 				
-				if ( fCamDistToSector < fHugeSectorMaxRenderDistSqr )
+				if ( fCamDistToSectorSqr < fHugeSectorMaxRenderDistSqr )
 				{
 					if ( TheCamera.IsSphereVisible(CVector(vecExtraHugeSectorCentre.x, vecExtraHugeSectorCentre.y, 0.0f), SectorRadius(EXTRAHUGE_SECTOR_SIZE)) )
 					{
@@ -1166,11 +1171,11 @@ CWaterLevel::RenderWater()
 			{
 				CVector2D vecExtraHugeSectorCentre(-(fX2 + EXTRAHUGE_SECTOR_SIZE/2), fY + EXTRAHUGE_SECTOR_SIZE/2);
 				
-				float fCamDistToSector = (vecExtraHugeSectorCentre - camPos).Magnitude();
+				float fCamDistToSectorSqr = (vecExtraHugeSectorCentre - camPos).MagnitudeSqr();
 				
-				if ( fCamDistToSector < fHugeSectorMaxRenderDistSqr )
+				if ( fCamDistToSectorSqr < fHugeSectorMaxRenderDistSqr )
 				{
-					if ( TheCamera.IsSphereVisible(CVector(vecExtraHugeSectorCentre.x, vecExtraHugeSectorCentre.x, 0.0f), SectorRadius(EXTRAHUGE_SECTOR_SIZE)) )
+					if ( TheCamera.IsSphereVisible(CVector(vecExtraHugeSectorCentre.x, vecExtraHugeSectorCentre.y, 0.0f), SectorRadius(EXTRAHUGE_SECTOR_SIZE)) )
 					{
 						RenderOneFlatExtraHugeWaterPoly(
 							vecExtraHugeSectorCentre.x - EXTRAHUGE_SECTOR_SIZE/2,
@@ -1216,7 +1221,7 @@ CWaterLevel::RenderTransparentWater(void)
 	
 	if ( !CGame::CanSeeWaterFromCurrArea() )
 		return;
-	
+
 	PUSH_RENDERGROUP("CWaterLevel::RenderTransparentWater");
 
 	float fWaterDrawDist      = _GetWavyDrawDist();
@@ -1740,7 +1745,12 @@ CWaterLevel::RenderOneWavySector(float fX, float fY, float fZ, RwRGBA const &col
 				wavyTexCoords->u = float(i) * move + TEXTURE_ADDV;
 				wavyTexCoords->v = float(j) * move + TEXTURE_ADDU;
 
+#ifdef _3DS
+				const RwRGBA white = { 255, 255, 255, 255 };
+				RwRGBAAssign(wavyPreLight, &white);
+#else
 				RwRGBAAssign(wavyPreLight, &color);
+#endif
 
 				if (i > 0 && i < 16 && j > 0 && j < 16)
 				{
@@ -1780,6 +1790,12 @@ CWaterLevel::RenderOneWavySector(float fX, float fY, float fZ, RwRGBA const &col
 		}
 
 		RpGeometryUnlock(wavyGeometry);
+
+#ifdef _3DS
+		/* The MatFX texture-only combiner deliberately ignores unreliable
+		 * per-vertex RGB, so carry the timecycle water tint in the material. */
+		RpMaterialSetColor(RpGeometryGetMaterial(wavyGeometry, 0), &color);
+#endif
 	}
 
 	float fCentreX = fX + (SMALL_SECTOR_SIZE / 2);
@@ -1802,7 +1818,7 @@ CWaterLevel::RenderOneWavySector(float fX, float fY, float fZ, RwRGBA const &col
 			pos.z = fZ;
 	
 			RwFrameTranslate(RpAtomicGetFrame(ms_pWavyAtomic), &pos, rwCOMBINEREPLACE);
-		
+
 			RpAtomicRender(ms_pWavyAtomic);
 		}
 	}
@@ -2940,11 +2956,17 @@ CWaterLevel::RenderAndEmptyRenderBuffer()
 	{
 		LittleTest();
 
+#ifdef _3DS
+		rw::c3d::setIm3DBuffered(true);
+#endif
 		if ( RwIm3DTransform(TempBufferRenderVertices, TempBufferVerticesStored, nil, rwIM3D_VERTEXUV) )
 		{
 			RwIm3DRenderIndexedPrimitive(rwPRIMTYPETRILIST, TempBufferRenderIndexList, TempBufferIndicesStored);
 			RwIm3DEnd();
 		}
+#ifdef _3DS
+		rw::c3d::setIm3DBuffered(false);
+#endif
 	}
 	
 	TempBufferIndicesStored = 0;

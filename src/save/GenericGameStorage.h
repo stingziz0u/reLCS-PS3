@@ -5,6 +5,13 @@
 
 #define SLOT_COUNT (8)
 
+enum {
+	SAVE_NAME_FIELD_WCHARS = 24,
+	SAVE_NAME_KEY_OFFSET = 14,
+	SAVE_NAME_KEY_LENGTH = 8
+};
+#define SAVE_NAME_KEY_MARKER ((wchar)0xFFFF)
+
 void InitRadioStationPositionList();
 int32 GetSavedRadioStationPosition(int32 station);
 void PopulateRadioStationPositionList();
@@ -19,6 +26,8 @@ void MakeSpaceForSizeInBufferPointer(uint8 *&presize, uint8 *&buf, uint8 *&posts
 void CopySizeAndPreparePointer(uint8 *&buf, uint8 *&postbuf, uint8 *&postbuf2, uint32 &unused, uint32 &size);
 void DoGameSpecificStuffBeforeSave();
 void MakeValidSaveName(int32 slot);
+void EncodeSaveNameField(wchar *field, const wchar *title, const char *gxtKey);
+void DecodeSaveNameField(wchar *name, const wchar *field);
 wchar *GetSavedGameDateAndTime(int32 slot);
 wchar *GetNameOfSavedGame(int32 slot);
 bool CheckDataNotCorrupt(int32 slot, char *name);

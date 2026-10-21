@@ -164,6 +164,10 @@ RpAnimBlendClumpInitSkinned(RpClump *clump)
 	clumpData->SetNumberOfBones(numBones);
 	hier = GetAnimHierarchyFromSkinClump(clump);
 	assert(hier);
+	/* Cutscene characters have named HeadNub/finger/toe nodes which are not in
+	 * the normal ped BoneTag table.  Keep the hierarchy-to-frame association so
+	 * tagless IFP sequences can be matched against the actual DFF node names. */
+	hier->attach();
 	memset(boneTab, 0, sizeof(boneTab));
 	SkinGetBonePositionsToTable(clump, boneTab);
 
@@ -413,9 +417,20 @@ AnimBlendFrameData*
 RpAnimBlendClumpFindFrame(RpClump *clump, const char *name)
 {
 	pFrameDataFound = nil;
-	if(IsClumpSkinned(clump))
-		(*RPANIMBLENDCLUMPDATA(clump))->ForAllFrames(FrameFindByNameCBskin, (void*)name);
-	else
+	if(IsClumpSkinned(clump)){
+		CAnimBlendClumpData *clumpData = *RPANIMBLENDCLUMPDATA(clump);
+		RpHAnimHierarchy *hier = GetAnimHierarchyFromSkinClump(clump);
+		if(hier){
+			for(int i = 0; i < clumpData->numFrames; i++){
+				RwFrame *boneFrame = hier->nodeInfo[i].frame;
+				const char *nodeName = boneFrame ? GetFrameNodeName(boneFrame) : nil;
+				if(nodeName && CGeneral::faststricmp(nodeName, name) == 0){
+					pFrameDataFound = &clumpData->frames[i];
+					break;
+				}
+			}
+		}
+	}else
 		(*RPANIMBLENDCLUMPDATA(clump))->ForAllFrames(FrameFindByNameCBnonskin, (void*)name);
 	return pFrameDataFound;
 }

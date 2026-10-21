@@ -1777,7 +1777,14 @@ CPhysical::ProcessCollisionSectorList(CPtrList *lists)
 			skipCollision = false;
 			altcollision = false;
 
-			if(B->IsBuilding())
+			/* ProcessCollisionSectorList may be entered with either member of the
+			 * pair as A.  Suppress the SALH5 boarding pair symmetrically so the
+			 * helicopter cannot apply an impulse before CPed gets its own collision
+			 * callback.  Collision with the dock and every other entity stays live. */
+			if((A->IsPed() && Aped->bFinaleHeliBoardingProtected && Aped->m_carInObjective == B) ||
+			   (B->IsPed() && Bped->bFinaleHeliBoardingProtected && Bped->m_carInObjective == A))
+				skipCollision = true;
+			else if(B->IsBuilding())
 				skipCollision = false;
 			else if(A->IsObject() && Aobj->bIsStreetLight &&
 			  (B->IsVehicle() || B->IsPed()) &&

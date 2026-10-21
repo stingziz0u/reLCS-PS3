@@ -138,7 +138,12 @@ CBaseModelInfo::SetModelName(const char *name)
 void
 CBaseModelInfo::DeleteChunk(void)
 {
-	// BUG? what if we're not using chunks?
+	/* m_name and m_chunk share a union.  Normal-file builds keep a persistent
+	 * name buffer here and reuse the static model stores after New Game.  Do
+	 * not unregister/free that buffer as though it were a resource chunk. */
+	if(!gUseChunkFiles)
+		return;
+
 	if(m_chunk){
 		CStreaming::UnregisterPointer(&m_chunk, 2);
 		cSmallHeap::msInstance.Free(m_chunk);

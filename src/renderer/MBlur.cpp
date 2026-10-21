@@ -73,6 +73,12 @@ CMBlur::MotionBlurOpen(RwCamera *cam)
 #else
 	RwRect rect = { 0, 0, 0, 0 };
 
+#ifdef _3DS
+	/* Keep flat colour/status overlays, but never allocate or copy a full
+	 * previous-frame raster on New3DS. */
+	BlurOn = false;
+#endif
+
 	if(pFrontBuffer)
 		MotionBlurClose();
 	

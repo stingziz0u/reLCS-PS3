@@ -20,6 +20,7 @@
 #include "DMAudio.h"
 #include "EmergencyPed.h"
 #include "FileMgr.h"
+#include "FinalMissionMusic.h"
 #include "Frontend.h"
 #include "General.h"
 #include "GenericGameStorage.h"
@@ -70,6 +71,8 @@ tUsedObject CTheScripts::UsedObjectArray[MAX_NUM_USED_OBJECTS];
 int32 CTheScripts::MultiScriptArray[MAX_NUM_MISSION_SCRIPTS];
 tBuildingSwap CTheScripts::BuildingSwapArray[MAX_NUM_BUILDING_SWAPS];
 CEntity* CTheScripts::InvisibilitySettingArray[MAX_NUM_INVISIBILITY_SETTINGS];
+uint32 CTheScripts::InvisibilitySettingPoolType[MAX_NUM_INVISIBILITY_SETTINGS];
+uint32 CTheScripts::InvisibilitySettingPoolHandle[MAX_NUM_INVISIBILITY_SETTINGS];
 CStoredLine CTheScripts::aStoredLines[MAX_NUM_STORED_LINES];
 bool CTheScripts::DbgFlag;
 uint32 CTheScripts::OnAMissionFlag;
@@ -114,6 +117,30 @@ uint16 CTheScripts::MostGlobals;
 CVector gVectorSetInLua;
 int CTheScripts::NextScriptCoronaID;
 base::cSList<script_corona> CTheScripts::mCoronas;
+
+void
+RecoverLCSWorldBuildingSwapState(void)
+{
+	/* A loaded game resumes the saved script threads after their one-shot
+	 * declarations, so DECLARE_FORT_STAUNTON_DESTROYED_FLAG is not executed
+	 * again.  In the supported LCS main.scm that declaration lives in a
+	 * separately streamed mission-script section and binds global 4512.  Only
+	 * the main section is resident here, so restore the declared binding rather
+	 * than scanning unrelated resident bytes for an opcode-shaped pattern. */
+	CTheScripts::FSDestroyedFlag = 0;
+	if(CTheScripts::ScriptSpace == nil)
+		return;
+
+	const int32 fortDestroyedGlobal = 4512;
+	if(fortDestroyedGlobal < CTheScripts::GetSizeOfVariableSpace()) {
+		CTheScripts::FSDestroyedFlag = fortDestroyedGlobal;
+		debug("Recovered Fort Staunton destroyed flag at global offset %d\n",
+			fortDestroyedGlobal);
+		return;
+	}
+
+	debug("Could not recover Fort Staunton destroyed flag declaration\n");
+}
 
 #ifdef MISSION_REPLAY
 
@@ -323,15 +350,18 @@ void CMissionCleanup::CheckIfCollisionHasLoadedForMissionObjects()
 				eLevelName level = CTheZones::GetLevelFromPosition(&pVehicle->GetPosition());
 				if (level == LEVEL_GENERIC)
 					level = CGame::currLevel;
-				if (!CColStore::HasCollisionLoaded(level)) {
+				const eVehicleAppearance appearance = pVehicle->GetVehicleAppearance();
+				const bool needsGroundCollision =
+					!pVehicle->IsHeli() && !pVehicle->IsPlane() &&
+					appearance != VEHICLE_APPEARANCE_HELI &&
+					appearance != VEHICLE_APPEARANCE_BOAT &&
+					appearance != VEHICLE_APPEARANCE_PLANE;
+				if (needsGroundCollision && !CColStore::HasCollisionLoaded(level)) {
 					if (!pVehicle->bIsStaticWaitingForCollision) {
-						if (!pVehicle->IsHeli() && !pVehicle->IsPlane() && pVehicle->GetVehicleAppearance() == VEHICLE_APPEARANCE_HELI &&
-							pVehicle->GetVehicleAppearance() == VEHICLE_APPEARANCE_BOAT && pVehicle->GetVehicleAppearance() == VEHICLE_APPEARANCE_PLANE) {
-							printf("*** SLEEPING VEHICLE %i %i\n", m_sEntities[i].id, pVehicle->GetModelIndex());
-							if (!pVehicle->GetIsStatic())
-								pVehicle->RemoveFromMovingList();
-							pVehicle->bIsStaticWaitingForCollision = true;
-						}
+						printf("*** SLEEPING VEHICLE %i %i\n", m_sEntities[i].id, pVehicle->GetModelIndex());
+						if (!pVehicle->GetIsStatic())
+							pVehicle->RemoveFromMovingList();
+						pVehicle->bIsStaticWaitingForCollision = true;
 					}
 				}
 				else {
@@ -1218,6 +1248,7 @@ bool CTheScripts::Init(bool loaddata)
 	CTheScripts::mCoronas.first = nil;
 #endif
 	NumberOfUsedObjects = 0;
+	ResetLCSWorldBuildingSwaps();
 	if (ScriptSpace)
 		Shutdown();
 #ifdef USE_DEBUG_SCRIPT_LOADER
@@ -1301,12 +1332,18 @@ bool CTheScripts::Init(bool loaddata)
 		BuildingSwapArray[i].m_pBuilding = nil;
 		BuildingSwapArray[i].m_nNewModel = -1;
 		BuildingSwapArray[i].m_nOldModel = -1;
+		BuildingSwapArray[i].m_nPoolType = 0;
+		BuildingSwapArray[i].m_nPoolHandle = 0;
 	}
-	for (int i = 0; i < MAX_NUM_INVISIBILITY_SETTINGS; i++)
+	for (int i = 0; i < MAX_NUM_INVISIBILITY_SETTINGS; i++) {
 		InvisibilitySettingArray[i] = nil;
+		InvisibilitySettingPoolType[i] = 0;
+		InvisibilitySettingPoolHandle[i] = 0;
+	}
 	if (loaddata) {
 		printf("loaddata = true\n");
 		retval = GenericLoad();
+		RecoverLCSWorldBuildingSwapState();
 	}
 	for (int i = 0; i < MAX_ALLOWED_COLLISIONS; i++)
 		AllowedCollision[i] = 0;
@@ -1639,7 +1676,8 @@ int8 CRunningScript::ProcessCommands0To99(int32 command)
 		*/
 	case COMMAND_WAIT:
 		CollectParameters(&m_nIp, 1);
-		m_nWakeTime = CTimer::GetTimeInMilliseconds() + GET_INTEGER_PARAM(0);
+		m_nWakeTime = CTimer::GetTimeInMilliseconds() +
+			(CMessages::ConsumeMissionTitleScriptWait() ? 1500 : GET_INTEGER_PARAM(0));
 		m_bSkipWakeTime = false;
 		return 1;
 	case COMMAND_GOTO:
@@ -2023,6 +2061,12 @@ int8 CRunningScript::ProcessCommands0To99(int32 command)
 	{
 		int32* ptr = GetPointerToScriptVariable(&m_nIp, VAR_GLOBAL);
 		CollectParameters(&m_nIp, 1);
+		static const int32 LCS_FINALE_CHECKPOINT_GLOBAL = 535;
+		if (!CGeneral::faststricmp(m_abScriptName, "SALH5") &&
+		    ptr == (int32*)&CTheScripts::ScriptSpace[LCS_FINALE_CHECKPOINT_GLOBAL * sizeof(int32)] &&
+		    GET_INTEGER_PARAM(0) == 0 &&
+		    FinalMissionMusic::ConsumeLCSFinaleBoatCheckpointRequest())
+			*ptr = 1;
 		UpdateCompareFlag(*ptr == GET_INTEGER_PARAM(0));
 		return 0;
 	}
@@ -2111,6 +2155,8 @@ int8 CRunningScript::ProcessCommands0To99(int32 command)
 		/* Check COMMAND_GOTO note. */
 		return 0;
 	case COMMAND_TERMINATE_THIS_SCRIPT:
+		if (!CGeneral::faststricmp(m_abScriptName, "SALH5"))
+			FinalMissionMusic::EndLCSFinale();
 		if (m_bMissionFlag)
 			CTheScripts::bAlreadyRunningAMissionScript = false;
 		RemoveScriptFromList(&CTheScripts::pActiveScripts);
@@ -2881,8 +2927,10 @@ int8 CRunningScript::ProcessCommands100To199(int32 command)
 			boat->AutoPilot.m_nCarMission = MISSION_NONE;
 			boat->AutoPilot.m_nTempAction = TEMPACT_NONE;
 			boat->AutoPilot.m_nCruiseSpeed = boat->AutoPilot.m_fMaxTrafficSpeed = 20.0f;
-			if (m_bIsMissionScript)
-				boat->bIsStaticWaitingForCollision = true;
+			/* Boats use water buoyancy and must not wait for streamed ground
+			 * collision.  Keeping them static here can leave scripted boats out
+			 * of the normal update/render path while attached entities survive. */
+			boat->bIsStaticWaitingForCollision = false;
 			CWorld::Add(boat);
 			handle = CPools::GetVehiclePool()->GetIndex(boat);
 		}
@@ -3133,7 +3181,11 @@ int8 CRunningScript::ProcessCommands100To199(int32 command)
 		return 0;
 	case COMMAND_PRINT_BIG:
 	{
+		const char *rawKey = (const char*)&CTheScripts::ScriptSpace[m_nIp];
 		wchar* key = CTheScripts::GetTextByKeyFromScript(&m_nIp);
+		if (!CGeneral::faststricmp(m_abScriptName, "SALH5") &&
+		    !strncmp(rawKey, "M_FAIL", KEY_LENGTH_IN_SCRIPT))
+			FinalMissionMusic::EndLCSFinale();
 #ifdef MISSION_REPLAY
 		if (strcmp((char*)&CTheScripts::ScriptSpace[m_nIp - KEY_LENGTH_IN_SCRIPT], "M_FAIL") == 0) {
 			if (AllowMissionReplay == MISSION_RETRY_STAGE_WAIT_FOR_TIMER_AFTER_RESTART)
@@ -3148,21 +3200,60 @@ int8 CRunningScript::ProcessCommands100To199(int32 command)
 	}
 	case COMMAND_PRINT:
 	{
+		const char *rawKey = (const char*)&CTheScripts::ScriptSpace[m_nIp];
 		wchar* key = CTheScripts::GetTextByKeyFromScript(&m_nIp);
+		if (!CGeneral::faststricmp(m_abScriptName, "SALH5")) {
+			if (!strncmp(rawKey, "SALH510", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::StartLCSFinaleFM();
+			else if (!strncmp(rawKey, "SALH515", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::EnterLCSBoatChase();
+			else if (!strncmp(rawKey, "SALH522", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::BeginLCSLighthouseTransition();
+			else if (!strncmp(rawKey, "SALH53A", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::BeginLCSLighthouseClimax();
+			else if (!strncmp(rawKey, "SALH5TD", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::BeginLCSLighthouseBattle();
+		}
 		CollectParameters(&m_nIp, 2);
 		CMessages::AddMessage(key, GET_INTEGER_PARAM(0), GET_INTEGER_PARAM(1));
 		return 0;
 	}
 	case COMMAND_PRINT_NOW:
 	{
+		const char *rawKey = (const char*)&CTheScripts::ScriptSpace[m_nIp];
 		wchar* key = CTheScripts::GetTextByKeyFromScript(&m_nIp);
+		if (!CGeneral::faststricmp(m_abScriptName, "SALH5")) {
+			if (!strncmp(rawKey, "SALH510", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::StartLCSFinaleFM();
+			else if (!strncmp(rawKey, "SALH515", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::EnterLCSBoatChase();
+			else if (!strncmp(rawKey, "SALH522", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::BeginLCSLighthouseTransition();
+			else if (!strncmp(rawKey, "SALH53A", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::BeginLCSLighthouseClimax();
+			else if (!strncmp(rawKey, "SALH5TD", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::BeginLCSLighthouseBattle();
+		}
 		CollectParameters(&m_nIp, 2);
 		CMessages::AddMessageJumpQ(key, GET_INTEGER_PARAM(0), GET_INTEGER_PARAM(1));
 		return 0;
 	}
 	case COMMAND_PRINT_SOON:
 	{
+		const char *rawKey = (const char*)&CTheScripts::ScriptSpace[m_nIp];
 		wchar* key = CTheScripts::GetTextByKeyFromScript(&m_nIp);
+		if (!CGeneral::faststricmp(m_abScriptName, "SALH5")) {
+			if (!strncmp(rawKey, "SALH510", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::StartLCSFinaleFM();
+			else if (!strncmp(rawKey, "SALH515", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::EnterLCSBoatChase();
+			else if (!strncmp(rawKey, "SALH522", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::BeginLCSLighthouseTransition();
+			else if (!strncmp(rawKey, "SALH53A", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::BeginLCSLighthouseClimax();
+			else if (!strncmp(rawKey, "SALH5TD", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::BeginLCSLighthouseBattle();
+		}
 		CollectParameters(&m_nIp, 2);
 		CMessages::AddMessageSoon(key, GET_INTEGER_PARAM(0), GET_INTEGER_PARAM(1));
 		return 0;

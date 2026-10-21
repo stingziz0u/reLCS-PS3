@@ -598,6 +598,9 @@ void
 CPed::ClearObjective(void)
 {
 	if (IsPedInControl() || m_nPedState == PED_DRIVING) {
+		if (bFinaleHeliBoardingProtected)
+			bAffectedByGravity = true;
+		bFinaleHeliBoardingProtected = false;
 		m_objective = OBJECTIVE_NONE;
 		m_pedInObjective = nil;
 		m_carInObjective = nil;
@@ -801,6 +804,12 @@ CPed::RestorePreviousObjective(void)
 {
 	if (m_objective == OBJECTIVE_NONE)
 		return;
+
+	if (m_objective == OBJECTIVE_ENTER_CAR_AS_PASSENGER) {
+		if (bFinaleHeliBoardingProtected)
+			bAffectedByGravity = true;
+		bFinaleHeliBoardingProtected = false;
+	}
 
 	if (m_objective != OBJECTIVE_LEAVE_CAR && m_objective != OBJECTIVE_ENTER_CAR_AS_PASSENGER && m_objective != OBJECTIVE_ENTER_CAR_AS_DRIVER
 		&& m_nPedState != PED_CARJACK)
@@ -2661,8 +2670,16 @@ CPed::PedAnimDoorOpenCB(CAnimBlendAssociation* animAssoc, void* arg)
 		((CAutomobile*)veh)->Damage.SetDoorStatus(door, DOOR_STATUS_SWINGING);
 	}
 
-	if (veh->m_vecMoveSpeed.Magnitude() > 0.2f ||
-		veh->IsCar() && veh->GetVehicleAppearance() == VEHICLE_APPEARANCE_HELI && ((CAutomobile*)veh)->m_nWheelsOnGround == 0) {
+	/* Normal entry deliberately throws a ped off a moving vehicle, and also
+	 * throws them off any helicopter whose wheels are not grounded.  SALH5's
+	 * scripted Maverick is intentionally hovering, so that generic check used
+	 * to cancel Massimo's entry immediately after the door-open animation and
+	 * explicitly start HIGHIMPACT_LEFT/RIGHT.  The PSP scene permits this one
+	 * boarding; keep the safety rule unchanged everywhere else. */
+	bool protectedFinaleHeli = ped->bFinaleHeliBoardingProtected && veh->IsRealHeli();
+	if (!protectedFinaleHeli &&
+		(veh->m_vecMoveSpeed.Magnitude() > 0.2f ||
+		 veh->IsCar() && veh->GetVehicleAppearance() == VEHICLE_APPEARANCE_HELI && ((CAutomobile*)veh)->m_nWheelsOnGround == 0)) {
 		ped->QuitEnteringCar();
 		if (ped->m_vehDoor != CAR_DOOR_LF && ped->m_vehDoor != CAR_DOOR_LR)
 			ped->SetFall(1000, ANIM_STD_HIGHIMPACT_LEFT, false);
@@ -4013,6 +4030,17 @@ CPed::SetEnterCar_AllClear(CVehicle *car, uint32 doorNode, uint32 doorFlag)
 	m_pMyVehicle->RegisterReference((CEntity**) &m_pMyVehicle);
 	((CVehicle*)m_pSeekTarget)->m_nNumGettingIn++;
 	bUsesCollision = false;
+	/* The PSP sequence effectively keeps Massimo attached to the hovering
+	 * Maverick while the door/open/get-in animation is playing.  Collision
+	 * suppression alone is not enough here: normal ped gravity still runs
+	 * between LineUpPedWithCar updates and can put him into a fall state when
+	 * the helicopter bobs upward.  Disable only vertical physics for this one
+	 * scripted boarding window; LineUpPedWithCar continues to follow the door. */
+	if (bFinaleHeliBoardingProtected) {
+		bAffectedByGravity = false;
+		bIsInTheAir = false;
+		m_vecMoveSpeed.z = 0.0f;
+	}
 	CVector doorOpenPos = GetPositionToOpenCarDoor(car, m_vehDoor);
 
 	// Because buses have stairs
@@ -4059,6 +4087,10 @@ CPed::EnterCar(void)
 			}
 		}
 		bIsInTheAir = false;
+		if (bFinaleHeliBoardingProtected) {
+			bAffectedByGravity = false;
+			m_vecMoveSpeed.z = 0.0f;
+		}
 		LineUpPedWithCar(LINE_UP_TO_CAR_START);
 		if (veh->IsBike()) {
 			CBike *bike = (CBike*)veh;
@@ -4091,6 +4123,9 @@ void
 CPed::QuitEnteringCar(void)
 {
 	CVehicle *veh = m_pMyVehicle;
+	if (bFinaleHeliBoardingProtected)
+		bAffectedByGravity = true;
+	bFinaleHeliBoardingProtected = false;
 	if (m_pVehicleAnim)
 		m_pVehicleAnim->blendDelta = -1000.0f;
 	

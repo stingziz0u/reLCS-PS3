@@ -33,11 +33,14 @@ public:
 	static tBigMessage BIGMessages[NUMBIGMESSAGES];
 	static tPreviousBrief PreviousBriefs[NUMPREVIOUSBRIEFS];
 	static char PreviousMissionTitle[16]; // unused
+	static bool MissionTitleWaitPending;
 public:
 	static void Init(void);
 	static uint16 GetWideStringLength(wchar *src);
 	static void WideStringCopy(wchar *dst, wchar *src, uint16 size);
 	static bool WideStringCompare(wchar *str1, wchar *str2, uint16 size);
+	static bool IsRaceBigMessage(wchar *text);
+	static bool ConsumeMissionTitleScriptWait(void);
 	static void Process(void);
 	static void Display(void);
 	static void AddMessage(wchar *key, uint32 time, uint16 pos);

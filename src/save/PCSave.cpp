@@ -114,7 +114,7 @@ C_PcSave::PopulateSlotInfo()
 #endif
 		struct {
 			int size;
-			wchar FileName[24];
+			wchar FileName[SAVE_NAME_FIELD_WCHARS];
 			SYSTEMTIME SaveDateTime;
 		} header;
 		sprintf(savename, "%s%i%s", DefaultPCSaveFileName, i + 1, ".b");
@@ -127,9 +127,7 @@ C_PcSave::PopulateSlotInfo()
 			CFileMgr::Read(file, (char*)&header, sizeof(header));
 			if (strncmp((char*)&header, TopLineEmptyFile, sizeof(TopLineEmptyFile)-1) != 0) {
 				Slots[i] = SLOT_OK;
-				memcpy(SlotFileName[i], &header.FileName, sizeof(header.FileName));
-				
-				SlotFileName[i][24] = '\0';
+				DecodeSaveNameField(SlotFileName[i], header.FileName);
 			}
 			CFileMgr::CloseFile(file);
 		}

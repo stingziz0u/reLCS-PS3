@@ -6,6 +6,9 @@
 #include "Timer.h"
 #include "Streaming.h"
 #include "Entity.h"
+#ifdef _3DS
+#include "../../../../common/3ds/CameraOcclusionRender.h"
+#endif
 #include "Object.h"
 #include "World.h"
 #include "Camera.h"
@@ -100,6 +103,9 @@ CEntity::CEntity(void)
 
 CEntity::~CEntity(void)
 {
+#ifdef _3DS
+	CameraOcclusion3DS::Forget(this);
+#endif
 	DeleteRwObject();
 	ResolveReferences();
 }
@@ -109,7 +115,7 @@ CEntity::SetModelIndex(uint32 id)
 {
 	m_modelIndex = id;
 	bIsTreeModel = IsTreeModel(m_modelIndex);
-	bDrawLast |= bIsTreeModel;
+	bDrawLast |= IsLCSVegetationModel(m_modelIndex);
 	bHasPreRenderEffects = HasPreRenderEffects();
 	CreateRwObject();
 }
@@ -119,7 +125,7 @@ CEntity::SetModelIndexNoCreate(uint32 id)
 {
 	m_modelIndex = id;
 	bIsTreeModel = IsTreeModel(m_modelIndex);
-	bDrawLast |= bIsTreeModel;
+	bDrawLast |= IsLCSVegetationModel(m_modelIndex);
 	bHasPreRenderEffects = HasPreRenderEffects();
 }
 
@@ -443,6 +449,9 @@ CEntity::PreRender(void)
 void
 CEntity::Render(void)
 {
+#ifdef _3DS
+	CameraOcclusion3DS::RenderScope cameraFade(this);
+#endif
 	if(m_rwObject){
 #ifdef VIS_DISTANCE_ALPHA
 		if(CVisibilityPlugins::GetObjectDistanceAlpha(m_rwObject) != 0)

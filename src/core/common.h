@@ -438,6 +438,8 @@ void re3_debug(const char *format, ...);
 void re3_trace(const char *filename, unsigned int lineno, const char *func, const char *format, ...);
 void re3_assert(const char *expr, const char *filename, unsigned int lineno, const char *func);
 void re3_usererror(const char *format, ...);
+double re3_wall_time_ms(void);
+void re3_stall_log(const char *format, ...);
 
 #define DEBUGBREAK() __debugbreak();
 
@@ -501,4 +503,3 @@ template<int s, int t> struct check_size {
 #define STR(x)                          STRINGIFY(x)
 #define CONCAT_(x,y) x##y
 #define CONCAT(x,y) CONCAT_(x,y)
-

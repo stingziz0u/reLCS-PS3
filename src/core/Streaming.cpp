@@ -131,6 +131,16 @@ size_t CStreaming::ms_memoryAvailable;
 
 int32 desiredNumVehiclesLoaded = 12;
 
+#ifdef _3DS
+static bool
+ReleaseStreamingAssetForLinearMemory(size_t)
+{
+	/* Textures and geometry share the linear heap.  Let librw discard a whole
+	 * LRU streamed asset before it permanently drops a texture mip level. */
+	return CStreaming::RemoveLeastUsedModel(STREAMFLAGS_20);
+}
+#endif
+
 CEntity *pIslandLODindustEntity;
 CEntity *pIslandLODcomIndEntity;
 CEntity *pIslandLODcomSubEntity;
@@ -220,7 +230,9 @@ CStreaming::Init2(void)
 	ms_disableStreaming = false;
 	ms_memoryUsed = 0;
 	ms_bLoadingBigModel = false;
-
+#ifdef _3DS
+	rw::c3d::TexSetMemoryPressureCallback(ReleaseStreamingAssetForLinearMemory);
+#endif
 	// init channels
 
 	ms_channel[0].state = CHANNELSTATE_IDLE;
@@ -346,6 +358,25 @@ void
 CStreaming::Init(void)
 {
 #ifdef USE_TXD_CDIMAGE
+#ifdef _3DS
+	/* RW_3DS reports texture-compression support, but LCS ships no prebuilt
+	 * txd.img.  Do not let that capability check bypass the proven re3 CD-image
+	 * route: generate the image once, then mount it on subsequent boots. */
+	int txdHandle = CFileMgr::OpenFile("MODELS\\TXD.IMG", "r");
+	if (txdHandle)
+		CFileMgr::CloseFile(txdHandle);
+	if (!CheckVideoCardCaps() && txdHandle) {
+		CdStreamAddImage("MODELS\\TXD.IMG");
+		CStreaming::Init2();
+	} else {
+		CStreaming::Init2();
+		if (CreateTxdImageForVideoCard()) {
+			CStreaming::Shutdown();
+			CdStreamAddImage("MODELS\\TXD.IMG");
+			CStreaming::Init2();
+		}
+	}
+#else
 	if(!CanVideoCardDoDXT()){
 		int txdHandle = CFileMgr::OpenFile("MODELS\\TXD.IMG", "r");
 		if (txdHandle)
@@ -363,6 +394,7 @@ CStreaming::Init(void)
 		}
 	} else
 		CStreaming::Init2();
+#endif
 #else
 	CStreaming::Init2();
 #endif
@@ -384,6 +416,9 @@ CStreaming::ReInit(void)
 void
 CStreaming::Shutdown(void)
 {
+#ifdef _3DS
+	rw::c3d::TexSetMemoryPressureCallback(nil);
+#endif
 	RwFreeAlign(ms_pStreamingBuffer[0]);
 	ms_streamingBufferSize = 0;
 	if(ms_pExtraObjectsDir) {
@@ -404,6 +439,7 @@ CStreaming::Update(void)
 {
 	CStreamingInfo *si, *prev;
 	bool requestedSubway = false;
+	double updateStart = re3_wall_time_ms();
 
 #ifndef MASTER
 	timeProcessingTXD = 0;
@@ -436,8 +472,11 @@ CStreaming::Update(void)
 		StreamZoneModels(FindPlayerCoors());
 	}
 
+	double loadStart = re3_wall_time_ms();
 	LoadRequestedModels();
+	double loadMs = re3_wall_time_ms() - loadStart;
 
+	double collisionStart = re3_wall_time_ms();
 	if(CWorld::Players[0].m_pRemoteVehicle){
 		CColStore::AddCollisionNeededAtPosn(FindPlayerCoors());
 		CColStore::LoadCollision(CWorld::Players[0].m_pRemoteVehicle->GetPosition());
@@ -446,7 +485,7 @@ CStreaming::Update(void)
 		CColStore::LoadCollision(FindPlayerCoors());
 		CColStore::EnsureCollisionIsInMemory(FindPlayerCoors());
 	}
-
+	double collisionMs = re3_wall_time_ms() - collisionStart;
 	// TODO: PrintRequestList
 	//if (CPad::GetPad(1)->GetLeftShoulder2JustDown() && CPad::GetPad(1)->GetRightShoulder1() && CPad::GetPad(1)->GetRightShoulder2())
 	//	PrintRequestList();
@@ -456,6 +495,10 @@ CStreaming::Update(void)
 		if((si->m_flags & (STREAMFLAGS_KEEP_IN_MEMORY|STREAMFLAGS_PRIORITY)) == 0)
 			RemoveModel(si - ms_aInfoForModel);
 	}
+	double updateMs = re3_wall_time_ms() - updateStart;
+	if(updateMs >= 80.0)
+		re3_stall_log("STREAM update %.0f ms load %.0f collision %.0f requested %d priority %d",
+			updateMs, loadMs, collisionMs, ms_numModelsRequested, ms_numPriorityRequests);
 }
 
 void
@@ -487,7 +530,7 @@ CStreaming::LoadCdDirectory(void)
 }
 
 void
-CStreaming::LoadCdDirectory(const char *dirname, int n)
+CStreaming::LoadCdDirectory(const char *dirname, int32 n)
 {
 	int fd, lastID, imgSelector;
 	int modelId;
@@ -611,6 +654,35 @@ RegisterAtomicMemPtrsCB(RpAtomic *atomic, void *data)
 }
 #endif
 
+#ifdef _3DS
+/* EXTENDED_PIPELINES is intentionally disabled on 3DS, but its texture lookup
+ * callback also supplied the non-rendering-specific generic.txd fallback used
+ * by vehicle materials.  Without that fallback shared LCS textures such as
+ * xv_licenseplates and xv_vehiclegrunge become white dummy rasters. */
+static rw::Texture *(*default3DSTextureFindCB)(const char *name);
+
+static rw::Texture*
+Find3DSModelTexture(const char *name)
+{
+	rw::Texture *tex = default3DSTextureFindCB(name);
+	if(tex == nil){
+		int slot = CTxdStore::FindTxdSlot("generic");
+		if(slot >= 0 && CTxdStore::GetSlot(slot)->texDict)
+			tex = CTxdStore::GetSlot(slot)->texDict->find(name);
+	}
+	return tex;
+}
+
+static void
+Install3DSGenericTextureFallback(void)
+{
+	if(default3DSTextureFindCB == nil){
+		default3DSTextureFindCB = rw::Texture::findCB;
+		rw::Texture::findCB = Find3DSModelTexture;
+	}
+}
+#endif
+
 bool
 CStreaming::ConvertBufferToObject(int8 *buf, int32 streamId)
 {
@@ -633,6 +705,10 @@ CStreaming::ConvertBufferToObject(int8 *buf, int32 streamId)
 	if(streamId < STREAM_OFFSET_TXD){
 		// Model
 		mi = CModelInfo::GetModelInfo(streamId);
+
+#ifdef _3DS
+		Install3DSGenericTextureFallback();
+#endif
 
 		// Txd and anim have to be loaded
 		int animId = mi->GetAnimFileIndex();
@@ -658,6 +734,15 @@ CStreaming::ConvertBufferToObject(int8 *buf, int32 streamId)
 
 		PUSH_MEMID(MEMID_STREAM_MODELS);
 		CTxdStore::SetCurrentTxd(mi->GetTxdSlot());
+#ifdef _3DS
+		/* Streamed RenderWare models are self-contained through their assigned TXD
+		 * plus the generic fallback.  LCS vehicle materials still name optional
+		 * PS2/PC environment maps which are deliberately absent from the reduced
+		 * 3DS generic TXD.  Falling through to Image::readMasked for every miss
+		 * performs a case-insensitive SD directory walk once per geometry. */
+		rw::Texture::setLoadTextures(false);
+		rw::Texture::setCreateDummies(true);
+#endif
 		if(mi->IsSimple()){
 			success = CFileLoader::LoadAtomicFile(stream, streamId);
 			// TODO(MIAMI)? complain if file is not pre-instanced. we hardly are interested in that
@@ -674,6 +759,10 @@ CStreaming::ConvertBufferToObject(int8 *buf, int32 streamId)
 				RpClumpForAllAtomics((RpClump*)mi->GetRwObject(), RegisterAtomicMemPtrsCB, nil);
 #endif
 		}
+#ifdef _3DS
+		rw::Texture::setCreateDummies(false);
+		rw::Texture::setLoadTextures(true);
+#endif
 		POP_MEMID();
 		UpdateMemoryUsed();
 
@@ -816,7 +905,15 @@ CStreaming::FinishLoadingLargeFile(int8 *buf, int32 streamId)
 		mi = CModelInfo::GetModelInfo(streamId);
 		PUSH_MEMID(MEMID_STREAM_MODELS);
 		CTxdStore::SetCurrentTxd(mi->GetTxdSlot());
+#ifdef _3DS
+		rw::Texture::setLoadTextures(false);
+		rw::Texture::setCreateDummies(true);
+#endif
 		success = CFileLoader::FinishLoadClumpFile(stream, streamId);
+#ifdef _3DS
+		rw::Texture::setCreateDummies(false);
+		rw::Texture::setLoadTextures(true);
+#endif
 		if(success){
 #ifdef USE_CUSTOM_ALLOCATOR
 			RpClumpForAllAtomics((RpClump*)mi->GetRwObject(), RegisterAtomicMemPtrsCB, nil);
@@ -838,6 +935,13 @@ CStreaming::FinishLoadingLargeFile(int8 *buf, int32 streamId)
 		success = CTxdStore::FinishLoadTxd(streamId - STREAM_OFFSET_TXD, stream);
 		PS3_TXD_HINTS_END();
 		POP_MEMID();
+		if(success && CTxdStore::IsTxdLoadInProgress(streamId - STREAM_OFFSET_TXD)){
+			/* Keep the original TXD/model references and STREAMSTATE_STARTED until
+			 * the remaining textures have been uploaded on later frames. */
+			CTxdStore::RemoveRefWithoutDelete(streamId - STREAM_OFFSET_TXD);
+			RwStreamClose(stream, &mem);
+			return true;
+		}
 		CTxdStore::RemoveRefWithoutDelete(streamId - STREAM_OFFSET_TXD);
 	}else{
 		assert(0 && "invalid streamId");
@@ -1785,6 +1889,9 @@ CStreaming::StreamVehiclesAndPeds(void)
 	int i, model;
 	static int timeBeforeNextLoad = 0;
 	static int modelQualityClass = 0;
+	CPlayerPed *player = FindPlayerPed();
+	if(player == nil || player->m_pWanted == nil)
+		return;
 
 	if(CRecordDataForGame::IsRecording() ||
 	   CRecordDataForGame::IsPlayingBack()
@@ -1794,7 +1901,7 @@ CStreaming::StreamVehiclesAndPeds(void)
 		)
 		return;
 
-	if(FindPlayerPed()->m_pWanted->AreSwatRequired()){
+	if(player->m_pWanted->AreSwatRequired()){
 		RequestModel(MI_ENFORCER, STREAMFLAGS_DONT_REMOVE);
 		RequestModel(MI_SWAT, STREAMFLAGS_DONT_REMOVE);
 	}else{
@@ -1803,7 +1910,7 @@ CStreaming::StreamVehiclesAndPeds(void)
 			SetModelIsDeletable(MI_SWAT);
 	}
 
-	if(FindPlayerPed()->m_pWanted->AreFbiRequired()){
+	if(player->m_pWanted->AreFbiRequired()){
 		RequestModel(MI_FBICAR, STREAMFLAGS_DONT_REMOVE);
 		RequestModel(MI_FBI, STREAMFLAGS_DONT_REMOVE);
 	}else{
@@ -1812,7 +1919,7 @@ CStreaming::StreamVehiclesAndPeds(void)
 			SetModelIsDeletable(MI_FBI);
 	}
 
-	if(FindPlayerPed()->m_pWanted->AreArmyRequired()){
+	if(player->m_pWanted->AreArmyRequired()){
 		RequestModel(MI_RHINO, STREAMFLAGS_DONT_REMOVE);
 		RequestModel(MI_BARRACKS, STREAMFLAGS_DONT_REMOVE);
 		RequestModel(MI_ARMY, STREAMFLAGS_DONT_REMOVE);
@@ -1823,7 +1930,7 @@ CStreaming::StreamVehiclesAndPeds(void)
 			SetModelIsDeletable(MI_ARMY);
 	}
 
-	if(FindPlayerPed()->m_pWanted->NumOfHelisRequired() > 0)
+	if(player->m_pWanted->NumOfHelisRequired() > 0)
 		RequestModel(MI_CHOPPER, STREAMFLAGS_DONT_REMOVE);
 	else
 		SetModelIsDeletable(MI_CHOPPER);
@@ -2281,7 +2388,8 @@ CStreaming::RequestModelStream(int32 ch)
 	haveBigFile = 0;
 	havePed = 0;
 	totalSize = 0;
-	for(i = 0; i < 4; i++){
+	const int filesPerRead = 4;
+	for(i = 0; i < filesPerRead; i++){
 		// no more files we can read
 		if(streamId == -1 || ms_aInfoForModel[streamId].m_loadState != STREAMSTATE_INQUEUE)
 			break;
@@ -2375,11 +2483,18 @@ CStreaming::ProcessLoadingChannel(int32 ch)
 		}
 		return false;
 	}
+	double processStart = re3_wall_time_ms();
+	int32 ids[4];
+	for(i = 0; i < 4; i++)
+		ids[i] = ms_channel[ch].streamIds[i];
 
 	if(ms_channel[ch].state == CHANNELSTATE_STARTED){
+		int32 startedId = ms_channel[ch].streamIds[0];
 		ms_channel[ch].state = CHANNELSTATE_IDLE;
 		FinishLoadingLargeFile(&ms_pStreamingBuffer[ch][ms_channel[ch].offsets[0]*CDSTREAM_SECTOR_SIZE],
-			ms_channel[ch].streamIds[0]);
+			startedId);
+		/* Large TXDs complete their second half here. Keep this channel buffer
+		 * owned until the dictionary reaches its final texture. */
 		ms_channel[ch].streamIds[0] = -1;
 	}else{
 		ms_channel[ch].state = CHANNELSTATE_IDLE;
@@ -2399,6 +2514,7 @@ CStreaming::ProcessLoadingChannel(int32 ch)
 					ReRequestModel(id);
 				else if(CTxdStore::GetNumRefs(CModelInfo::GetModelInfo(id)->GetTxdSlot()) == 0)
 					RemoveTxd(CModelInfo::GetModelInfo(id)->GetTxdSlot());
+				ms_channel[ch].streamIds[i] = -1;
 			}else{
 				MakeSpaceFor(cdsize * CDSTREAM_SECTOR_SIZE);
 				ConvertBufferToObject(&ms_pStreamingBuffer[ch][ms_channel[ch].offsets[i]*CDSTREAM_SECTOR_SIZE],
@@ -2440,6 +2556,10 @@ CStreaming::ProcessLoadingChannel(int32 ch)
 			ms_channel[1].streamIds[i] = -1;
 		ms_channel[1].state = CHANNELSTATE_IDLE;
 	}
+	double processMs = re3_wall_time_ms() - processStart;
+	if(processMs >= 40.0)
+		re3_stall_log("STREAM convert-channel %d %.0f ms ids %d,%d,%d,%d state %d",
+			ch, processMs, ids[0], ids[1], ids[2], ids[3], ms_channel[ch].state);
 
 	return true;
 }
@@ -2619,7 +2739,10 @@ CStreaming::LoadAllRequestedModels(bool priority)
 
 		MakeSpaceFor(streamSizes[nextChannel] * CDSTREAM_SECTOR_SIZE);
 		ConvertBufferToObject(ms_pStreamingBuffer[nextChannel], streamIds[nextChannel]);
-		if(ms_aInfoForModel[streamIds[nextChannel]].m_loadState == STREAMSTATE_STARTED)
+		/* This function is synchronous: do not return a partially decoded TXD to
+		 * startup/mission code.  Runtime channels keep the one-texture-per-frame
+		 * behaviour in ProcessLoadingChannel. */
+		while(ms_aInfoForModel[streamIds[nextChannel]].m_loadState == STREAMSTATE_STARTED)
 			FinishLoadingLargeFile(ms_pStreamingBuffer[nextChannel], streamIds[nextChannel]);
 
 		if(streamIds[nextChannel] < STREAM_OFFSET_TXD){
@@ -2637,6 +2760,131 @@ CStreaming::LoadAllRequestedModels(bool priority)
 		ms_channel[1].streamIds[i] = -1;
 		ms_channel[1].offsets[i] = -1;
 	}
+	ms_channel[1].state = CHANNELSTATE_IDLE;
+	bInsideLoadAll = false;
+}
+#else
+#ifdef ENABLE_3DS_LOADING_PIPELINE
+void
+CStreaming::LoadAllRequestedModels(bool priority)
+{
+	static bool bInsideLoadAll = false;
+	int imgOffset, status;
+	int i;
+
+	int numRequests = 4*ms_numModelsRequested;
+
+	if(bInsideLoadAll)
+		return;
+	bInsideLoadAll = true;
+
+	if(priority)
+		numRequests = ms_numPriorityRequests;
+
+	FlushChannels();
+	imgOffset = GetCdImageOffset(CdStreamGetLastPosn());
+
+	struct PendingLoad {
+		int streamId;
+		int channel;
+		uint32 posn;
+		uint32 size;
+		bool valid;
+	};
+
+	auto takeNextRequest = [&](PendingLoad &load, int channel) {
+		load.valid = false;
+		while(ms_endRequestedList.m_prev != &ms_startRequestedList && numRequests > 0){
+			numRequests--;
+			int streamId = GetNextFileOnCd(0, priority);
+			if(streamId == -1)
+				return false;
+
+			ms_aInfoForModel[streamId].RemoveFromList();
+			DecrementRef(streamId);
+			if(!ms_aInfoForModel[streamId].GetCdPosnAndSize(load.posn, load.size)){
+				ms_aInfoForModel[streamId].m_loadState = STREAMSTATE_LOADED;
+				continue;
+			}
+
+			load.streamId = streamId;
+			load.channel = channel;
+			load.valid = true;
+			return true;
+		}
+		return false;
+	};
+
+	auto startRead = [&](PendingLoad &load) {
+		ms_channel[load.channel].streamIds[0] = load.streamId;
+		do {
+			status = CdStreamRead(load.channel, ms_pStreamingBuffer[load.channel],
+				imgOffset + load.posn, load.size);
+			if(status == STREAM_NONE)
+				CdStreamSync(load.channel);
+		} while(status == STREAM_NONE);
+	};
+
+	auto finishRead = [&](PendingLoad &load) {
+		while(CdStreamSync(load.channel) != STREAM_NONE)
+			startRead(load);
+		ms_aInfoForModel[load.streamId].m_loadState = STREAMSTATE_READING;
+	};
+
+	auto convertLoad = [&](PendingLoad &load) {
+		int8 *buffer = ms_pStreamingBuffer[load.channel];
+		MakeSpaceFor(load.size * CDSTREAM_SECTOR_SIZE);
+		ConvertBufferToObject(buffer, load.streamId);
+		/* LCS TXDs can be decoded incrementally.  A synchronous barrier owns the
+		 * channel buffer until every texture in the dictionary is complete. */
+		while(ms_aInfoForModel[load.streamId].m_loadState == STREAMSTATE_STARTED)
+			FinishLoadingLargeFile(buffer, load.streamId);
+
+		if(load.streamId < STREAM_OFFSET_TXD){
+			CSimpleModelInfo *mi = (CSimpleModelInfo*)CModelInfo::GetModelInfo(load.streamId);
+			if(mi->IsSimple())
+				mi->m_alpha = 255;
+		}
+	};
+
+	PendingLoad current = {-1, 0, 0, 0, false};
+	PendingLoad next = {-1, 1, 0, 0, false};
+	if(takeNextRequest(current, 0))
+		startRead(current);
+
+	while(current.valid){
+		finishRead(current);
+
+		int nextChannel = 1 - current.channel;
+		bool haveNext = takeNextRequest(next, nextChannel);
+		bool canOverlap = haveNext &&
+			current.size <= (uint32)ms_streamingBufferSize &&
+			next.size <= (uint32)ms_streamingBufferSize;
+		if(canOverlap)
+			startRead(next);
+
+		convertLoad(current);
+		current.valid = false;
+
+		if(haveNext){
+			if(!canOverlap){
+				// Large files use both contiguous halves, so handle them alone.
+				next.channel = 0;
+				startRead(next);
+			}
+			current = next;
+			next = {-1, 1 - current.channel, 0, 0, false};
+		}
+	}
+
+	ms_bLoadingBigModel = false;
+	for(i = 0; i < 4; i++){
+		ms_channel[0].streamIds[i] = -1;
+		ms_channel[0].offsets[i] = -1;
+		ms_channel[1].streamIds[i] = -1;
+		ms_channel[1].offsets[i] = -1;
+	}
+	ms_channel[0].state = CHANNELSTATE_IDLE;
 	ms_channel[1].state = CHANNELSTATE_IDLE;
 	bInsideLoadAll = false;
 }
@@ -2679,7 +2927,9 @@ CStreaming::LoadAllRequestedModels(bool priority)
 
 			MakeSpaceFor(size * CDSTREAM_SECTOR_SIZE);
 			ConvertBufferToObject(ms_pStreamingBuffer[0], streamId);
-			if(ms_aInfoForModel[streamId].m_loadState == STREAMSTATE_STARTED)
+			/* LoadAllRequestedModels is a synchronous barrier.  Incremental TXDs
+			 * must finish before this shared channel buffer is reused. */
+			while(ms_aInfoForModel[streamId].m_loadState == STREAMSTATE_STARTED)
 				FinishLoadingLargeFile(ms_pStreamingBuffer[0], streamId);
 
 			if(streamId < STREAM_OFFSET_TXD){
@@ -2702,25 +2952,26 @@ CStreaming::LoadAllRequestedModels(bool priority)
 	bInsideLoadAll = false;
 }
 #endif
+#endif
 
 void
 CStreaming::FlushChannels(void)
 {
-	if(ms_channel[1].state == CHANNELSTATE_STARTED)
+	while(ms_channel[1].state == CHANNELSTATE_STARTED)
 		ProcessLoadingChannel(1);
 
 	if(ms_channel[0].state == CHANNELSTATE_READING){
 		CdStreamSync(0);
 		ProcessLoadingChannel(0);
 	}
-	if(ms_channel[0].state == CHANNELSTATE_STARTED)
+	while(ms_channel[0].state == CHANNELSTATE_STARTED)
 		ProcessLoadingChannel(0);
 
 	if(ms_channel[1].state == CHANNELSTATE_READING){
 		CdStreamSync(1);
 		ProcessLoadingChannel(1);
 	}
-	if(ms_channel[1].state == CHANNELSTATE_STARTED)
+	while(ms_channel[1].state == CHANNELSTATE_STARTED)
 		ProcessLoadingChannel(1);
 }
 
@@ -2772,6 +3023,20 @@ CStreaming::UpdateMemoryUsed(void)
 }
 
 #define STREAM_DIST 80.0f
+
+#ifdef _3DS
+static bool
+IsEntityInsideStreamingEnvelope(CEntity *e, const CVector &pos, float envelope)
+{
+	/* Large buildings are registered by their origin, which can be far away
+	 * while a wall, garage or courtyard is beside the player.  Measure from the
+	 * collision sphere surface so overlap-sector entities are requested and
+	 * retained according to the geometry the player can actually see. */
+	float radius = Max(e->GetBoundRadius(), 0.0f);
+	float centreDist = (e->GetBoundCentre() - pos).Magnitude();
+	return centreDist < radius + envelope;
+}
+#endif
 
 void
 CStreaming::AddModelsToRequestList(const CVector &pos, int32 flags)
@@ -2844,10 +3109,15 @@ CStreaming::ProcessEntitiesInSectorList(CPtrList &list, float x, float y, float 
 				lodDistSq = sq(mi->GetLargestLodDistance());
 				lodDistSq = Min(lodDistSq, sq(STREAM_DIST));
 				pos = CVector2D(e->GetPosition());
+#ifdef _3DS
+				if(IsEntityInsideStreamingEnvelope(e, CVector(x, y, e->GetBoundCentre().z), Sqrt(lodDistSq)))
+					RequestModel(e->GetModelIndex(), flags);
+#else
 				if(xmin < pos.x && pos.x < xmax &&
 				   ymin < pos.y && pos.y < ymax &&
 				   (CVector2D(x, y) - pos).MagnitudeSqr() < lodDistSq)
 					RequestModel(e->GetModelIndex(), flags);
+#endif
 			}
 		}
 	}
@@ -3204,7 +3474,11 @@ CStreaming::DeleteRwObjectsInSectorList(CPtrList &list)
 
 	for(node = list.first; node; node = node->next){
 		e = (CEntity*)node->item;
-		if(!e->bStreamingDontDelete && !e->bImBeingRendered)
+		if(!e->bStreamingDontDelete && !e->bImBeingRendered
+#ifdef _3DS
+		   && !IsEntityInsideStreamingEnvelope(e, TheCamera.GetPosition(), STREAM_DIST)
+#endif
+		)
 			e->DeleteRwObject();
 	}
 }
@@ -3217,7 +3491,11 @@ CStreaming::DeleteRwObjectsInOverlapSectorList(CPtrList &list, int32 x, int32 y)
 
 	for(node = list.first; node; node = node->next){
 		e = (CEntity*)node->item;
-		if(e->m_rwObject && !e->bStreamingDontDelete && !e->bImBeingRendered){
+		if(e->m_rwObject && !e->bStreamingDontDelete && !e->bImBeingRendered
+#ifdef _3DS
+		   && !IsEntityInsideStreamingEnvelope(e, TheCamera.GetPosition(), STREAM_DIST)
+#endif
+		){
 			// Now this is pretty weird...
 			if(Abs(CWorld::GetSectorIndexX(e->GetPosition().x) - x) >= 1.6f)
 //			{
@@ -3236,12 +3514,17 @@ CStreaming::DeleteRwObjectsBehindCameraInSectorList(CPtrList &list, size_t mem)
 {
 	CPtrNode *node;
 	CEntity *e;
+	CPlayerPed *player = FindPlayerPed();
 
 	for(node = list.first; node; node = node->next){
 		e = (CEntity*)node->item;
 		if(!e->bStreamingDontDelete && !e->bImBeingRendered &&
 		   e->m_rwObject && ms_aInfoForModel[e->GetModelIndex()].m_next &&
-		   FindPlayerPed()->m_pCurSurface != e){
+		   (player == nil || player->m_pCurSurface != e)
+#ifdef _3DS
+		   && !IsEntityInsideStreamingEnvelope(e, TheCamera.GetPosition(), STREAM_DIST)
+#endif
+		){
 			e->DeleteRwObject();
 			if (CModelInfo::GetModelInfo(e->GetModelIndex())->GetNumRefs() == 0) {
 				RemoveModel(e->GetModelIndex());
@@ -3263,6 +3546,10 @@ CStreaming::DeleteRwObjectsNotInFrustumInSectorList(CPtrList &list, size_t mem)
 		e = (CEntity*)node->item;
 		if(!e->bStreamingDontDelete && !e->bImBeingRendered &&
 		   e->m_rwObject && (!e->IsVisible() || e->bOffscreen) && ms_aInfoForModel[e->GetModelIndex()].m_next){
+#ifdef _3DS
+			if(IsEntityInsideStreamingEnvelope(e, TheCamera.GetPosition(), STREAM_DIST))
+				continue;
+#endif
 			e->DeleteRwObject();
 			if (CModelInfo::GetModelInfo(e->GetModelIndex())->GetNumRefs() == 0) {
 				RemoveModel(e->GetModelIndex());
@@ -3280,9 +3567,13 @@ CStreaming::MakeSpaceFor(int32 size)
 #ifdef FIX_BUGS
 #define MB (1024 * 1024)
 	if(ms_memoryAvailable == 0) {
+#ifdef _3DS
+		ms_memoryAvailable = 50 * MB;
+#else
 		extern size_t _dwMemAvailPhys;
 		ms_memoryAvailable = (_dwMemAvailPhys - 10 * MB) / 2;
 		if(ms_memoryAvailable < 65 * MB) ms_memoryAvailable = 65 * MB;
+#endif
 	}
 #undef MB
 #endif
@@ -3404,8 +3695,12 @@ CStreaming::MemoryCardSave(uint8 *buf, uint32 *size)
 {
 	int i;
 
-	*size = NUM_DEFAULT_MODELS;
-	for(i = 0; i < NUM_DEFAULT_MODELS; i++)
+	/* LCS streams mission and safehouse interiors from the full model table.
+	 * The inherited VC routine only covered the first 300 default IDs, leaving
+	 * those interiors absent after a restart even though their scripts and
+	 * interaction points had been restored. */
+	*size = MODELINFOSIZE;
+	for(i = 0; i < MODELINFOSIZE; i++)
 		if(ms_aInfoForModel[i].m_loadState == STREAMSTATE_LOADED)
 			buf[i] = ms_aInfoForModel[i].m_flags;
 		else
@@ -3415,13 +3710,25 @@ CStreaming::MemoryCardSave(uint8 *buf, uint32 *size)
 void 
 CStreaming::MemoryCardLoad(uint8 *buf, uint32 size)
 {
-	uint32 i;
+	uint32 count = Min(size, (uint32)MODELINFOSIZE);
+	bool requestedModels = false;
 
-	assert(size == NUM_DEFAULT_MODELS);
-	for(i = 0; i < size; i++)
-		if(ms_aInfoForModel[i].m_loadState == STREAMSTATE_LOADED)
-			if(buf[i] != 0xFF)
-				ms_aInfoForModel[i].m_flags = buf[i];
+	for(uint32 i = 0; i < count; i++) {
+		if(buf[i] == 0xFF)
+			continue;
+
+		if(ms_aInfoForModel[i].m_loadState == STREAMSTATE_LOADED) {
+			ms_aInfoForModel[i].m_flags = buf[i];
+		} else if(CModelInfo::GetModelInfo(i) && IsObjectInCdImage(i)) {
+			RequestModel(i, buf[i]);
+			requestedModels = true;
+		}
+	}
+
+	/* Restarting the game object graph unloads script-owned interiors.  Finish
+	 * restoring the saved resident set before the player is allowed to move. */
+	if(requestedModels)
+		LoadAllRequestedModels(false);
 }
 
 void

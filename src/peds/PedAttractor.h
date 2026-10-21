@@ -181,8 +181,8 @@ public:
 	virtual bool BroadcastDeparture(CPed*);
 	virtual void UpdatePedStateOnDeparture(CPed* pPed) const {};
 	virtual bool IsAtHeadOfQueue(CPed* pPed) const { return true; }
-	virtual void ComputeAttractPos(int qid, CVector& pos) const;
-	virtual void ComputeAttractHeading(int qid, float& heading) const;
+	virtual void ComputeAttractPos(int32 qid, CVector& pos) const;
+	virtual void ComputeAttractHeading(int32 qid, float& heading) const;
 
 	CPedShelterAttractor(C2dEffect* pEffect, const CMatrix& matrix, int32 maxpeds, float qdist, float waitTime, float approachTime, float distance, float headingdiff, float posdisp, float headdisp) :
 		CPedAttractor(pEffect, matrix, maxpeds, qdist, waitTime, approachTime, distance, headingdiff, posdisp, headdisp)

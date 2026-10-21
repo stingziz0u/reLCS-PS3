@@ -13,6 +13,7 @@
 #include "Particle.h"
 #include "Shadows.h"
 #include "Coronas.h"
+#include "PointLights.h"
 #include "Explosion.h"
 #include "WindModifiers.h"
 #include "Timecycle.h"
@@ -588,6 +589,11 @@ CHeli::PreRenderAlways(void)
 {
 	CVector shadowPos(m_fSearchLightX, m_fSearchLightY, GetPosition().z);
 	if(m_fSearchLightIntensity > 0.0f){
+		CVector lightPos(m_fSearchLightX, m_fSearchLightY, FindPlayerCoors().z + 8.0f);
+		float pointIntensity = m_fSearchLightIntensity * sq(CTimeCycle::GetSpriteBrightness());
+		CPointLights::AddLight(CPointLights::LIGHT_POINT, lightPos, CVector(0.0f, 0.0f, 0.0f),
+			14.0f, pointIntensity, pointIntensity, pointIntensity, CPointLights::FOG_NONE, true);
+
 		CShadows::StoreShadowToBeRendered(SHADOWTYPE_ADDITIVE, gpShadowExplosionTex, &shadowPos,
 			6.0f, 0.0f, 0.0f, -6.0f,
 			80*m_fSearchLightIntensity, 80*m_fSearchLightIntensity, 80*m_fSearchLightIntensity, 80*m_fSearchLightIntensity,
@@ -814,11 +820,14 @@ CHeli::UpdateHelis(void)
 	int i, j;
 
 	// Spawn new police helis
-	int numHelisRequired = 
+	CPlayerPed *player = FindPlayerPed();
+	int numHelisRequired = 0;
+	if(player
 #ifdef FIX_BUGS
-		CReplay::IsPlayingBack() ? 0 :
+		&& !CReplay::IsPlayingBack()
 #endif
-		FindPlayerPed()->m_pWanted->NumOfHelisRequired();
+	)
+		numHelisRequired = player->m_pWanted->NumOfHelisRequired();
 	if(CCullZones::PlayerNoRain() || CGame::IsInInterior())
 		numHelisRequired = 0;
 	if(CStreaming::HasModelLoaded(MI_CHOPPER) && CTimer::GetTimeInMilliseconds() > TestForNewRandomHelisTimer){

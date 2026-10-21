@@ -5,6 +5,7 @@
 #include "ModelIndices.h"
 #include "ModelInfo.h"
 #include "KeyGen.h"
+#include "TxdStore.h"
 
 CBaseModelInfo **CModelInfo::ms_modelInfoPtrs;
 int32 CModelInfo::msNumModelInfos;
@@ -18,6 +19,64 @@ CStore<CVehicleModelInfo, VEHICLEMODELSIZE> CModelInfo::ms_vehicleModelStore;
 CStore<C2dEffect, TWODFXSIZE> CModelInfo::ms_2dEffectStore;
 
 C2dEffect *gp2dEffects;
+
+static bool
+ContainsInsensitive(const char *text, const char *token)
+{
+	if(text == nil || token == nil || *token == '\0')
+		return false;
+	for(; *text; text++){
+		const char *a = text;
+		const char *b = token;
+		while(*a && *b){
+			char ca = *a;
+			char cb = *b;
+			if(ca >= 'A' && ca <= 'Z') ca += 'a' - 'A';
+			if(cb >= 'A' && cb <= 'Z') cb += 'a' - 'A';
+			if(ca != cb)
+				break;
+			a++;
+			b++;
+		}
+		if(*b == '\0')
+			return true;
+	}
+	return false;
+}
+
+bool
+IsLCSVegetationModel(int32 id)
+{
+	if(IsTreeModel(id))
+		return true;
+
+	CBaseModelInfo *mi = CModelInfo::GetModelInfo(id);
+	if(mi == nil)
+		return false;
+	const char *name = mi->GetModelName();
+	const char *txd = mi->GetTxdSlot() >= 0 ? CTxdStore::GetTxdName(mi->GetTxdSlot()) : nil;
+
+	/* Shadow cards have tree names/TXDs too, but must stay fixed to the ground. */
+	if(ContainsInsensitive(name, "shad") || ContainsInsensitive(txd, "shad"))
+		return false;
+
+	/* Avoid the accidental "tree" inside "street" (streetlamps, signs, etc.). */
+	const bool namedTree = ContainsInsensitive(name, "tree") &&
+	                       !ContainsInsensitive(name, "street");
+	return namedTree ||
+	       ContainsInsensitive(name, "pine") ||
+	       ContainsInsensitive(name, "palm") ||
+	       ContainsInsensitive(name, "bush") ||
+	       ContainsInsensitive(name, "hedge") ||
+	       ContainsInsensitive(name, "shrub") ||
+	       ContainsInsensitive(name, "fern") ||
+	       ContainsInsensitive(name, "conifer") ||
+	       ContainsInsensitive(txd, "tree") ||
+	       ContainsInsensitive(txd, "cnifer") ||
+	       ContainsInsensitive(txd, "bush") ||
+	       ContainsInsensitive(txd, "shrub") ||
+	       ContainsInsensitive(txd, "vege");
+}
 
 void
 CModelInfo::Initialise(void)

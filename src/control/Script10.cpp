@@ -5,6 +5,7 @@
 
 #include "CarCtrl.h"
 #include "DMAudio.h"
+#include "FinalMissionMusic.h"
 #include "Frontend.h"
 #include "GameLogic.h"
 #include "Garages.h"
@@ -82,9 +83,14 @@ int8 CRunningScript::ProcessCommands1600To1699(int32 command)
 		uint32 id = (uint32)(uintptr)GetPointerToScriptVariable(&ip, 0);
 		CollectParameters(&m_nIp, 10);
 		CVector pos = GET_VECTOR_PARAM(0);
-		CVector dir = GET_VECTOR_PARAM(3);
 		pos.z += GET_FLOAT_PARAM(9) + 7.0f;
-		//C3dMarkers::PlaceMarker(id, MARKERTYPE_ARROW, pos, GET_INTEGER_PARAM(6), GET_INTEGER_PARAM(7), GET_INTEGER_PARAM(8), 200, 1, 3.2f, 1, dir, 1.0f, 0, 0); - TODO
+		/* The PSP command also supplies a direction vector.  The VC marker
+		 * backend has no directional overload, but its arrow model is already
+		 * vertical; preserving the authored position, colour and lifetime makes
+		 * the race/checkpoint arrow visible again. */
+		C3dMarkers::PlaceMarker(id, MARKERTYPE_ARROW, pos, 3.2f,
+			GET_INTEGER_PARAM(6), GET_INTEGER_PARAM(7), GET_INTEGER_PARAM(8), 200,
+			1024, 0.2f, 1);
 		return 0;
 	}
 	case COMMAND_PRINT_NOW_OVERRIDE_FADE:
@@ -151,6 +157,17 @@ int8 CRunningScript::ProcessCommands1600To1699(int32 command)
 	}
 	case COMMAND_PRINT_SUBTITLE_NOW:
 	{
+		const char *rawKey = (const char*)&CTheScripts::ScriptSpace[m_nIp];
+		if (!CGeneral::faststricmp(m_abScriptName, "SALH5")) {
+			if (!strncmp(rawKey, "SALH515", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::EnterLCSBoatChase();
+			else if (!strncmp(rawKey, "SALH522", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::BeginLCSLighthouseTransition();
+			else if (!strncmp(rawKey, "SALH53A", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::BeginLCSLighthouseClimax();
+			else if (!strncmp(rawKey, "SALH5TD", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::BeginLCSLighthouseBattle();
+		}
 		wchar* key = CTheScripts::GetTextByKeyFromScript(&m_nIp);
 		CollectParameters(&m_nIp, 2);
 		if (FrontEndMenuManager.m_PrefsShowSubtitles)
@@ -161,6 +178,13 @@ int8 CRunningScript::ProcessCommands1600To1699(int32 command)
 	}
 	case COMMAND_PRINT_SUBTITLE_NOW_OVERRIDE_FADE:
 	{
+		const char *rawKey = (const char*)&CTheScripts::ScriptSpace[m_nIp];
+		if (!CGeneral::faststricmp(m_abScriptName, "SALH5")) {
+			if (!strncmp(rawKey, "SALH53A", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::BeginLCSLighthouseClimax();
+			else if (!strncmp(rawKey, "SALH5TD", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::BeginLCSLighthouseBattle();
+		}
 		wchar* key = CTheScripts::GetTextByKeyFromScript(&m_nIp);
 		CollectParameters(&m_nIp, 2);
 		if (FrontEndMenuManager.m_PrefsShowSubtitles)
@@ -171,6 +195,13 @@ int8 CRunningScript::ProcessCommands1600To1699(int32 command)
 	}
 	case COMMAND_PRINT_SUBTITLE_NOW_NO_BRIEF:
 	{
+		const char *rawKey = (const char*)&CTheScripts::ScriptSpace[m_nIp];
+		if (!CGeneral::faststricmp(m_abScriptName, "SALH5")) {
+			if (!strncmp(rawKey, "SALH53A", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::BeginLCSLighthouseClimax();
+			else if (!strncmp(rawKey, "SALH5TD", KEY_LENGTH_IN_SCRIPT))
+				FinalMissionMusic::BeginLCSLighthouseBattle();
+		}
 		wchar* key = CTheScripts::GetTextByKeyFromScript(&m_nIp);
 		CollectParameters(&m_nIp, 2);
 		if (FrontEndMenuManager.m_PrefsShowSubtitles)

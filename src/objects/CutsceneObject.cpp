@@ -119,6 +119,12 @@ CCutsceneObject::PreRender(void)
 	
 	if(IsPedModel(GetModelIndex()))
 	{
+#ifdef _3DS
+		/* Dedicated cutscene characters are the highest-detail skinned models in
+		 * LCS.  The LCS shadow object is intentionally unimplemented above, so the
+		 * old fallback regenerated a full ordinary-ped shadow for every cutscene
+		 * character every frame.  Keep this cost out of formal high-model scenes. */
+#else
 		if ( m_pShadow == nil )
 		{
 			CShadows::StoreShadowForPedObject(this,
@@ -142,6 +148,7 @@ CCutsceneObject::PreRender(void)
 				CTimeCycle::m_fShadowSideX[CTimeCycle::m_CurrentStoredValue],
 				CTimeCycle::m_fShadowSideY[CTimeCycle::m_CurrentStoredValue]);
 		}
+#endif
 			
 		// For some reason xbox/android limbs are transparent here...
 		RpGeometry *geometry = RpAtomicGetGeometry(GetFirstAtomic(GetClump()));

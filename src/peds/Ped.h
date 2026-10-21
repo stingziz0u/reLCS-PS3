@@ -510,7 +510,9 @@ public:
 	uint32 bWanderPathAfterExitingCar : 1;
 	uint32 bIsLeader : 1;
 	uint32 bDontDragMeOutCar : 1; // unfinished feature
-	uint32 m_ped_flagF8 : 1;
+	/* Reuses an otherwise unused LCS ped flag without changing CPed's layout.
+	 * Set only while Massimo performs SALH5's scripted helicopter boarding. */
+	uint32 bFinaleHeliBoardingProtected : 1;
 	uint32 bWillBeQuickJacked : 1;
 	uint32 bCancelEnteringCar : 1; // after door is opened or couldn't be opened due to it's locked
 	uint32 bObstacleShowedUpDuringKillObjective : 1;
@@ -1081,7 +1083,7 @@ public:
 	CObject *SpawnFlyingComponent(int, int8);
 	void SetCarJack_AllClear(CVehicle*, uint32, uint32);
 	bool CanPedJumpThis(CEntity *unused, CVector *damageNormal = nil);
-	void SetNewAttraction(CPedAttractor* pAttractor, const CVector& pos, float, float, int);
+	void SetNewAttraction(CPedAttractor* pAttractor, const CVector& pos, float, float, int32);
 	void ClearWaitState(void);
 	void Undress(const char*);
 	void Dress(void);
@@ -1301,6 +1303,8 @@ public:
 	static bool bNastyLimbsCheat;
 	static bool bFannyMagnetCheat;
 	static bool bPedCheat3;
+	static bool bBigHeadsCheat;
+	static bool bMaleMagnetCheat;
 	static CVector2D ms_vec2DFleePosition;
 
 	static void LoadNonStandardPedAnim(eWaitState waitState);

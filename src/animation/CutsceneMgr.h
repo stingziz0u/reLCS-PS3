@@ -152,6 +152,7 @@ public:
 	static void DeleteCutsceneData(void);
 	static void LoadAnimationUncompressed(char const*);
 	static void Update(void);
+	static void RestorePlayerVehicleAfterCutscene(void);
 
 	static void AttachObjectToParent(CObject *pObject, CEntity *pAttachTo);
 	static void AttachObjectToFrame(CObject *pObject, CEntity *pAttachTo, const char *frame);

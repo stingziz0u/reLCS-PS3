@@ -9,6 +9,7 @@
 #include "Collision.h"
 #include "Sprite.h"
 #include "Timer.h"
+#include "PlayerInfo.h"
 #include "PointLights.h"
 
 int16 CPointLights::NumLights;
@@ -34,39 +35,89 @@ CPointLights::InitPerFrame(void)
 }
 
 #define MAX_DIST 22.0f
+#define MAX_DYNAMIC_SHADOW_LIGHTS 8
+#define MAX_VEHICLE_HEADLIGHT_SHADOWS 4
 
 void
-CPointLights::AddLight(uint8 type, CVector coors, CVector dir, float radius, float red, float green, float blue, uint8 fogType, bool castExtraShadows)
+CPointLights::AddLight(uint8 type, CVector coors, CVector dir, float radius, float red, float green, float blue, uint8 fogType, bool castExtraShadows, bool isVehicleHeadlight)
 {
 	CVector dist;
 	float distance;
+	int32 slot;
 
 	// The check is done in some weird way in the game
 	// we're doing it a bit better here
-	if(NumLights >= NUMPOINTLIGHTS)
-		return;
-
-	dist = coors - TheCamera.GetPosition();
+	CVector focus = FindPlayerPed() ? FindPlayerCoors() : TheCamera.GetPosition();
+	dist = coors - focus;
 	if(Abs(dist.x) < MAX_DIST && Abs(dist.y) < MAX_DIST){
-		distance = dist.Magnitude();
+		distance = type == LIGHT_POINT && castExtraShadows ? dist.Magnitude2D() : dist.Magnitude();
 		if(distance < MAX_DIST){
-			aLights[NumLights].type = type;
-			aLights[NumLights].fogType = fogType;
-			aLights[NumLights].coors = coors;
-			aLights[NumLights].dir = dir;
-			aLights[NumLights].radius = radius;
-			aLights[NumLights].castExtraShadows = castExtraShadows;
+			slot = NumLights;
+			if(type == LIGHT_POINT && castExtraShadows){
+				int32 numShadowLights = 0;
+				int32 numHeadlights = 0;
+				int32 farthestWorld = -1;
+				int32 farthestHeadlight = -1;
+				float farthestWorldDistSqr = -1.0f;
+				float farthestHeadlightDistSqr = -1.0f;
+				for(int32 i = 0; i < NumLights; i++){
+					if(aLights[i].type != LIGHT_POINT || !aLights[i].castExtraShadows)
+						continue;
+					numShadowLights++;
+					float distSqr = (aLights[i].coors - focus).MagnitudeSqr2D();
+					if(aLights[i].isVehicleHeadlight){
+						numHeadlights++;
+						if(distSqr > farthestHeadlightDistSqr){
+							farthestHeadlightDistSqr = distSqr;
+							farthestHeadlight = i;
+						}
+						continue;
+					}
+					if(distSqr > farthestWorldDistSqr){
+						farthestWorldDistSqr = distSqr;
+						farthestWorld = i;
+					}
+				}
+				if(isVehicleHeadlight && numHeadlights >= MAX_VEHICLE_HEADLIGHT_SHADOWS){
+					if(farthestHeadlight < 0 || distance*distance >= farthestHeadlightDistSqr)
+						return;
+					slot = farthestHeadlight;
+				}else if(numShadowLights >= MAX_DYNAMIC_SHADOW_LIGHTS){
+					if(isVehicleHeadlight && numHeadlights < MAX_VEHICLE_HEADLIGHT_SHADOWS){
+						if(farthestWorld < 0)
+							return;
+						slot = farthestWorld;
+					}else{
+						if(farthestWorld < 0 || distance*distance >= farthestWorldDistSqr)
+							return;
+						slot = farthestWorld;
+					}
+				}else if(NumLights >= NUMPOINTLIGHTS)
+					return;
+				else
+					NumLights++;
+			}else{
+				if(NumLights >= NUMPOINTLIGHTS)
+					return;
+				NumLights++;
+			}
+			aLights[slot].type = type;
+			aLights[slot].fogType = fogType;
+			aLights[slot].coors = coors;
+			aLights[slot].dir = dir;
+			aLights[slot].radius = radius;
+			aLights[slot].castExtraShadows = castExtraShadows;
+			aLights[slot].isVehicleHeadlight = isVehicleHeadlight;
 			if(distance < MAX_DIST*0.75f){
-				aLights[NumLights].red = red;
-				aLights[NumLights].green = green;
-				aLights[NumLights].blue = blue;
+				aLights[slot].red = red;
+				aLights[slot].green = green;
+				aLights[slot].blue = blue;
 			}else{
 				float fade = 1.0f - (distance/MAX_DIST - 0.75f)*4.0f;
-				aLights[NumLights].red = red * fade;
-				aLights[NumLights].green = green * fade;
-				aLights[NumLights].blue = blue * fade;
+				aLights[slot].red = red * fade;
+				aLights[slot].green = green * fade;
+				aLights[slot].blue = blue * fade;
 			}
-			NumLights++;
 		}
 	}
 }

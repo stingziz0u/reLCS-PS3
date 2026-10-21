@@ -80,4 +80,8 @@ public:
 	static void ProcessTidyUpMemory(void);
 };
 
+/* LCS' streamed world and safehouse IPLs do not use reVC's strict area tags.
+ * Filtering them with the reVC predicate removes both the main world and the
+ * interior after loading an AREA_HOTEL save.  Keep reStories' LCS contract;
+ * saved-area restoration is handled by the load lifecycle instead. */
 inline bool IsAreaVisible(int area) { return true; }

@@ -25,6 +25,7 @@
 #include "Ferry.h"
 #include "FileLoader.h"
 #include "FileMgr.h"
+#include "FinalMissionMusic.h"
 #include "Fire.h"
 #include "Fluff.h"
 #include "Font.h"
@@ -42,6 +43,7 @@
 #include "MBlur.h"
 #include "Messages.h"
 #include "MemoryCard.h"
+#include "Object.h"
 #include "MemoryHeap.h"
 #include "Pad.h"
 #include "Particle.h"
@@ -62,6 +64,7 @@
 #include "Rubbish.h"
 #include "SceneEdit.h"
 #include "Script.h"
+#include "ScriptCommands.h"
 #include "Shadows.h"
 #include "Skidmarks.h"
 #include "SetPieces.h"
@@ -86,6 +89,10 @@
 #include "Weather.h"
 #include "World.h"
 #include "ZoneCull.h"
+#ifdef ENABLE_3DS_BOTTOM_RADAR
+#include "BottomScreen3DS.h"
+#endif
+
 #include "Zones.h"
 #include "Occlusion.h"
 #include "debugmenu.h"
@@ -142,6 +149,12 @@ PS3_SetGenericTxdFallback(void)
 	rw::Texture::findCB = PS3_GenericFindCB;
 }
 #endif
+/* The first frame after a save load rebuilds MAIN and performs two complete
+ * streaming scene loads.  Defer Callahan's flattened-world restoration until
+ * both are finished so neither step can recreate its initial IPL phase. */
+static bool gRestoreCallahanAfterLoad;
+static bool gRestoreCallahanBMState;
+static bool gRestoreCallahanPMState;
 
 #ifdef SECUROM
 uint8 gameProcessPirateCheck = 0;
@@ -149,6 +162,80 @@ uint8 gameProcessPirateCheck = 0;
 
 bool DoRWStuffStartOfFrame(int16 TopRed, int16 TopGreen, int16 TopBlue, int16 BottomRed, int16 BottomGreen, int16 BottomBlue, int16 Alpha);
 void DoRWStuffEndOfFrame(void);
+#ifdef _3DS
+#include <3ds.h>
+#ifdef _3DS
+#include "../../../common/3ds/GameInstallation.h"
+#endif
+static void
+Show3DSStartupError(const char *text, bool gameFont = true)
+{
+	wchar message[384];
+	AsciiToUnicode(text, message);
+	gfxSetScreenFormat(GFX_BOTTOM, GSP_BGR8_OES);
+	for(unsigned i = 0; i < 2; i++) {
+		u16 width, height;
+		u8 *buffer = gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, &width, &height);
+		const unsigned bytes = unsigned(width) * height * 3;
+		memset(buffer, 0, bytes);
+		GSPGPU_FlushDataCache(buffer, bytes);
+		gfxScreenSwapBuffers(GFX_BOTTOM, false);
+	}
+	if(!gameFont){
+		gfxSet3D(false);
+		consoleInit(GFX_TOP, NULL);
+		for(const char *p=text; *p; ++p){
+			if(strncmp(p,"~n~",3)==0){ putchar('\n'); p+=2; }
+			else putchar(*p);
+		}
+	}
+	while(aptMainLoop()) {
+		hidScanInput();
+		if(hidKeysDown() & KEY_B) break;
+		if(gameFont && DoRWStuffStartOfFrame(0, 0, 0, 0, 0, 0, 255)) {
+			CSprite2d::SetRecipNearClip();
+			CSprite2d::InitPerFrame();
+			CFont::InitPerFrame();
+			DefinedState();
+			CFont::SetAlphaFade(255.0f);
+			CFont::SetCentreOff();
+			CFont::SetRightJustifyOff();
+			CFont::SetJustifyOff();
+			CFont::SetPropOn();
+			CFont::SetBackgroundOff();
+			CFont::SetDropShadowPosition(0);
+			CFont::SetScale(SCREEN_SCALE_X(0.52f), SCREEN_SCALE_Y(1.1f));
+			CFont::SetWrapx(SCREEN_WIDTH - SCREEN_SCALE_X(26.0f));
+			CFont::SetFontStyle(FONT_LOCALE(FONT_STANDARD));
+			CFont::SetColor(CRGBA(175, 175, 175, 255));
+			CFont::PrintString(SCREEN_SCALE_X(26.0f), SCREEN_SCALE_Y(28.0f), message);
+			CFont::DrawFonts();
+			RwCameraEndUpdate(Scene.camera);
+			RsCameraShowRaster(Scene.camera);
+		}
+		gspWaitForVBlank();
+	}
+	svcExitProcess();
+}
+
+static void
+Initialise3DSRenderState(void)
+{
+	if(!rw::c3d::initialiseMaterialState())
+		Show3DSStartupError("Device not supported~n~Press B.");
+}
+
+static void
+Initialise3DSInstallation(void)
+{
+	static bool checked = false;
+	if(checked) return;
+	if(!RegtaInstall::validate(RegtaInstall::LCS, [](){
+		if(!aptMainLoop()) svcExitProcess();
+	})) Show3DSStartupError(RegtaInstall::errorMessage());
+	checked = true;
+}
+#endif
 #ifdef PS2_MENU
 void MessageScreen(char *msg)
 {
@@ -292,7 +379,16 @@ CGame::InitialiseRenderWare(void)
 #endif // LIBRW
 
 	PUSH_MEMID(MEMID_TEXTURES);
+#ifdef _3DS
+	if(!RegtaInstall::present("models/fonts.txd")){
+		RegtaInstall::failure("models/fonts.txd", "Missing or empty file");
+		Show3DSStartupError(RegtaInstall::errorMessage(), false);
+	}
+#endif
 	CFont::Initialise();
+#ifdef _3DS
+	Initialise3DSInstallation();
+#endif
 	CHud::Initialise();
 	CPlayerSkin::Initialise();
 	POP_MEMID();
@@ -309,6 +405,12 @@ CGame::InitialiseRenderWare(void)
 
 void CGame::ShutdownRenderWare(void)
 {
+#if defined(RW_3DS) && defined(RESTORIES_3DS_BUILD)
+	ShutdownPlayerVehicleReflection3DS();
+#endif
+#ifdef ENABLE_3DS_BOTTOM_RADAR
+	ShutdownBottomScreen();
+#endif
 #ifdef SCREEN_DROPLETS
 	ScreenDroplets::Shutdown();
 #endif
@@ -384,7 +486,8 @@ bool CGame::InitialiseOnceAfterRW(void)
 
 void
 CGame::FinalShutdown(void)
-{	
+	{
+	FinalMissionMusic::EndLCSFinale();
 	CTxdStore::Shutdown();
 	CPedStats::Shutdown();
 	CdStreamShutdown();
@@ -534,7 +637,12 @@ bool CGame::Initialise(const char* datFile)
 #ifdef SCREEN_DROPLETS
 	ScreenDroplets::Initialise();
 #endif
+#ifdef _3DS
+	LoadingScreen("Loading", nil, nil);
+	Initialise3DSRenderState();
+#else
 	LoadingScreen("Loading the Game", "Find big buildings", nil);
+#endif
 	CRenderer::Init();
 
 	LoadingScreen("Loading the Game", "Setup game variables", nil);
@@ -729,23 +837,48 @@ bool CGame::ReInitGameObjectVariables(bool load)
 	CGlass::Init();
 	gPhoneInfo.Initialise();
 
-	PUSH_MEMID(MEMID_SCRIPT);
-	bool res = CTheScripts::Init(load);
-	CGangs::Initialise();
-	POP_MEMID();
-
+	/* GenericLoad restores the native LCS timer, clock and absolute script wake
+	 * times.  Initialising these after CTheScripts::Init(load) resets time to zero
+	 * and leaves every restored controller asleep until the old timestamp is
+	 * reached again.  Initialise the clocks first, then let the save overwrite
+	 * them with its matching timeline. */
 	CTimer::Initialise();
 	CClock::Initialise(1000);
-	CTheCarGenerators::Init();
+
+	/* The native LCS memory-card loader processes resident scripts before it
+	 * returns.  A restarted 3DS game has already shut down C3dMarkers, so an
+	 * interior script that creates a save/exit sphere would otherwise traverse
+	 * the freed marker clump.  Recreate SpecialFX before the load-time script pass
+	 * and do not initialise it a second time below. */
+	if (load)
+		CSpecialFX::Init();
+
+	PUSH_MEMID(MEMID_SCRIPT);
+	bool res = CTheScripts::Init(load);
+	/* GenericLoad has already restored these native LCS blocks.  Initialising
+	 * them here used to erase the freshly loaded state before gameplay resumed. */
+	if (!load)
+		CGangs::Initialise();
+	POP_MEMID();
+
+	if (!load)
+		CTheCarGenerators::Init();
 	CHeli::InitHelis();
 	CMovingThings::Init();
 	CDarkel::Init();
-	CStats::Init();
-	CPickups::Init();
+	if (!load)
+		CStats::Init();
+	/* GenericLoad has already restored the native LCS pickup block and its
+	 * load-time script pass may have recreated safehouse interactions.  Clearing
+	 * the pool here leaves their visuals or controller threads behind but removes
+	 * the actual pickup interaction records. */
+	if (!load)
+		CPickups::Init();
 	CPacManPickups::Init();
 	if (!load)
 		CGarages::Init();
-	CSpecialFX::Init();
+	if (!load)
+		CSpecialFX::Init();
 	CRopes::Init();
 	CWaterCannons::Init();
 	CScriptPaths::Init();
@@ -780,6 +913,7 @@ void CGame::ReloadIPLs(void)
 
 void CGame::ShutDownForRestart(void)
 {
+	FinalMissionMusic::EndLCSFinale();
 #ifdef USE_TEXTURE_POOL
 	_TexturePoolsUnknown(false);
 #endif
@@ -807,34 +941,6 @@ void CGame::ShutDownForRestart(void)
 	CSpecialFX::Shutdown();
 }
 
-#ifdef FIX_BUGS
-static void
-PS3_CreatePlayerAfterLoad(void)
-{
-	if (!CStreaming::HasModelLoaded(MI_PLAYER)) {
-		CStreaming::RequestSpecialModel(MI_PLAYER, "player", STREAMFLAGS_DONT_REMOVE | STREAMFLAGS_DEPENDENCY);
-		CStreaming::LoadAllRequestedModels(false);
-	}
-	CPlayerPed::SetupPlayerPed(0);
-	CPlayerPed *player = CWorld::Players[0].m_pPed;
-	player->CharCreatedBy = MISSION_CHAR;
-	// where the camera was saved (by the player); the script puts him at
-	// the safehouse's spot right away
-	CPlayerPed::DeactivatePlayerPed(0);
-	CVector pos = TheCamera.GetPosition();
-	float ground = CWorld::FindGroundZForCoord(pos.x, pos.y);
-	if (ground > MAP_Z_LOW_LIMIT)
-		pos.z = ground;
-	pos.z += player->GetDistanceFromCentreOfMassToBaseOfModel();
-	player->SetPosition(pos);
-	CPlayerPed::ReactivatePlayerPed(0);
-	// his outfit (STORE_PLAYER_OUTFIT; the one he respawns in)
-	player->Undress(CGameLogic::mStoredPlayerOutfit);
-	CStreaming::LoadAllRequestedModels(false);
-	player->Dress();
-	debug("PS3: player created after the load, outfit %s, at %.1f %.1f %.1f\n", CGameLogic::mStoredPlayerOutfit, pos.x, pos.y, pos.z);
-}
-#endif
 
 void CGame::InitialiseWhenRestarting(void)
 {
@@ -877,17 +983,62 @@ void CGame::InitialiseWhenRestarting(void)
 		InitRadioStationPositionList();
 		if ( bLoadSuccessful == true )
 		{
-#ifdef FIX_BUGS
-			// LCS's saves have no ped pool: the player isn't in the save, the
-			// game makes him here (main.scm goes on after its save with
-			// IS_PLAYER_PLAYING / SET_PLAYER_COORDINATES). Without him the
-			// first frame after a load read a nil player (CTheZones::Update)
-			// and the game went back to the XMB.
-			if (CWorld::Players[0].m_pPed == nil)
-				PS3_CreatePlayerAfterLoad();
-#endif
 			DMAudio.ResetTimers(CTimer::GetTimeInMilliseconds());
 			CFerry::InitFerrys();
+			SyncLCSFortStauntonWorld();
+			/* LCS records that these one-shot world changes have happened, but not
+			 * the C++ ferry table or bridge state themselves.  Reapply the effects
+			 * after every load; this is equally required for native ARM saves and
+			 * PS2-converted progress. */
+			/* Keep the existing ferry/lift-bridge script contract untouched.  Its
+			 * recovery is known-good on native LCS saves; Callahan is restored below
+			 * independently because its flattened cWorldStream IPL is absent. */
+			const uint32 ferryEnableIp = 83954;
+			const uint32 bridgeEnableIp = 54931;
+			const uint16 ferryCommand = CTheScripts::ScriptSpace[ferryEnableIp] |
+				CTheScripts::ScriptSpace[ferryEnableIp + 1] << 8;
+			const uint16 bridgeCommand = CTheScripts::ScriptSpace[bridgeEnableIp] |
+				CTheScripts::ScriptSpace[bridgeEnableIp + 1] << 8;
+			if(ferryCommand == COMMAND_ENABLE_FERRY_PATH &&
+			   bridgeCommand == COMMAND_SET_BRIDGE_STATE) {
+				const bool ferryUnlocked = *CTheScripts::GetPointerToScriptVariable(4516) != 0;
+				CFerry::RestorePathAfterLoad(ferryUnlocked);
+
+				/* The two Callahan construction barriers and the lift-bridge blocker
+				 * are mission objects.  Converted saves keep the target object pool,
+				 * so remove any still-live blocker whose native progress flag says it
+				 * was already cleared.  Pool generation handles make stale refs safe. */
+				const int32 openFlags[] = { 4492, 4496, 4496, 4488 };
+				const int32 objectHandles[] = { 4952, 4956, 4960, 5116 };
+				for(uint32 i = 0; i < ARRAY_SIZE(openFlags); i++) {
+					if(*CTheScripts::GetPointerToScriptVariable(openFlags[i]) == 0)
+						continue;
+					int32 *handle = CTheScripts::GetPointerToScriptVariable(objectHandles[i]);
+					CObject *object = CPools::GetObjectPool()->GetAt(*handle);
+					if(object && object->ObjectCreatedBy == MISSION_OBJECT) {
+						CWorld::Remove(object);
+						CWorld::RemoveReferencesToDeletedObject(object);
+						delete object;
+					}
+					*handle = 0;
+				}
+
+				if(*CTheScripts::GetPointerToScriptVariable(4488) != 0) {
+					OpenLCSLiftBridgeRoadblock();
+					CBridge::ForceBridgeState(STATE_LIFT_PART_MOVING_DOWN);
+					ThePaths.SwitchRoadsOffInArea(-69.1f, -46.8f, -648.0f,
+						-614.0f, 39.0f, 50.0f, false);
+				}
+			} else {
+				debug("LCS infrastructure script contract mismatch; recovery skipped\n");
+			}
+			/* Capture these before MAIN's first reconstructed frame.  The final
+			 * world phase is applied after both post-load LoadScene calls below. */
+			gRestoreCallahanBMState =
+				*CTheScripts::GetPointerToScriptVariable(4496) != 0;
+			gRestoreCallahanPMState =
+				*CTheScripts::GetPointerToScriptVariable(4492) != 0;
+			gRestoreCallahanAfterLoad = true;
 			CTrain::InitTrains();
 			CPlane::InitPlanes();
 		}
@@ -925,6 +1076,9 @@ void CGame::InitialiseWhenRestarting(void)
 void CGame::Process(void) 
 {
 	if (FrontEndMenuManager.m_bWantToLoad) {
+		/* Match reStories PC and the native LCS memory-card flow: saved running
+		 * scripts are not resumed because their entity handles are transient.  MAIN
+		 * rebuilds the controller graph from restored globals after all pools load. */
 		CTheScripts::StartTestScript();
 		CTheScripts::Process();
 		TheCamera.Process();
@@ -936,6 +1090,11 @@ void CGame::Process(void)
 		}
 		TheCamera.Process();
 		CStreaming::LoadScene(TheCamera.GetPosition());
+		if(gRestoreCallahanAfterLoad) {
+			ApplyLCSWorldBuildingSwap(2, gRestoreCallahanBMState);
+			ApplyLCSWorldBuildingSwap(4, gRestoreCallahanPMState);
+			gRestoreCallahanAfterLoad = false;
+		}
 		FrontEndMenuManager.m_bWantToLoad = false;
 	}
 	PS3_GAME_STEP("CPad::UpdatePads");
@@ -947,7 +1106,10 @@ void CGame::Process(void)
 	DebugMenuProcess();
 #endif
 	PS3_GAME_STEP("CCutsceneMgr::Update");
-	CCutsceneMgr::Update();
+	/* Cutscene teardown and update both restore player state.  A restarted save
+	 * can legitimately have no player until the main script recreates one. */
+	if(FindPlayerPed())
+		CCutsceneMgr::Update();
 
 	PS3_GAME_STEP("FrontEndMenuManager.Process");
 	if (!CCutsceneMgr::IsCutsceneProcessing() && !CTimer::GetIsCodePaused())
@@ -964,15 +1126,24 @@ void CGame::Process(void)
 	}
 #endif
 	//uint32 startTime = CTimer::GetCurrentTimeInCycles() / CTimer::GetCyclesPerMillisecond();
+#ifdef _3DS
+	uint64 profileStreamingStart = rw::c3d::profileTimerStart();
+#endif
 	CStreaming::Update();
+#ifdef _3DS
+	rw::c3d::profileRecordStreaming(profileStreamingStart);
+#endif
 	//uint32 processTime = CTimer::GetCurrentTimeInCycles() / CTimer::GetCyclesPerMillisecond() - startTime;
 	CWindModifiers::Number = 0;
 	if (!CTimer::GetIsPaused())
 	{
 #ifndef MASTER
 		if (VarUpdatePlayerCoords) {
-			FindPlayerPed()->Teleport(PlayerCoords);
-			VarUpdatePlayerCoords = false;
+			CPlayerPed *player = FindPlayerPed();
+			if(player) {
+				player->Teleport(PlayerCoords);
+				VarUpdatePlayerCoords = false;
+			}
 		}
 #endif
 		PS3_GAME_STEP("CSprite2d::SetRecipNearClip");
@@ -986,7 +1157,8 @@ void CGame::Process(void)
 		PS3_GAME_STEP("CRecordDataForChase::SaveOrRetrieveDataForThisFrame");
 		CRecordDataForChase::SaveOrRetrieveDataForThisFrame();
 		PS3_GAME_STEP("CPad::DoCheats");
-		CPad::DoCheats();
+		if(FindPlayerPed())
+			CPad::DoCheats();
 		PS3_GAME_STEP("CClock::Update");
 		CClock::Update();
 		PS3_GAME_STEP("CWeather::Update");
@@ -1004,6 +1176,18 @@ void CGame::Process(void)
 		PS3_GAME_STEP("CTheScripts::Process");
 		CTheScripts::Process();
 		POP_MEMID();
+		/* CLEAR_CUTSCENE is a script command, so repair an occupied player's
+		 * vehicle state only after the complete script pass can no longer overwrite
+		 * it with the cutscene/on-foot pose. */
+		CCutsceneMgr::RestorePlayerVehicleAfterCutscene();
+#if defined(_3DS) || defined(__PS3__)	// reLCS-PS3: a game fix of the 3DS port
+		/* Save restoration can leave the player pool empty for a few normal
+		 * frames while the restarted main script waits for streamed models.
+		 * Timers, streaming and scripts above must keep advancing, but every
+		 * world subsystem below assumes that Tony already exists. */
+		if(FindPlayerPed() == nil)
+			return;
+#endif
 
 		PS3_GAME_STEP("CCollision::Update");
 		CCollision::Update();
@@ -1114,6 +1298,7 @@ void CGame::Process(void)
 			POP_MEMID();
 		}
 	}
+	FinalMissionMusic::Update();
 #ifdef GTA_PS2
 	PS3_GAME_STEP("CMemCheck::DoTest");
 	CMemCheck::DoTest();

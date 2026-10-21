@@ -9,6 +9,8 @@
 #include "Ped.h"
 #include "PlayerPed.h"
 #include "Wanted.h"
+
+extern bool gLCSUpsideDownCheat;
 #include "Pad.h"
 #include "ControllerConfig.h"
 #include "General.h"
@@ -33,6 +35,11 @@
 #include "Debug.h"
 #include "GenericGameStorage.h"
 #include "Camera.h"
+#ifdef _3DS
+#include "../../../../common/3ds/CameraCollision.h"
+#include "../../../../common/3ds/CameraComfort.h"
+#include "../../../../common/3ds/CameraPresetTransition.h"
+#endif
 
 enum
 {
@@ -69,6 +76,23 @@ enum
 // NB: removed explicit TheCamera from all functions
 
 CCamera TheCamera;
+
+#ifdef _3DS
+static bool
+ManualHandoffUsesPed3DS(int pedState)
+{
+	return pedState == PED_EXIT_CAR || pedState == PED_DRAG_FROM_CAR;
+}
+
+static bool
+ManualHandoffNeedsMode3DS(bool vehicle, int mode)
+{
+	if(!vehicle)
+		return mode != CCam::MODE_FOLLOWPED;
+	return mode != CCam::MODE_CAM_ON_A_STRING && mode != CCam::MODE_BEHINDCAR &&
+		mode != CCam::MODE_BEHINDBOAT;
+}
+#endif
 #if defined(PC_PLAYER_CONTROLS) && !defined(__PS3__)
 bool CCamera::m_bUseMouse3rdPerson = true;
 #else
@@ -273,7 +297,182 @@ CCamera::Process(void)
 	if(Cams[(ActiveCam+1)%2].CamTargetEntity == nil)
 		Cams[(ActiveCam+1)%2].CamTargetEntity = pTargetEntity;
 
+#ifdef _3DS
+	static CameraPreset3DS::Transition presetTransition3DS;
+	static CameraPreset3DS::ManualDistance presetDistance3DS;
+	static bool manualPresetOverride3DS=false;
+	static int lastFollowCarZoom3DS=CAM_ZOOM_2,lastFollowPedZoom3DS=CAM_ZOOM_2;
+	const bool manualPresetInput3DS=Abs(CPad::GetPad(0)->LookAroundLeftRight())>0 || Abs(CPad::GetPad(0)->LookAroundUpDown())>0;
+	const bool priorCinemaControl3DS=WhoIsInControlOfTheCamera==CAMCONTROL_OBBE;
+	static CameraPreset3DS::CinematicHandoff cinemaHandoff3DS;
+	const int priorPresetMode3DS=Cams[ActiveCam].Mode;
+	const CameraPreset3DS::Pose priorPresetPose3DS={GetPosition(),GetForward(),GetUp(),CDraw::GetFOV(),RwCameraGetNearClipPlane(Scene.camera)};
+	CPed *nativeCameraPed3DS=FindPlayerPed();
+	static CPed *previousWorldPed3DS=nil;
+	static CVector previousWorldPosition3DS;
+	static bool previousWorldPositionValid3DS=false;
+	bool playerTeleported3DS=false;
+	if(nativeCameraPed3DS){
+		const CVector worldPosition3DS=nativeCameraPed3DS->GetPosition();
+		playerTeleported3DS=previousWorldPositionValid3DS &&
+			(previousWorldPed3DS!=nativeCameraPed3DS ||
+			 (worldPosition3DS-previousWorldPosition3DS).MagnitudeSqr()>12.0f*12.0f);
+		previousWorldPed3DS=nativeCameraPed3DS;
+		previousWorldPosition3DS=worldPosition3DS;
+		previousWorldPositionValid3DS=true;
+	}else{
+		previousWorldPed3DS=nil;
+		previousWorldPositionValid3DS=false;
+	}
+	const bool restartCamera3DS=CWorld::Players[CWorld::PlayerInFocus].m_WBState!=WBSTATE_PLAYING;
+	const bool priorSpecialCamera3DS=restartCamera3DS || playerTeleported3DS ||
+		m_bPlayerIsInGarage || m_bJustCameOutOfGarage ||
+		m_bGarageFixedCamPositionSet || m_bCameraJustRestored || m_bRestoreByJumpCut ||
+		(Cams[ActiveCam].Mode==CCam::MODE_FIXED && WhoIsInControlOfTheCamera!=CAMCONTROL_OBBE) ||
+		WhoIsInControlOfTheCamera==CAMCONTROL_SCRIPT || m_bLookingAtVector ||
+		CCutsceneMgr::IsRunning() || CReplay::IsPlayingBack() || WorldViewerBeingUsed;
+	// Native CamControl performs its own collision queries before the custom
+	// comfort pass below. During an enter/exit interaction, exclude the actor
+	// and the vehicle being interacted with there as well; otherwise the car can
+	// pin the native destination beside its body and make our orbit stall before
+	// jumping to the rear follow pose.
+	const int nativeCameraState3DS=nativeCameraPed3DS?nativeCameraPed3DS->GetPedState():-1;
+	const bool nativeCameraAction3DS=nativeCameraState3DS==PED_ENTER_CAR || nativeCameraState3DS==PED_EXIT_CAR ||
+		nativeCameraState3DS==PED_OPEN_DOOR || nativeCameraState3DS==PED_CARJACK ||
+		nativeCameraState3DS==PED_DRAG_FROM_CAR;
+	CEntity *nativeCameraVehicle3DS=nativeCameraPed3DS?(nativeCameraPed3DS->m_pMyVehicle?
+		nativeCameraPed3DS->m_pMyVehicle:nativeCameraPed3DS->m_carInObjective):nil;
+	CameraCollision3DS::Scope nativeCameraQuery3DS(nativeCameraAction3DS && !priorSpecialCamera3DS,
+		nativeCameraAction3DS,nativeCameraVehicle3DS);
+#endif
 	CamControl();
+#ifdef _3DS
+	/* Fixed/script cameras own their complete entry and exit. Keep a
+	 * short release barrier after the native fixed camera disappears, otherwise
+	 * a stale custom preset can resume on the following frame. */
+	static float specialCameraRelease3DS=0.f;
+	const bool nativeSpecialCamera3DS=priorSpecialCamera3DS || restartCamera3DS || playerTeleported3DS ||
+		m_bPlayerIsInGarage || m_bJustCameOutOfGarage ||
+		m_bGarageFixedCamPositionSet || m_bCameraJustRestored || m_bRestoreByJumpCut ||
+		(Cams[ActiveCam].Mode==CCam::MODE_FIXED && WhoIsInControlOfTheCamera!=CAMCONTROL_OBBE) ||
+		WhoIsInControlOfTheCamera==CAMCONTROL_SCRIPT || m_bLookingAtVector ||
+		CCutsceneMgr::IsRunning() || CReplay::IsPlayingBack() || WorldViewerBeingUsed;
+	if(nativeSpecialCamera3DS)
+		specialCameraRelease3DS=.75f;
+	else
+		specialCameraRelease3DS=Max(0.f,specialCameraRelease3DS-CTimer::GetTimeStep()/50.f);
+	const bool specialCamera3DS=nativeSpecialCamera3DS || specialCameraRelease3DS>0.f;
+	if(specialCamera3DS){
+		presetTransition3DS.Reset();presetDistance3DS.active=false;manualPresetOverride3DS=false;
+		cinemaHandoff3DS.waiting=false;
+	}
+	bool waitingCinemaExit3DS=cinemaHandoff3DS.Update(priorCinemaControl3DS,
+		WhoIsInControlOfTheCamera==CAMCONTROL_OBBE,m_bRestoreByJumpCut || m_bStartInterScript);
+	if(CarZoomIndicator>=CAM_ZOOM_1 && CarZoomIndicator<=CAM_ZOOM_3)lastFollowCarZoom3DS=(int)CarZoomIndicator;
+	if(PedZoomIndicator>=CAM_ZOOM_1 && PedZoomIndicator<=CAM_ZOOM_3)lastFollowPedZoom3DS=(int)PedZoomIndicator;
+	const bool newViewSelection3DS=CPad::GetPad(0)->CycleCameraModeUpJustDown() || CPad::GetPad(0)->CycleCameraModeDownJustDown();
+	if(m_bJustInitalised || newViewSelection3DS){manualPresetOverride3DS=false;presetDistance3DS.active=false;}
+	CPed *manualPed3DS=FindPlayerPed();
+	const bool leavingVehicle3DS=manualPed3DS && ManualHandoffUsesPed3DS(manualPed3DS->GetPedState());
+	static bool previousLeavingVehicle3DS=false;
+	if(leavingVehicle3DS && !previousLeavingVehicle3DS)manualPresetOverride3DS=false;
+	previousLeavingVehicle3DS=leavingVehicle3DS;
+	const bool handoffPreset3DS=!specialCamera3DS && manualPresetInput3DS && !manualPresetOverride3DS &&
+		(presetTransition3DS.active || waitingCinemaExit3DS || leavingVehicle3DS) &&
+		!CCutsceneMgr::IsRunning() && !CReplay::IsPlayingBack() && !WorldViewerBeingUsed &&
+		(WhoIsInControlOfTheCamera==CAMCONTROL_GAME || WhoIsInControlOfTheCamera==CAMCONTROL_OBBE);
+	if(handoffPreset3DS){
+		CVehicle *manualVehicle3DS=FindPlayerVehicle();
+		CEntity *manualTarget=leavingVehicle3DS?(CEntity*)manualPed3DS:
+			(manualVehicle3DS?(CEntity*)manualVehicle3DS:(CEntity*)manualPed3DS);
+		auto transferTarget3DS=[](CEntity *&reference,CEntity *target){
+			if(reference==target)return;
+			CEntity *old=reference;reference=target;
+			if(old)old->PruneReferences();if(target)target->RegisterReference(&reference);
+		};
+		transferTarget3DS(pTargetEntity,manualTarget);
+		transferTarget3DS(Cams[ActiveCam].CamTargetEntity,manualTarget);
+		const bool vehicle=manualTarget->IsVehicle();
+		if(ManualHandoffNeedsMode3DS(vehicle,Cams[ActiveCam].Mode)){
+			Cams[ActiveCam].Mode=vehicle?CCam::MODE_CAM_ON_A_STRING:CCam::MODE_FOLLOWPED;
+			if(vehicle)CarZoomIndicator=lastFollowCarZoom3DS;else PedZoomIndicator=lastFollowPedZoom3DS;
+		}
+		WhoIsInControlOfTheCamera=CAMCONTROL_GAME;m_bLookingAtPlayer=true;m_bLookingAtVector=false;
+		m_bRestoreByJumpCut=false;m_bStartInterScript=false;cinemaHandoff3DS.waiting=waitingCinemaExit3DS=false;
+		m_uiTransitionState=0;m_bWaitForInterpolToFinish=false;
+		m_bUseTransitionBeta=false;m_bCamDirectlyBehind=false;m_bCamDirectlyInFront=false;
+		Cams[ActiveCam].Source=priorPresetPose3DS.source;Cams[ActiveCam].Front=priorPresetPose3DS.front;Cams[ActiveCam].Up=priorPresetPose3DS.up;
+		const CameraPreset3DS::Angles angles=CameraPreset3DS::Read(priorPresetPose3DS);
+		Cams[ActiveCam].Beta=angles.yaw;Cams[ActiveCam].Alpha=angles.pitch;
+#ifdef FREE_CAM
+		if(vehicle && bFreeCam)Cams[ActiveCam].Beta=CameraPreset3DS::Wrap(angles.yaw+PI);
+#endif
+		Cams[ActiveCam].BetaSpeed=Cams[ActiveCam].AlphaSpeed=0.f;Cams[ActiveCam].ResetStatics=false;
+		presetDistance3DS.Begin(priorPresetPose3DS,pTargetEntity->GetPosition());
+		presetTransition3DS.Reset();manualPresetOverride3DS=true;
+	}
+	const int comfortMode3DS = Cams[ActiveCam].Mode;
+	const bool comfort3DS = !specialCamera3DS && m_bLookingAtPlayer && !m_bLookingAtVector &&
+		WhoIsInControlOfTheCamera == CAMCONTROL_GAME && !CCutsceneMgr::IsRunning() &&
+		!CReplay::IsPlayingBack() && !WorldViewerBeingUsed && !CTimer::GetIsPaused() &&
+		!CPad::GetPad(0)->GetLookBehindForCar() && !CPad::GetPad(0)->GetLookBehindForPed() &&
+		!CPad::GetPad(0)->GetLookLeft() && !CPad::GetPad(0)->GetLookRight() &&
+		(comfortMode3DS == CCam::MODE_FOLLOWPED || comfortMode3DS == CCam::MODE_FIGHT_CAM ||
+		 comfortMode3DS == CCam::MODE_CAM_ON_A_STRING || comfortMode3DS == CCam::MODE_BEHINDCAR ||
+		 comfortMode3DS == CCam::MODE_BEHINDBOAT);
+	CPed *comfortPlayer3DS = FindPlayerPed();
+	const int comfortPedState3DS = comfortPlayer3DS ? comfortPlayer3DS->GetPedState() : -1;
+	static int priorActionState3DS=-1;
+	if(!manualPresetInput3DS && comfortPedState3DS!=priorActionState3DS &&
+	   (comfortPedState3DS==PED_ENTER_CAR || comfortPedState3DS==PED_EXIT_CAR || comfortPedState3DS==PED_CARJACK))manualPresetOverride3DS=false;
+	priorActionState3DS=comfortPedState3DS;
+	const bool action3DS = comfortPedState3DS == PED_ENTER_CAR || comfortPedState3DS == PED_EXIT_CAR ||
+		comfortPedState3DS == PED_OPEN_DOOR || comfortPedState3DS == PED_CARJACK || comfortPedState3DS == PED_DRAG_FROM_CAR ||
+		comfortPedState3DS == PED_FALL || comfortPedState3DS == PED_GETUP;
+	CEntity *actionVehicle3DS = comfortPlayer3DS ? (comfortPlayer3DS->m_pMyVehicle ?
+		comfortPlayer3DS->m_pMyVehicle : comfortPlayer3DS->m_carInObjective) : nil;
+	// This scope affects camera queries only, never world physics or weapon traces.
+	const bool presetMode3DS = waitingCinemaExit3DS || WhoIsInControlOfTheCamera == CAMCONTROL_OBBE ||
+		comfortMode3DS==CCam::MODE_FOLLOWPED || comfortMode3DS==CCam::MODE_FIGHT_CAM ||
+		comfortMode3DS==CCam::MODE_CAM_ON_A_STRING || comfortMode3DS==CCam::MODE_BEHINDCAR ||
+		comfortMode3DS==CCam::MODE_BEHINDBOAT || comfortMode3DS==CCam::MODE_TOPDOWN ||
+		comfortMode3DS==CCam::MODE_TOP_DOWN_PED || comfortMode3DS==CCam::MODE_GTACLASSIC ||
+		(comfortMode3DS==CCam::MODE_1STPERSON && ((pTargetEntity && pTargetEntity->IsVehicle()) ||
+		 (action3DS && actionVehicle3DS)));
+	const bool presetEligible3DS = !specialCamera3DS && presetMode3DS && !CCutsceneMgr::IsRunning() && !CReplay::IsPlayingBack() &&
+		!WorldViewerBeingUsed && !CTimer::GetIsPaused() &&
+		((WhoIsInControlOfTheCamera == CAMCONTROL_GAME && m_bLookingAtPlayer && !m_bLookingAtVector) ||
+		 WhoIsInControlOfTheCamera == CAMCONTROL_OBBE);
+	// One owner for normal vehicle entry: the preset orbit targets the native
+	// destination, not a native interpolation followed by another action filter.
+	static bool entryOrbit3DS=false,priorEntryVehicle3DS=false;
+	const bool entryVehicle3DS=pTargetEntity && pTargetEntity->IsVehicle();
+	if(m_bJustInitalised)priorEntryVehicle3DS=entryVehicle3DS;
+	const bool entryFollow3DS=presetEligible3DS && !waitingCinemaExit3DS &&
+		WhoIsInControlOfTheCamera==CAMCONTROL_GAME && entryVehicle3DS &&
+		(comfortMode3DS==CCam::MODE_CAM_ON_A_STRING || comfortMode3DS==CCam::MODE_BEHINDCAR || comfortMode3DS==CCam::MODE_BEHINDBOAT);
+	if(!entryFollow3DS || manualPresetInput3DS || m_bJustInitalised || specialCamera3DS)entryOrbit3DS=false;
+	else if(!priorEntryVehicle3DS)entryOrbit3DS=true;
+	priorEntryVehicle3DS=entryVehicle3DS;
+	if(entryOrbit3DS){
+		m_uiTransitionState=0;m_bWaitForInterpolToFinish=false;
+		m_vecDoingSpecialInterPolation=false;m_bUseTransitionBeta=false;
+	}
+	// Keep the native pedestrian follow running as a live destination while the
+	// visible camera remains solely owned by our car-to-ped interpolation.
+	static bool exitOrbit3DS=false;
+	const bool exitAction3DS=comfortPedState3DS==PED_EXIT_CAR || comfortPedState3DS==PED_DRAG_FROM_CAR;
+	if(!presetEligible3DS || manualPresetInput3DS || m_bJustInitalised || specialCamera3DS)exitOrbit3DS=false;
+	else if(exitAction3DS)exitOrbit3DS=true;
+	if(exitOrbit3DS){
+		m_uiTransitionState=0;m_bWaitForInterpolToFinish=false;
+		m_vecDoingSpecialInterPolation=false;m_bUseTransitionBeta=false;
+	}
+	CameraOcclusion3DS::Preset() = CameraOcclusion3DS::PresetVisibility{};
+	CameraOcclusion3DS::Begin(CTimer::GetTimeStep()/50.f,comfort3DS || presetEligible3DS);
+	CameraCollision3DS::Scope cameraQuery3DS(comfort3DS,action3DS,actionVehicle3DS);
+#endif
+
 	if(m_bFading)
 		ProcessFade();
 	if(m_bMusicFading)
@@ -302,6 +501,16 @@ CCamera::Process(void)
 	else
 		oldBeta = CGeneral::GetATanOfXY(Cams[ActiveCam].Front.x, Cams[ActiveCam].Front.y);
 
+#ifdef _3DS
+	static bool previousStick3DS = false;
+	const bool stick3DS = comfort3DS && (Abs(CPad::GetPad(0)->LookAroundLeftRight())>0 ||
+		Abs(CPad::GetPad(0)->LookAroundUpDown())>0);
+	if(comfort3DS && previousStick3DS && !stick3DS)
+		Cams[ActiveCam].BetaSpeed = Cams[ActiveCam].AlphaSpeed = 0.f;
+	previousStick3DS = stick3DS;
+	const float orbitBeta3DS = Cams[ActiveCam].Beta;
+	const float orbitAlpha3DS = Cams[ActiveCam].Alpha;
+#endif
 	Cams[ActiveCam].Process();
 	Cams[ActiveCam].ProcessSpecialHeightRoutines();
 
@@ -545,6 +754,242 @@ CCamera::Process(void)
 		CamUp.Normalise();
 	}
 
+#ifdef _3DS
+	static CameraComfort3DS::ExitDestination exitDestination3DS;
+	if(exitOrbit3DS && comfortPlayer3DS){
+		const CVector exitAnchor3DS=comfortPlayer3DS->GetPosition();
+		bool correctedExit3DS=exitDestination3DS.Apply(priorPresetPose3DS.source,priorPresetPose3DS.front,
+			exitAnchor3DS,CamSource,CamFront);
+		const CVector exitFocus3DS=exitAnchor3DS+CVector(0,0,.8f);
+		CColPoint exitPoint3DS;CEntity *exitHit3DS=nil;
+		CEntity *savedExitIgnore3DS=CWorld::pIgnoreEntity;CWorld::pIgnoreEntity=comfortPlayer3DS;
+		CameraCollision3DS::Scope exitVisibility3DS(true,false,nil);
+		if(CWorld::ProcessLineOfSight(exitFocus3DS,CamSource,exitPoint3DS,exitHit3DS,true,true,false,true,false,true,true)){
+			CVector away3DS=priorPresetPose3DS.source-exitFocus3DS;away3DS.z=0.f;
+			if(away3DS.MagnitudeSqr()<.0001f)away3DS=CVector(0,-1,0);else away3DS.Normalise();
+			const CVector side3DS(-away3DS.y,away3DS.x,0.f);
+			const CVector candidates3DS[]={exitFocus3DS+away3DS*4.f+CVector(0,0,1.2f),
+				exitFocus3DS+side3DS*4.f+CVector(0,0,1.5f),exitFocus3DS-side3DS*4.f+CVector(0,0,1.5f),
+				exitFocus3DS+away3DS*3.f+CVector(0,0,2.5f)};
+			float best3DS=1.0e30f;
+			for(int i=0;i<4;i++)if(!CWorld::ProcessLineOfSight(exitFocus3DS,candidates3DS[i],exitPoint3DS,exitHit3DS,true,true,false,true,false,true,true)){
+				const float score3DS=(candidates3DS[i]-priorPresetPose3DS.source).MagnitudeSqr();
+				if(score3DS<best3DS){best3DS=score3DS;CamSource=candidates3DS[i];correctedExit3DS=true;}
+			}
+			if(best3DS<1.0e29f){CamFront=exitFocus3DS-CamSource;CamFront.Normalise();exitDestination3DS.Remember(exitAnchor3DS,CamSource,exitFocus3DS);}
+		}
+		CWorld::pIgnoreEntity=savedExitIgnore3DS;
+		if(correctedExit3DS)CameraComfort3DS::LevelHorizon(CamFront,CamUp);
+	}else exitDestination3DS.Reset();
+	static CameraComfort3DS::Motion comfortMotion3DS;
+	static CameraComfort3DS::DoorTransition doorTransition3DS;
+	static CEntity *previousAnchorEntity3DS = nil;
+	if(m_bJustInitalised) { comfortMotion3DS.Reset(); doorTransition3DS.Reset(); previousAnchorEntity3DS=nil; }
+	if(comfort3DS && comfortPlayer3DS && !entryOrbit3DS && !exitOrbit3DS && !specialCamera3DS){
+		CEntity *anchorEntity3DS = pTargetEntity ? pTargetEntity : comfortPlayer3DS;
+		const CVector anchor3DS = anchorEntity3DS->GetPosition();
+		if(previousAnchorEntity3DS != anchorEntity3DS) comfortMotion3DS.Rebase(anchor3DS);
+		previousAnchorEntity3DS = anchorEntity3DS;
+		const float focusDistance3DS = Max(0.5f, (CamSource-anchor3DS).Magnitude());
+		const CVector focus3DS = CamSource + CamFront*focusDistance3DS;
+		CVector smoothSource3DS, smoothTarget3DS;
+		const bool manual3DS = Abs(CPad::GetPad(0)->LookAroundLeftRight()) > 0 ||
+			Abs(CPad::GetPad(0)->LookAroundUpDown()) > 0;
+		const bool interactive3DS = CameraComfort3DS::SmoothInteraction(manual3DS,action3DS,m_uiTransitionState!=0);
+		// Normal follow is exactly the engine pose; manual orbit has no lag filter.
+		smoothSource3DS=CamSource;smoothTarget3DS=focus3DS;
+		bool adjusted3DS = (manual3DS && !presetDistance3DS.active) ? comfortMotion3DS.Direct(anchor3DS,CamSource,focus3DS,smoothSource3DS,smoothTarget3DS) :
+			(interactive3DS && comfortMotion3DS.Candidate(anchor3DS,CamSource,focus3DS,CTimer::GetTimeStep()/50.f,
+				false,smoothSource3DS,smoothTarget3DS));
+		const CVector previousVisibleSource3DS = GetPosition();
+		const CVector previousVisibleTarget3DS = previousVisibleSource3DS+GetForward()*
+			Max(.5f,(previousVisibleSource3DS-anchor3DS).Magnitude());
+		if(doorTransition3DS.Apply(comfortPedState3DS==PED_EXIT_CAR,manual3DS,CTimer::GetTimeStep()/50.f,
+			previousVisibleSource3DS,previousVisibleTarget3DS,smoothSource3DS,smoothTarget3DS)) adjusted3DS=true;
+		if(adjusted3DS){
+			CColPoint point3DS;
+			CEntity *hit3DS = nil;
+			CEntity *savedIgnore3DS = CWorld::pIgnoreEntity;
+			CWorld::pIgnoreEntity = pTargetEntity;
+			const CameraOcclusion3DS::Registry previousFade3DS = CameraOcclusion3DS::Data();
+			auto obstructed3DS = [&](const CVector &source, const CVector &target) {
+				const bool ray = CWorld::ProcessLineOfSight(target,source,
+					point3DS,hit3DS,true,true,false,true,false,true,true);
+				CameraOcclusion3DS::Data().contact = false;
+				CameraOcclusion3DS::CollectScope collect3DS;
+				CWorld::TestSphereAgainstWorld(source,0.25f,pTargetEntity,
+					true,true,false,true,false,true);
+				return ray || CameraOcclusion3DS::Data().contact || CameraOcclusion3DS::Data().overflow;
+			};
+			bool blocked3DS = obstructed3DS(smoothSource3DS,smoothTarget3DS);
+			if(blocked3DS){
+				// Never fade a rejected candidate's contacts at a different visible pose.
+				CameraOcclusion3DS::Data() = previousFade3DS;
+				CVector heldSource3DS,heldTarget3DS;
+				if(comfortMotion3DS.Previous(anchor3DS,heldSource3DS,heldTarget3DS) &&
+				   !obstructed3DS(heldSource3DS,heldTarget3DS)){
+					smoothSource3DS = heldSource3DS; smoothTarget3DS = heldTarget3DS;
+					blocked3DS = false;
+					// Reject only this rotation; opposite input can move away next frame.
+					Cams[ActiveCam].Beta = orbitBeta3DS;
+					Cams[ActiveCam].Alpha = orbitAlpha3DS;
+					Cams[ActiveCam].BetaSpeed = Cams[ActiveCam].AlphaSpeed = 0.f;
+					Cams[ActiveCam].Source = heldSource3DS;
+					Cams[ActiveCam].Front = heldTarget3DS-heldSource3DS;
+					Cams[ActiveCam].Front.Normalise();
+				}else CameraOcclusion3DS::Data() = previousFade3DS;
+			}
+			CWorld::pIgnoreEntity = savedIgnore3DS;
+			if(!blocked3DS){
+				CamSource = smoothSource3DS;
+				CamFront = smoothTarget3DS-CamSource;
+				CamFront.Normalise();
+				CamRight = CrossProduct(CamFront,CamUp);
+				CamRight.Normalise();
+				CamUp = CrossProduct(CamRight,CamFront);
+				CamUp.Normalise();
+				comfortMotion3DS.Commit(anchor3DS,CamSource,smoothTarget3DS);
+			}else comfortMotion3DS.Commit(anchor3DS,CamSource,focus3DS);
+		}else { comfortMotion3DS.Reset(); comfortMotion3DS.Commit(anchor3DS,CamSource,focus3DS); }
+		CameraComfort3DS::LevelHorizon(CamFront,CamUp);
+	}else { comfortMotion3DS.Reset(); doorTransition3DS.Reset(); previousAnchorEntity3DS=nil; }
+#endif
+
+#ifdef _3DS
+	// Blend only a change of selected view; stable following remains untouched.
+
+	if(m_bJustInitalised || specialCamera3DS) presetTransition3DS.Reset();
+	const bool safePresetEligible3DS = presetEligible3DS && !specialCamera3DS;
+	const bool cinema3DS = waitingCinemaExit3DS || WhoIsInControlOfTheCamera == CAMCONTROL_OBBE;
+	const bool vehicleView3DS = cinema3DS ? FindPlayerVehicle()!=nil : pTargetEntity && pTargetEntity->IsVehicle();
+	static bool previousVehicleView3DS=false, exitPreset3DS=false;
+	if(m_bJustInitalised || !safePresetEligible3DS){previousVehicleView3DS=vehicleView3DS;exitPreset3DS=false;presetDistance3DS.active=false;}
+	if((previousVehicleView3DS && !vehicleView3DS) || comfortPedState3DS==PED_EXIT_CAR)exitPreset3DS=true;
+	const bool enteringVehicleView3DS=!previousVehicleView3DS && vehicleView3DS;
+	previousVehicleView3DS=vehicleView3DS;
+	const int zoom3DS = (int)(vehicleView3DS ? CarZoomIndicator : PedZoomIndicator);
+	const int mode3DS = Cams[ActiveCam].Mode;
+	const bool normalMode3DS = mode3DS==CCam::MODE_FOLLOWPED || mode3DS==CCam::MODE_FIGHT_CAM ||
+		mode3DS==CCam::MODE_CAM_ON_A_STRING || mode3DS==CCam::MODE_BEHINDCAR || mode3DS==CCam::MODE_BEHINDBOAT;
+	// Ignore internal cinematic shot changes; only entering/leaving that preset blends.
+	// Rebase from the displayed pose at both ends of the native exit transition.
+	// Native entry interpolation finishing must not restart the same easing curve.
+	const int phase3DS = (cinema3DS || (vehicleView3DS && comfortPedState3DS!=PED_EXIT_CAR)) ? 0 : ((m_uiTransitionState!=0?1:0) + (comfortPedState3DS==PED_EXIT_CAR?2:0));
+	const int settledPresetKey3DS = (vehicleView3DS?1:0)+zoom3DS*2+(cinema3DS?255:(normalMode3DS?0:mode3DS))*32+phase3DS*16384;
+	// Keep one exit key while the native camera changes target and phase, then
+	// adopt the final pedestrian key without starting a second interpolation.
+	const int presetKey3DS = exitPreset3DS ? 0x1FFFFFFF : settledPresetKey3DS;
+	const CVector presetAnchor3DS = pTargetEntity->GetPosition();
+	const bool hood3DS = !cinema3DS && mode3DS==CCam::MODE_1STPERSON;
+	static bool previousSpecialView3DS=false, fadePreset3DS=false;
+	static CameraPreset3DS::OpacityEnvelope presetOpacity3DS;
+	static CameraPreset3DS::VehicleOpacity visibleOpacity3DS;
+	if(!safePresetEligible3DS || m_bJustInitalised){previousSpecialView3DS=false;fadePreset3DS=false;presetOpacity3DS.Reset();visibleOpacity3DS.Reset();}
+	if(presetTransition3DS.valid && presetKey3DS!=presetTransition3DS.key)
+		fadePreset3DS=fadePreset3DS || previousSpecialView3DS || hood3DS || cinema3DS;
+	previousSpecialView3DS=hood3DS || cinema3DS;
+	const bool cyclePreset3DS=CPad::GetPad(0)->CycleCameraModeUpJustDown() || CPad::GetPad(0)->CycleCameraModeDownJustDown();
+	const bool topDown3DS=mode3DS==CCam::MODE_TOPDOWN || mode3DS==CCam::MODE_TOP_DOWN_PED || mode3DS==CCam::MODE_GTACLASSIC;
+	const bool wasTopDown3DS=priorPresetMode3DS==CCam::MODE_TOPDOWN || priorPresetMode3DS==CCam::MODE_TOP_DOWN_PED || priorPresetMode3DS==CCam::MODE_GTACLASSIC;
+	// A selected top-down jump cut explicitly starts at the last displayed pose,
+	// independent of the engine's interpolation history or its reset flags.
+	if(safePresetEligible3DS && !manualPresetOverride3DS && !m_bJustInitalised && ((cyclePreset3DS && !presetTransition3DS.valid) ||
+		(priorPresetMode3DS!=mode3DS && (topDown3DS || wasTopDown3DS)))){
+		presetTransition3DS.valid=true;presetTransition3DS.active=false;
+		presetTransition3DS.key=-1;presetTransition3DS.special=true;
+		presetTransition3DS.displayed=priorPresetPose3DS;
+		presetTransition3DS.displayedAnchor=presetAnchor3DS;presetTransition3DS.tracked=!hood3DS && !cinema3DS;
+	}
+	CameraPreset3DS::Pose presetPose3DS = {CamSource,CamFront,CamUp,FOV,RwCameraGetNearClipPlane(Scene.camera)};
+	if(topDown3DS && !cinema3DS)CameraPreset3DS::CanonicalTopDown(presetPose3DS);
+	const bool wasPresetActive3DS=presetTransition3DS.active;
+	if(manualPresetOverride3DS){
+		presetTransition3DS.Reset();exitPreset3DS=false;
+		CamSource=Cams[ActiveCam].Source;CamFront=Cams[ActiveCam].Front;CamUp=Cams[ActiveCam].Up;
+		presetPose3DS={CamSource,CamFront,CamUp,FOV,RwCameraGetNearClipPlane(Scene.camera)};
+	}
+	// Cinematic restoration is requested at the END of CamControl and consumed next
+	// frame. Keep the displayed shot until the destination camera really exists.
+	if(waitingCinemaExit3DS){
+		presetPose3DS=priorPresetPose3DS;
+		CamSource=presetPose3DS.source;CamFront=presetPose3DS.front;CamUp=presetPose3DS.up;FOV=presetPose3DS.fov;
+		RwCameraSetNearClipPlane(Scene.camera,presetPose3DS.nearClip);
+	}
+	if(!waitingCinemaExit3DS && presetTransition3DS.Apply(presetKey3DS,cinema3DS || !normalMode3DS,safePresetEligible3DS,
+		CTimer::GetTimeStep()/50.f,presetPose3DS,&presetAnchor3DS,!hood3DS && !cinema3DS,exitPreset3DS)){
+		CamSource=presetPose3DS.source;CamFront=presetPose3DS.front;CamUp=presetPose3DS.up;FOV=presetPose3DS.fov;
+		RwCameraSetNearClipPlane(Scene.camera,presetPose3DS.nearClip);
+		// Preserve contact-only alpha for geometry actually touching the moving camera.
+		CameraOcclusion3DS::CollectScope presetContact3DS;
+		CWorld::TestSphereAgainstWorld(CamSource,.25f,pTargetEntity,true,true,false,true,false,true);
+	}
+	if(exitPreset3DS && wasPresetActive3DS && !presetTransition3DS.active)
+		presetTransition3DS.key=settledPresetKey3DS;
+	if(topDown3DS && !cinema3DS){
+		CamSource=presetPose3DS.source;CamFront=presetPose3DS.front;CamUp=presetPose3DS.up;
+	}
+	if(!manualPresetOverride3DS && wasPresetActive3DS && !presetTransition3DS.active && normalMode3DS)
+		presetDistance3DS.Begin(priorPresetPose3DS,presetAnchor3DS);
+	if(!safePresetEligible3DS)presetDistance3DS.active=false;
+	if(presetDistance3DS.active && normalMode3DS && !waitingCinemaExit3DS){
+		CameraPreset3DS::Pose distancePose3DS={CamSource,CamFront,CamUp,FOV,RwCameraGetNearClipPlane(Scene.camera)};
+		presetDistance3DS.Apply(distancePose3DS,presetAnchor3DS,CTimer::GetTimeStep()/50.f);
+		CamSource=distancePose3DS.source;
+		// A subsequent preset change must start at the actual distance-adjusted frame.
+		presetTransition3DS.displayed=distancePose3DS;
+		presetTransition3DS.displayedAnchor=presetAnchor3DS;
+	}
+	static CameraPreset3DS::FollowSelection followSelection3DS;
+	const bool resolvedFollow3DS=followSelection3DS.Update(safePresetEligible3DS && vehicleView3DS && normalMode3DS && !cinema3DS,zoom3DS);
+	static CameraPreset3DS::EntryDistance entryDistance3DS;
+	// Manual handoff owns direction immediately and ManualDistance alone owns
+	// the return to the selected radius. Never let the old preset guard compete.
+	entryDistance3DS.CancelForManual(manualPresetInput3DS,manualPresetOverride3DS);
+	if(!safePresetEligible3DS || m_bJustInitalised || !vehicleView3DS || !normalMode3DS || cinema3DS)
+		entryDistance3DS.active=false;
+	else {
+		if(enteringVehicleView3DS || resolvedFollow3DS)entryDistance3DS.Begin(priorPresetPose3DS,presetAnchor3DS);
+		if(entryDistance3DS.active){
+			CameraPreset3DS::Pose entryPose3DS={CamSource,CamFront,CamUp,FOV,RwCameraGetNearClipPlane(Scene.camera)};
+			entryDistance3DS.Apply(entryPose3DS,presetAnchor3DS,CTimer::GetTimeStep()/50.f,
+				action3DS || m_uiTransitionState!=0 || presetTransition3DS.active || presetDistance3DS.active);
+			CamSource=entryPose3DS.source;
+			presetTransition3DS.displayed=entryPose3DS;presetTransition3DS.displayedAnchor=presetAnchor3DS;
+		}
+	}
+	if(entryOrbit3DS && !action3DS && !presetTransition3DS.active && !presetDistance3DS.active && !entryDistance3DS.active)entryOrbit3DS=false;
+	if(exitOrbit3DS && !action3DS && !presetTransition3DS.active && !presetDistance3DS.active)exitOrbit3DS=false;
+	CameraPreset3DS::Display().moving=safePresetEligible3DS &&
+		(presetTransition3DS.active || presetDistance3DS.active || entryDistance3DS.active);
+	const float envelopeOpacity3DS=presetOpacity3DS.Apply(presetKey3DS,presetTransition3DS.active,
+		presetTransition3DS.progress,hood3DS);
+	if(!presetTransition3DS.active){fadePreset3DS=false;exitPreset3DS=false;}
+	CVehicle *presetVehicle3DS=FindPlayerVehicle();
+	if(!presetVehicle3DS && action3DS && actionVehicle3DS && actionVehicle3DS->IsVehicle())
+		presetVehicle3DS=(CVehicle*)actionVehicle3DS;
+	if(safePresetEligible3DS && presetVehicle3DS){
+		// A cinematic label alone is not reason to fade a distant establishing shot.
+		const CVector delta3DS=CamSource-presetVehicle3DS->GetPosition();
+		const CVector local3DS(DotProduct(delta3DS,presetVehicle3DS->GetRight()),
+			DotProduct(delta3DS,presetVehicle3DS->GetForward()),DotProduct(delta3DS,presetVehicle3DS->GetUp()));
+		const auto &box3DS=presetVehicle3DS->GetColModel()->boundingBox;
+		const bool nearBody3DS=CameraPreset3DS::NearVehicle(local3DS,box3DS.min,box3DS.max);
+		const float desiredOpacity3DS=hood3DS?envelopeOpacity3DS:
+			(presetTransition3DS.active && fadePreset3DS && nearBody3DS?.4f:1.f);
+		const float vehicleOpacity3DS=visibleOpacity3DS.Update(desiredOpacity3DS,CTimer::GetTimeStep()/50.f);
+		auto &visibility3DS=CameraOcclusion3DS::Preset();
+		if(vehicleOpacity3DS<1.f || (hood3DS && presetTransition3DS.active)){
+			visibility3DS.vehicle=presetVehicle3DS;visibility3DS.opacity=vehicleOpacity3DS;
+			if(presetVehicle3DS->pDriver)visibility3DS.occupants[visibility3DS.count++]=presetVehicle3DS->pDriver;
+			for(unsigned int i=0;i<sizeof(presetVehicle3DS->pPassengers)/sizeof(presetVehicle3DS->pPassengers[0]) && visibility3DS.count<9;++i)
+				if(presetVehicle3DS->pPassengers[i])visibility3DS.occupants[visibility3DS.count++]=presetVehicle3DS->pPassengers[i];
+			visibility3DS.hoodSettled=hood3DS && !presetTransition3DS.active && vehicleOpacity3DS<=0.f;
+		}else if(hood3DS && !presetTransition3DS.active){
+			visibility3DS.vehicle=presetVehicle3DS;visibility3DS.hoodSettled=true;
+		}
+	}else visibleOpacity3DS.Reset();
+#endif
+
 	GetMatrix().GetRight() = CrossProduct(CamUp, CamFront);	// actually Left
 	GetMatrix().GetForward() = CamFront;
 	GetMatrix().GetUp() = CamUp;
@@ -592,8 +1037,8 @@ CCamera::Process(void)
 
 		*RwMatrixGetPos(RwFrameGetMatrix(frame)) = GetPosition();
 		*RwMatrixGetAt(RwFrameGetMatrix(frame)) = GetForward();
-		*RwMatrixGetUp(RwFrameGetMatrix(frame)) = GetUp();
-		*RwMatrixGetRight(RwFrameGetMatrix(frame)) = GetRight();
+		*RwMatrixGetUp(RwFrameGetMatrix(frame)) = gLCSUpsideDownCheat ? -GetUp() : GetUp();
+		*RwMatrixGetRight(RwFrameGetMatrix(frame)) = gLCSUpsideDownCheat ? -GetRight() : GetRight();
 		RwMatrixUpdate(RwFrameGetMatrix(frame));
 		RwFrameUpdateObjects(frame);
 	}else
@@ -603,8 +1048,8 @@ CCamera::Process(void)
 		m_vecGameCamPos = GetPosition();
 		*RwMatrixGetPos(RwFrameGetMatrix(frame)) = GetPosition();
 		*RwMatrixGetAt(RwFrameGetMatrix(frame)) = GetForward();
-		*RwMatrixGetUp(RwFrameGetMatrix(frame)) = GetUp();
-		*RwMatrixGetRight(RwFrameGetMatrix(frame)) = GetRight();
+		*RwMatrixGetUp(RwFrameGetMatrix(frame)) = gLCSUpsideDownCheat ? -GetUp() : GetUp();
+		*RwMatrixGetRight(RwFrameGetMatrix(frame)) = gLCSUpsideDownCheat ? -GetRight() : GetRight();
 		RwMatrixUpdate(RwFrameGetMatrix(frame));
 		RwFrameUpdateObjects(frame);
 		RwFrameOrthoNormalize(frame);
@@ -630,7 +1075,12 @@ CCamera::Process(void)
 	}else
 		LODDistMultiplier = 1.0f;
 	GenerationDistMultiplier = LODDistMultiplier;
+#ifdef _3DS
+	/* Keep the camera multiplier as the FOV/altitude baseline.  New3DS world
+	 * budgets are model-specific: vegetation 1.2, ordinary world 0.65. */
+#else
 	LODDistMultiplier *= CRenderer::ms_lodDistScale;
+#endif
 
 	CDraw::SetNearClipZ(RwCameraGetNearClipPlane(m_pRwCamera));
 	CDraw::SetFarClipZ(RwCameraGetFarClipPlane(m_pRwCamera));
@@ -2225,6 +2675,14 @@ CCamera::SetCamPositionForFixedMode(const CVector &Source, const CVector &UpOffS
 void
 CCamera::StartTransition(int16 newMode)
 {
+#ifdef _3DS
+	const bool keepEntryHeading3DS = m_bLookingAtPlayer && !m_bLookingAtVector &&
+		WhoIsInControlOfTheCamera == CAMCONTROL_GAME && !m_bPlayerIsInGarage && !m_bJustCameOutOfGarage &&
+		(newMode == CCam::MODE_FOLLOWPED || newMode == CCam::MODE_CAM_ON_A_STRING) &&
+		(Cams[ActiveCam].Mode == CCam::MODE_FOLLOWPED || Cams[ActiveCam].Mode == CCam::MODE_CAM_ON_A_STRING);
+	const CVector entryFront3DS = GetForward();
+#endif
+
 	bool switchFromFixedSyphon = false;
 	bool switchSyphonMode = false;
 	bool switchPedMode = false;
@@ -2507,6 +2965,27 @@ CCamera::StartTransition(int16 newMode)
 		m_fFractionInterToStopMovingTarget = m_fFractionInterToStopMoving;
 		m_fFractionInterToStopCatchUpTarget = m_fFractionInterToStopCatchUp;
 	}
+#ifdef _3DS
+	// Apply after all mode presets and Init, in both transition implementations.
+	if(keepEntryHeading3DS && entryFront3DS.x*entryFront3DS.x+entryFront3DS.y*entryFront3DS.y>0.0001f){
+		m_bUseTransitionBeta = true;
+		Cams[ActiveCam].m_fTransitionBeta = CGeneral::GetATanOfXY(entryFront3DS.x,entryFront3DS.y) +
+			(newMode == CCam::MODE_FOLLOWPED ? PI : 0.f);
+		Cams[ActiveCam].BetaSpeed = Cams[ActiveCam].AlphaSpeed = 0.f;
+		// Start from the visible pose, not the unsmoothed internal camera.
+		const float visibleRange3DS = Max(0.5f,(m_cvecStartingTargetForInterPol-m_cvecStartingSourceForInterPol).Magnitude());
+		m_cvecStartingSourceForInterPol = GetPosition();
+		m_cvecStartingTargetForInterPol = GetPosition()+entryFront3DS*visibleRange3DS;
+		m_cvecStartingUpForInterPol = GetUp();
+		CameraComfort3DS::LevelHorizon(entryFront3DS,m_cvecStartingUpForInterPol);
+		const CVector visibleOffset3DS = m_cvecStartingSourceForInterPol-m_cvecStartingTargetForInterPol;
+		m_fStartingBetaForInterPol = CGeneral::GetATanOfXY(visibleOffset3DS.x,visibleOffset3DS.y);
+		m_fStartingAlphaForInterPol = CGeneral::GetATanOfXY(
+			sqrtf(visibleOffset3DS.x*visibleOffset3DS.x+visibleOffset3DS.y*visibleOffset3DS.y),visibleOffset3DS.z);
+		m_cvecSourceSpeedAtStartInter = m_cvecTargetSpeedAtStartInter = m_cvecUpSpeedAtStartInter = CVector(0,0,0);
+		m_fAlphaSpeedAtStartInter = m_fBetaSpeedAtStartInter = 0.f;
+	}
+#endif
 }
 
 void
@@ -2820,7 +3299,7 @@ CCamera::IsItTimeForNewcam(int32 obbeMode, int32 time)
 }
 
 bool
-CCamera::TryToStartNewCamMode(int obbeMode)
+CCamera::TryToStartNewCamMode(int32 obbeMode)
 {
 	CVehicle *veh;
 	CVector target, camPos, playerSpeed, fwd, fwd2;

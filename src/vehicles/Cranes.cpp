@@ -49,6 +49,21 @@ uint32 CCranes::CarsCollectedMilitaryCrane;
 int32 CCranes::NumCranes;
 CCrane CCranes::aCranes[NUM_CRANES];
 
+static void
+CreateVisibleCraneHook(CCrane *pCrane)
+{
+	if (pCrane->m_pHook != nil)
+		return;
+	CObject* pHook = new CObject(MI_MAGNET, false);
+	pHook->ObjectCreatedBy = MISSION_OBJECT;
+	pHook->bUsesCollision = false;
+	pHook->bExplosionProof = true;
+	pHook->bAffectedByGravity = false;
+	pCrane->m_pHook = pHook;
+	pCrane->CalcHookCoordinates(&pCrane->m_vecHookCurPos.x, &pCrane->m_vecHookCurPos.y, &pCrane->m_vecHookCurPos.z);
+	pCrane->SetHookMatrix();
+}
+
 void CCranes::InitCranes(void)
 {
 	CarsCollectedMilitaryCrane = 0;
@@ -99,7 +114,14 @@ void CCranes::AddThisOneCrane(CEntity* pEntity)
 	pCrane->m_nCraneState = CCrane::IDLE;
 	pCrane->m_bWasMilitaryCrane = false;
 	pCrane->m_bIsTop = (MODELID_CRANE_1 != pEntity->GetModelIndex());
-	pCrane->m_pHook = nil;
+	/* LCS kept the crane simulation but dropped re3's visible hook object.
+	 * Restore the stock magnet model for the Portland crusher and top cranes;
+	 * the existing crane update code already owns and animates this pointer. */
+	if (pCrane->m_bIsTop || pEntity->GetPosition().y > 0.0f) {
+		CreateVisibleCraneHook(pCrane);
+	} else {
+		pCrane->m_pHook = nil;
+	}
 	NumCranes++;
 }
 
@@ -736,6 +758,15 @@ void CCranes::Load(uint8* buf, uint32 size)
 		if (pCrane->m_pVehiclePickedUp != nil)
 			pCrane->m_pVehiclePickedUp = CPools::GetVehiclePool()->GetSlot((uintptr)pCrane->m_pVehiclePickedUp - 1);
 #endif
+	}
+	/* Saves made before the 3DS visual-hook fix contain a null hook index.
+	 * Recreate only the missing visual object after all saved pointers have been
+	 * resolved, so existing progress does not keep the crusher magnet hidden. */
+	for (int i = 0; i < NumCranes; i++) {
+		CCrane *pCrane = &aCranes[i];
+		if (pCrane->m_pCraneEntity != nil && pCrane->m_pHook == nil &&
+			(pCrane->m_bIsTop || pCrane->m_pCraneEntity->GetPosition().y > 0.0f))
+			CreateVisibleCraneHook(pCrane);
 	}
 
 	VALIDATESAVEBUF(size);

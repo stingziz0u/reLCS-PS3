@@ -7,9 +7,31 @@
 #include "Streaming.h"
 #include "RwHelper.h"
 #include "TxdStore.h"
+#include "ModelIndices.h"
+#include "ModelInfo.h"
 
 CPool<TxdDef,TxdDef> *CTxdStore::ms_pTxdPool;
 RwTexDictionary *CTxdStore::ms_pStoredTxd;
+
+#ifdef RW_3DS
+static RwTexture*
+ProtectPlayerTextureFromShrinking(RwTexture *texture, void*)
+{
+	if(texture && texture->raster)
+		rw::c3d::TexSetShrinkProtected(GETC3DRASTEREXT(texture->raster));
+	return texture;
+}
+
+static void
+ProtectPlayerTxdFromShrinking(int slot)
+{
+	CBaseModelInfo *playerInfo = CModelInfo::GetModelInfo(MI_PLAYER);
+	TxdDef *def = CTxdStore::GetSlot(slot);
+	if(playerInfo && playerInfo->GetTxdSlot() == slot && def && def->texDict)
+		RwTexDictionaryForAllTextures(def->texDict,
+			ProtectPlayerTextureFromShrinking, nil);
+}
+#endif
 
 // LCS: file done except unused:
 // CTexListStore::RemoveTexListChunk(int)
@@ -168,6 +190,9 @@ CTxdStore::LoadTxd(int slot, RwStream *stream)
 	if(stream){
 		if(RwStreamFindChunk(stream, rwID_TEXDICTIONARY, nil, nil)){
 			def->texDict = RwTexDictionaryGtaStreamRead(stream);
+#ifdef RW_3DS
+			ProtectPlayerTxdFromShrinking(slot);
+#endif
 			return def->texDict != nil;
 		}
 	}else{
@@ -187,6 +212,9 @@ CTxdStore::LoadTxd(int slot, void *data, void *chunk)
 		def->refCountGu = 0;
 	}
 	CStreaming::RegisterPointer(&def->texDict, 3, true);
+#ifdef RW_3DS
+	ProtectPlayerTxdFromShrinking(slot);
+#endif
 	return def->texDict != nil;
 }
 
@@ -213,6 +241,9 @@ CTxdStore::StartLoadTxd(int slot, RwStream *stream)
 	TxdDef *def = GetSlot(slot);
 	if(RwStreamFindChunk(stream, rwID_TEXDICTIONARY, nil, nil)){
 		def->texDict = RwTexDictionaryGtaStreamRead1(stream);
+#ifdef RW_3DS
+		ProtectPlayerTxdFromShrinking(slot);
+#endif
 		return def->texDict != nil;
 	}else{
 		printf("Failed to load TXD\n");
@@ -226,7 +257,16 @@ CTxdStore::FinishLoadTxd(int slot, RwStream *stream)
 {
 	TxdDef *def = GetSlot(slot);
 	def->texDict = RwTexDictionaryGtaStreamRead2(stream, def->texDict);
+#ifdef RW_3DS
+	ProtectPlayerTxdFromShrinking(slot);
+#endif
 	return def->texDict != nil;
+}
+
+bool
+CTxdStore::IsTxdLoadInProgress(int slot)
+{
+	return RwTexDictionaryGtaStreamReadInProgress(GetSlot(slot)->texDict);
 }
 
 void
@@ -234,6 +274,7 @@ CTxdStore::RemoveTxd(int slot, bool notChunk)
 {
 	TxdDef *def = GetSlot(slot);
 	if(def->texDict){
+		RwTexDictionaryGtaStreamReadCancel(def->texDict);
 		if(!gUseChunkFiles || notChunk)
 			RwTexDictionaryDestroy(def->texDict);
 		else{

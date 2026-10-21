@@ -6,12 +6,17 @@
 #include "Bridge.h"
 #include "CarCtrl.h"
 #include "Camera.h"
+#include "Building.h"
+#include "ColModel.h"
+#include "ColStore.h"
 #include "CutsceneMgr.h"
 #include "Ferry.h"
+#include "FileLoader.h"
 #include "Garages.h"
 #include "GameLogic.h"
 #include "Hud.h"
 #include "Messages.h"
+#include "ModelInfo.h"
 #include "Object.h"
 #include "OnscreenTimer.h"
 #include "Pad.h"
@@ -20,10 +25,347 @@
 #include "Remote.h"
 #include "SpecialFX.h"
 #include "Stats.h"
+#include "Streaming.h"
+#include "SurfaceTable.h"
 #include "Vehicle.h"
 #include "World.h"
+#include "Zones.h"
 
 // LCS: file done except TODOs (also check commented out strings)
+
+static int32 gLCSFortStauntonState = -1;
+
+/* The flattened 3DS data deliberately omits LEEDSBITS.COL, but the Callahan
+ * post-mission bridge pieces still live in gta3.img.  Keep a small, authored
+ * deck-shaped fallback for those two models only.  It is model-local, so the
+ * BM entity's PI rotation naturally mirrors the PM half. */
+static CColModel gCallahanRampFallbackCol;
+static CColBox gCallahanRampFallbackBox;
+static CompressedVector gCallahanRampFallbackVertices[4];
+static CColTriangle gCallahanRampFallbackTriangles[2];
+static bool gCallahanRampFallbackColInitialised = false;
+
+static void
+InitialiseCallahanRampFallbackCollision(void)
+{
+	if(gCallahanRampFallbackColInitialised)
+		return;
+
+	/* in_*bridramp3's visible carriageway is the broad, almost level deck at
+	 * local Z about -71.3.  Its DFF bounds are X -58.8..41.1 and Y -20.2..20.0.
+	 * Raising this by 0.25 m keeps wheels on the rendered tarmac rather than
+	 * allowing a high-speed vehicle to skip through a coplanar collision face. */
+	gCallahanRampFallbackVertices[0].Set(-58.8f, -20.2f, -71.05f);
+	gCallahanRampFallbackVertices[1].Set(-58.8f,  20.0f, -71.05f);
+	gCallahanRampFallbackVertices[2].Set( 41.1f,  20.0f, -71.45f);
+	gCallahanRampFallbackVertices[3].Set( 41.1f, -20.2f, -71.45f);
+	gCallahanRampFallbackTriangles[0].Set(0, 2, 1, SURFACE_TARMAC);
+	gCallahanRampFallbackTriangles[1].Set(0, 3, 2, SURFACE_TARMAC);
+
+	/* Use a shallow solid road slab as well as the two top triangles.  Vehicle
+	 * collision resolves CColBox volumes directly before the VU triangle path,
+	 * which prevents fast wheels from tunnelling through a newly restored deck. */
+	gCallahanRampFallbackBox.Set(
+		CVector(-58.8f, -20.2f, -72.4f), CVector(41.1f, 20.0f, -70.8f),
+		SURFACE_TARMAC, SURFACE_DEFAULT);
+	gCallahanRampFallbackCol.boundingBox.Set(
+		CVector(-58.8f, -20.2f, -77.1f), CVector(41.1f, 20.0f, -70.8f));
+	gCallahanRampFallbackCol.boundingSphere.Set(54.0f,
+		CVector(-8.85f, -0.1f, -74.05f));
+	gCallahanRampFallbackCol.numSpheres = 0;
+	gCallahanRampFallbackCol.numBoxes = 1;
+	gCallahanRampFallbackCol.numLines = 0;
+	gCallahanRampFallbackCol.numTriBBoxes = 0;
+	gCallahanRampFallbackCol.numTriangles = ARRAY_SIZE(gCallahanRampFallbackTriangles);
+	gCallahanRampFallbackCol.boxes = &gCallahanRampFallbackBox;
+	gCallahanRampFallbackCol.vertices = gCallahanRampFallbackVertices;
+	gCallahanRampFallbackCol.triangles = gCallahanRampFallbackTriangles;
+	gCallahanRampFallbackCol.level = LEVEL_GENERIC;
+	gCallahanRampFallbackCol.ownsCollisionVolumes = false;
+	gCallahanRampFallbackColInitialised = true;
+}
+
+static void
+AttachCallahanRampFallbackCollision(CSimpleModelInfo *mi)
+{
+	CColModel *col = mi->GetColModel();
+	if(col && (col->numSpheres || col->numBoxes || col->numTriangles))
+		return;
+
+	InitialiseCallahanRampFallbackCollision();
+	mi->SetColModel(&gCallahanRampFallbackCol);
+}
+
+static void
+DeleteBuilding(CBuilding *building)
+{
+	CWorld::Remove(building);
+	CWorld::RemoveReferencesToDeletedObject(building);
+	delete building;
+}
+
+static void
+RemoveBuildingsInModelRange(int32 firstModel, int32 lastModel)
+{
+	CBuildingPool *pool = CPools::GetBuildingPool();
+	for(int32 i = pool->GetSize() - 1; i >= 0; i--) {
+		CBuilding *building = pool->GetSlot(i);
+		if(building && building->GetModelIndex() >= firstModel &&
+		   building->GetModelIndex() <= lastModel)
+			DeleteBuilding(building);
+	}
+}
+
+static void
+LoadLCSFortCollision(bool destroyed)
+{
+	/* Collision streaming runs before a loaded save restores the Fort phase.
+	 * Switch the two authored COL slots together with the visual IPL so newly
+	 * created buildings receive the matching collision models immediately. */
+	const int wanted = CColStore::FindColSlot(destroyed ? "fortdestroyed" : "fortstaunton");
+	const int unwanted = CColStore::FindColSlot(destroyed ? "fortstaunton" : "fortdestroyed");
+	if(unwanted >= 0 && CStreaming::HasColLoaded(unwanted))
+		CStreaming::RemoveCol(unwanted);
+	if(wanted >= 0 && !CStreaming::HasColLoaded(wanted)) {
+		CStreaming::RequestCol(wanted, STREAMFLAGS_PRIORITY);
+		CStreaming::LoadAllRequestedModels(true);
+	}
+}
+
+void
+ResetLCSWorldBuildingSwaps(void)
+{
+	gLCSFortStauntonState = -1;
+}
+
+void
+SyncLCSFortStauntonWorld(void)
+{
+	if(CTheScripts::FSDestroyedFlag == 0)
+		return;
+
+	const bool destroyed = CTheScripts::IsFortStauntonDestroyed();
+	if(gLCSFortStauntonState == destroyed)
+		return;
+
+	if(destroyed) {
+		/* commer.ipl contains the intact city plus only the destroyed LOD shell.
+		 * Remove both flattened phases, then load the complete authored ruin IPL.
+		 * Models 3653..3660 are the detailed rubble/set-piece layer already placed
+		 * by the flattened IPL, so they deliberately remain in the ruined phase. */
+		RemoveBuildingsInModelRange(3600, 3652);
+		RemoveBuildingsInModelRange(3661, 3664);
+		RemoveBuildingsInModelRange(3685, 3741);
+		LoadLCSFortCollision(true);
+		CFileLoader::LoadScene("DATA/Maps/fortdestroyed.ipl");
+	} else {
+		/* The complete intact phase is already part of commer.ipl.  Its stray
+		 * destroyed LODs and detailed rubble caused the night-time z-fighting and
+		 * needless draw cost. */
+		RemoveBuildingsInModelRange(3653, 3660);
+		RemoveBuildingsInModelRange(3685, 3741);
+		LoadLCSFortCollision(false);
+	}
+
+	gLCSFortStauntonState = destroyed;
+}
+
+void
+OpenLCSLiftBridgeRoadblock(void)
+{
+	/* These eight static sub_roadbarrier instances belong to the lift bridge's
+	 * locked phase.  The bridge machinery is controlled separately, so without
+	 * cWorldStream they otherwise survive after the bridge is opened. */
+	CBuildingPool *pool = CPools::GetBuildingPool();
+	for(int32 i = pool->GetSize() - 1; i >= 0; i--) {
+		CBuilding *building = pool->GetSlot(i);
+		if(building == nil || building->GetModelIndex() != 482)
+			continue;
+		const CVector &pos = building->GetPosition();
+		if(pos.x >= -705.0f && pos.x <= -590.0f &&
+		   pos.y >= -80.0f && pos.y <= -35.0f)
+			DeleteBuilding(building);
+	}
+}
+
+static void
+SetCallahanRamp(int32 modelId, const CVector &position, float heading, bool enabled)
+{
+	CSimpleModelInfo *mi = (CSimpleModelInfo*)CModelInfo::GetModelInfo(modelId);
+	if(mi == nil || !mi->IsSimple())
+		return;
+
+	CBuildingPool *pool = CPools::GetBuildingPool();
+	CBuilding *existing = nil;
+	for(int32 i = pool->GetSize() - 1; i >= 0; i--) {
+		CBuilding *building = pool->GetSlot(i);
+		if(building && building->GetModelIndex() == modelId &&
+		   (building->GetPosition() - position).MagnitudeSqr() < 4.0f) {
+			existing = building;
+			break;
+		}
+	}
+
+	if(enabled) {
+		/* These ramps are introduced synchronously by a saved world swap, not
+		 * by the normal nearby-sector streamer.  The first post-load LoadScene
+		 * deletes every Rw object before re-instancing nearby world entities; if
+		 * the model is removable it vanishes from the stream list at that point,
+		 * leaving this otherwise valid building with no Rw object.  Keep these
+		 * two authored phase models resident exactly like a static IPL building. */
+		CStreaming::RequestModel(modelId, STREAMFLAGS_DONT_REMOVE |
+			STREAMFLAGS_PRIORITY |
+			STREAMFLAGS_DEPENDENCY | STREAMFLAGS_NOFADE);
+		CStreaming::LoadAllRequestedModels(true);
+		if(!CStreaming::HasModelLoaded(modelId)) {
+			debug("Callahan ramp model %d failed to load\n", modelId);
+			return;
+		}
+		mi->m_alpha = 255;
+		CColModel *col = mi->GetColModel();
+		if(col && col->level > 0 && !CStreaming::HasColLoaded(col->level)) {
+			CStreaming::RequestCol(col->level, STREAMFLAGS_PRIORITY);
+			CStreaming::LoadAllRequestedModels(true);
+		}
+		/* gta_lcs.dat in this port has no LEEDSBITS.COL entry to satisfy this
+		 * request.  Do not replace a real streamed COL when one is present, but
+		 * give the two restored bridge decks their matching road surface when it
+		 * is absent. */
+		AttachCallahanRampFallbackCollision(mi);
+
+		/* cWorldStream may already have left an uninstanced copy in the world
+		 * pool.  Treating that as "already done" was the last missing path: the
+		 * stale building had no Rw object after a save-load scene rebuild, so it
+		 * remained collision-less and invisible forever.  Refresh it exactly as
+		 * an IPL instance would be refreshed once its model is resident. */
+		if(existing) {
+			/* These 100 m pieces are marked as big buildings in the source IDE.
+			 * SetupBigBuilding deliberately clears bUsesCollision and stores the
+			 * entity in the renderer-only big-building list, which is never scanned
+			 * by vehicle or ground collision.  Move an old restored instance back
+			 * into the ordinary building sectors before fixing its flags. */
+			const bool wasBigBuilding = existing->bIsBIGBuilding;
+			if(wasBigBuilding)
+				CWorld::Remove(existing);
+			existing->bIsBIGBuilding = false;
+			existing->bStreamingDontDelete = true;
+			existing->m_level = CTheZones::GetLevelFromPosition(&position);
+			existing->m_area = AREA_MAIN_MAP;
+			existing->bIsVisible = true;
+			existing->bUsesCollision = true;
+			if(wasBigBuilding)
+				CWorld::Add(existing);
+			if(existing->m_rwObject == nil)
+				existing->CreateRwObject();
+			return;
+		}
+
+		/* These are static road pieces even if object.dat gives the model an
+		 * object ID.  The generic IPL loader would turn such an instance into a
+		 * CDummyObject; create a real collision-bearing building explicitly. */
+		CBuilding *building = new CBuilding;
+		if(building == nil)
+			return;
+		building->SetModelIndexNoCreate(modelId);
+		building->GetMatrix().SetRotateZ(heading);
+		building->GetMatrix().SetTranslateOnly(position);
+		building->m_level = CTheZones::GetLevelFromPosition(&position);
+		building->m_area = AREA_MAIN_MAP;
+		/* Do not call SetupBigBuilding here.  It would move this dynamic road
+		 * segment into a rendering-only list and forcibly disable collision. */
+		building->bIsBIGBuilding = false;
+		building->bStreamingDontDelete = true;
+		building->bUsesCollision = true;
+		if(mi->GetLargestLodDistance() < 2.0f)
+			building->bIsVisible = false;
+		CWorld::Add(building);
+		building->CreateRwObject();
+	} else if(existing) {
+		DeleteBuilding(existing);
+		CStreaming::SetModelIsDeletable(modelId);
+	}
+}
+
+static void
+RestoreCallahanSavedModelSwap(int32 oldModel, int32 newModel, bool enabled)
+{
+	/* MAIN installs the construction phase with oldModel -> newModel while the
+	 * corresponding progress flag is zero.  Once that flag becomes one the
+	 * swap is undone, revealing the authored bridge/ramp model again.  The ARM
+	 * template save proves this direction: flags 4492/4496 are zero while its
+	 * saved Callahan entries currently point at the new (construction) models. */
+	const int32 sourceModel = enabled ? newModel : oldModel;
+	const int32 targetModel = enabled ? oldModel : newModel;
+	CStreaming::RequestModel(targetModel, STREAMFLAGS_DONT_REMOVE |
+		STREAMFLAGS_PRIORITY | STREAMFLAGS_DEPENDENCY | STREAMFLAGS_NOFADE);
+	CStreaming::LoadAllRequestedModels(true);
+	if(!CStreaming::HasModelLoaded(targetModel))
+		return;
+	CSimpleModelInfo *targetInfo = (CSimpleModelInfo*)CModelInfo::GetModelInfo(targetModel);
+	if(targetInfo && targetInfo->IsSimple())
+		targetInfo->m_alpha = 255;
+
+	/* The two main Callahan bridge halves are treadables, while their scaffold,
+	 * gravel and lighting pieces are ordinary buildings.  The previous recovery
+	 * searched only CBuildingPool and then created duplicate CBuildings, so it
+	 * could never replace the actual initial bridge halves saved by the game. */
+	CTreadablePool *treadables = CPools::GetTreadablePool();
+	for(int32 i = 0; i < treadables->GetSize(); i++) {
+		CTreadable *building = treadables->GetSlot(i);
+		if(building == nil ||
+		   (building->GetModelIndex() != sourceModel && building->GetModelIndex() != targetModel))
+			continue;
+		if(building->GetModelIndex() == sourceModel)
+			building->ReplaceWithNewModel(targetModel);
+		building->bIsVisible = true;
+		if(building->m_rwObject == nil)
+			building->CreateRwObject();
+	}
+
+	CBuildingPool *buildings = CPools::GetBuildingPool();
+	for(int32 i = 0; i < buildings->GetSize(); i++) {
+		CBuilding *building = buildings->GetSlot(i);
+		if(building == nil ||
+		   (building->GetModelIndex() != sourceModel && building->GetModelIndex() != targetModel))
+			continue;
+		if(building->GetModelIndex() == sourceModel)
+			building->ReplaceWithNewModel(targetModel);
+		building->bIsVisible = true;
+		if(building->m_rwObject == nil)
+			building->CreateRwObject();
+	}
+}
+
+void
+ApplyLCSWorldBuildingSwap(int32 group, int32 state)
+{
+	/* Fort Staunton's phase flag is authoritative and is declared before any
+	 * live group swap.  Keeping this here also catches the destruction event. */
+	SyncLCSFortStauntonWorld();
+
+	/* The two Callahan approach halves are independent cWorldStream groups.
+	 * leedsbits.ipl supplies the authored visible bridge-ramp meshes plus their
+	 * separate gravel-jump collision pieces, but is intentionally absent from
+	 * gta_lcs.dat in the flattened 3DS world. */
+	const bool enabled = state != 0;
+	if(group == 2) {
+		RestoreCallahanSavedModelSwap(MI_IN_BMBRIDRAMP3, MI_IN_BMBRIDG2_UPGS, enabled);
+		RestoreCallahanSavedModelSwap(MI_IN_BMBRIDGE2, MI_IN_BMBRIDG1_UPGS, enabled);
+		RestoreCallahanSavedModelSwap(MI_BM_LIGHTRIG3, MI_BM_LIGHTRIG1, enabled);
+		RestoreCallahanSavedModelSwap(MI_IN_BMSCAFF_UPS, MI_IN_BM_CONCBLOK2, enabled);
+		RestoreCallahanSavedModelSwap(MI_IN_BMSCAFFH_NS, MI_IN_BM_GRAVL_JMP, enabled);
+		RestoreCallahanSavedModelSwap(MI_IN_BM_SCAFFCOVR, MI_IN_BM_GIRDER2, enabled);
+		RestoreCallahanSavedModelSwap(MI_IN_BM_SCAFFH_WE, MI_IN_BM_SIXCONC2, enabled);
+	} else if(group == 4) {
+		RestoreCallahanSavedModelSwap(MI_IN_PMBRIDRAMP3, MI_IN_PMBRIDG2_UPGS, enabled);
+		RestoreCallahanSavedModelSwap(MI_IN_PMBRIDGE2, MI_IN_PMBRIDG1_UPGS, enabled);
+		RestoreCallahanSavedModelSwap(MI_PM_LIGHTRIG3, MI_PM_LIGHTRIG1, enabled);
+		RestoreCallahanSavedModelSwap(MI_IN_PMSCAFF_UPS, MI_IN_PM_CONCBLOK2, enabled);
+		RestoreCallahanSavedModelSwap(MI_IN_PMSCAFFH_NS, MI_IN_PM_GRAVL_JMP, enabled);
+		RestoreCallahanSavedModelSwap(MI_IN_PM_SCAFFCOVR, MI_IN_PM_GIRDER2, enabled);
+		RestoreCallahanSavedModelSwap(MI_IN_PM_SCAFFH_WE, MI_IN_PM_SIXCONC2, enabled);
+	}
+}
 
 int8 CRunningScript::ProcessCommands1500To1599(int32 command)
 {
@@ -194,8 +536,12 @@ int8 CRunningScript::ProcessCommands1500To1599(int32 command)
 		*/
 		switch (GET_INTEGER_PARAM(0)) {
 		case 0: CBridge::ForceBridgeState(STATE_BRIDGE_LOCKED); break;
-		case 1: CBridge::ForceBridgeState(STATE_BRIDGE_ALWAYS_UNLOCKED); break;
+		case 1:
+			OpenLCSLiftBridgeRoadblock();
+			CBridge::ForceBridgeState(STATE_BRIDGE_ALWAYS_UNLOCKED);
+			break;
 		case 2:
+			OpenLCSLiftBridgeRoadblock();
 			if (CBridge::State == STATE_LIFT_PART_IS_DOWN || CBridge::State == STATE_BRIDGE_ALWAYS_UNLOCKED)
 				CBridge::ForceBridgeState(STATE_LIFT_PART_ABOUT_TO_MOVE_UP);
 			else
@@ -533,6 +879,7 @@ int8 CRunningScript::ProcessCommands1500To1599(int32 command)
 		return 0;
 	case COMMAND_DECLARE_FORT_STAUNTON_DESTROYED_FLAG:
 		CTheScripts::FSDestroyedFlag = (uint8*)GetPointerToScriptVariable(&m_nIp, VAR_GLOBAL) - CTheScripts::ScriptSpace;
+		SyncLCSFortStauntonWorld();
 		return 0;
 	case COMMAND_CLEAR_BIG_MESSAGES:
 		//CMessages::ClearBigMessagesOnly(); TODO
@@ -659,19 +1006,11 @@ int8 CRunningScript::ProcessCommands1500To1599(int32 command)
 	}
 	case COMMAND_ADD_POINT_3D_MARKER:
 	{
-		uint32 ip = m_nIp;
-		uint32 id = (uint32)(uintptr)GetPointerToScriptVariable(&ip, 0);
-		static CVector vPreviousLocation;
 		CollectParameters(&m_nIp, 7);
-		CVector pos = GET_VECTOR_PARAM(0);
-		if (pos.z <= MAP_Z_LOW_LIMIT)
-			pos.z = CWorld::FindGroundZForCoord(pos.x, pos.y);
-		if (vPreviousLocation != pos) {
-			//C3dMarkers::CopyMarker(id, id - 1, 1, 1);
-		}
-		// TODO: 5 is not a valid type
-		//C3dMarkers::PlaceMarker(id, 5, pos, GET_FLOAT_PARAM(3) * 0.7f, GET_INTEGER_PARAM(4), GET_INTEGER_PARAM(5), GET_INTEGER_PARAM(6), 255, 128, 0.0f, 1); // TODO: 0, 100.0f, 1, 0
-		vPreviousLocation = pos;
+		/* The emulated point marker becomes a stale light column because this
+		 * backend cannot retire/re-key it with the race checkpoint progression.
+		 * Keep the separately authored arrow marker and intentionally omit the
+		 * light column. */
 		return 0;
 	}
 	case COMMAND_GET_VECTOR_FROM_MULTIPLAYER:
@@ -739,7 +1078,7 @@ int8 CRunningScript::ProcessCommands1500To1599(int32 command)
 	case COMMAND_SWAP_BUILDINGS:
 	{
 		CollectParameters(&m_nIp, 2);
-		// base::cWorldStream::Instance()->SwapBuilding(GET_INTEGER_PARAM(0), GET_INTEGER_PARAM(1));
+		ApplyLCSWorldBuildingSwap(GET_INTEGER_PARAM(0), GET_INTEGER_PARAM(1));
 		return 0;
 	}
 	case COMMAND_STREAM_BUILDING_SWAPS:

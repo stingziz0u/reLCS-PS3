@@ -127,7 +127,13 @@ enum
 #define MAX2DCHANNELS              NUM_CHANNELS
 #endif
 
+#ifdef AUDIO_OAL
+/* Stream 0 remains the stock radio/cutscene stream. Stream 1 is reserved for
+ * the independently mixed final-mission BGM on platforms using OpenAL. */
+#define MAX_STREAMS                2
+#else
 #define MAX_STREAMS                1
+#endif
 
 #define DIGITALRATE                32000
 #define DIGITALBITS                16
@@ -250,6 +256,23 @@ public:
 	int32 GetStreamedFileLength                                                (uint8 nStream = 0);
 	bool8 IsStreamPlaying                                                      (uint8 nStream = 0);
 	void  SetStreamedFileLoopFlag                             (bool8 nLoopFlag, uint8 nStream = 0);
+#ifdef AUDIO_PS3
+	// the 3DS port's final-mission music (FinalMissionMusic.cpp): not on PS3,
+	// these say so (the finale's game fixes there still run)
+	bool8 StartMissionMusicStream(const char *path, bool8 loop) { return FALSE; }
+	void  StopMissionMusicStream(void) {}
+	void  PauseMissionMusicStream(bool8 pause) {}
+	void  SetMissionMusicStreamVolume(uint8 volume) {}
+	bool8 IsMissionMusicStreamPlaying(void) { return FALSE; }
+	bool8 HasMissionMusicStreamFinished(void) { return TRUE; }
+#elif defined(AUDIO_OAL)
+	bool8 StartMissionMusicStream(const char *path, bool8 loop);
+	void  StopMissionMusicStream(void);
+	void  PauseMissionMusicStream(bool8 pause);
+	void  SetMissionMusicStreamVolume(uint8 volume);
+	bool8 IsMissionMusicStreamPlaying(void);
+	bool8 HasMissionMusicStreamFinished(void);
+#endif
 #if defined(AUDIO_OAL) || defined(AUDIO_PS3)
 	void  Service(void);
 #endif

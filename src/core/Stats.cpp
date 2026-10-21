@@ -1342,8 +1342,8 @@ CStats::ConstructStatLine(int rowIdx)
 			case WAVE:
 				TEXT_ON_RIGHT(TheText.Get("FEA_FM8"));
 				break;
-			case USERTRACK:
-				TEXT_ON_RIGHT(TheText.Get("FEA_MP3"));
+			case LCFR:
+				TEXT_ON_RIGHT(TheText.Get("FEA_FM9"));
 				break;
 			default:
 				TEXT_ON_RIGHT(TheText.Get("FEA_FM8")); // heh
@@ -1355,20 +1355,11 @@ CStats::ConstructStatLine(int rowIdx)
 		float leastListenTime = FavoriteRadioStationList[0];
 		int leastListenedRadio = 0;
 		for (int i = 0; i < NUM_RADIOS; i++) {
-#ifdef FIX_BUGS
-			if (!DMAudio.IsMP3RadioChannelAvailable() && i == USERTRACK)
-				continue;
-#endif
 			if (FavoriteRadioStationList[i] < leastListenTime) {
 				leastListenTime = FavoriteRadioStationList[i];
 				leastListenedRadio = i;
 			}
 		}
-#ifndef FIX_BUGS
-		if (!DMAudio.IsMP3RadioChannelAvailable() && leastListenedRadio == USERTRACK)
-			leastListenedRadio = WAVE;
-#endif
-
 		switch (leastListenedRadio) {
 			case WILDSTYLE:
 				TEXT_ON_RIGHT(TheText.Get("FEA_FM0"));
@@ -1397,8 +1388,8 @@ CStats::ConstructStatLine(int rowIdx)
 			case WAVE:
 				TEXT_ON_RIGHT(TheText.Get("FEA_FM8"));
 				break;
-			case USERTRACK:
-				TEXT_ON_RIGHT(TheText.Get("FEA_MP3"));
+			case LCFR:
+				TEXT_ON_RIGHT(TheText.Get("FEA_FM9"));
 				break;
 			default:
 				TEXT_ON_RIGHT(TheText.Get("FEA_FM8")); // heh

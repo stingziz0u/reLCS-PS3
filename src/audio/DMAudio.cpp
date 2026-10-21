@@ -151,7 +151,11 @@ cDMAudio::SetSpeakerConfig(int32 config)
 bool8
 cDMAudio::IsMP3RadioChannelAvailable(void)
 {
+#ifdef _3DS
+	return false;
+#else
 	return AudioManager.IsMP3RadioChannelAvailable();
+#endif
 }
 
 void

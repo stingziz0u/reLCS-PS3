@@ -403,6 +403,9 @@ CWorld::ProcessLineOfSightSectorList(CPtrList &list, const CColLine &line, CColP
 
 	for(node = list.first; node; node = node->next) {
 		e = (CEntity *)node->item;
+#ifdef _3DS
+		if(CameraCollision3DS::Ignore(e)) continue;
+#endif
 		if(e->m_scanCode != GetCurrentScanCode() && e != pIgnoreEntity && (e->bUsesCollision || deadPeds || bikers) &&
 		   !(ignoreSomeObjects && CameraToIgnoreThisObject(e))) {
 			colmodel = nil;
@@ -420,7 +423,9 @@ CWorld::ProcessLineOfSightSectorList(CPtrList &list, const CColLine &line, CColP
 
 			if(colmodel && CCollision::ProcessLineOfSight(line, e->GetMatrix(), *colmodel, point, mindist,
 			                                              ignoreSeeThrough, ignoreShootThrough))
+			{
 				entity = e;
+			}
 			if(carTyres && ((CVehicle*)e)->SetUpWheelColModel(&tyreCol) && CCollision::ProcessLineOfSight(line, e->GetMatrix(), tyreCol, tyreColPoint, tyreDist, false, ignoreShootThrough)){
 				float dp1 = DotProduct(line.p1 - line.p0, e->GetRight());
 				float dp2 = DotProduct(point.point - e->GetPosition(), e->GetRight());
@@ -711,6 +716,9 @@ CWorld::GetIsLineOfSightSectorListClear(CPtrList &list, const CColLine &line, bo
 
 	for(node = list.first; node; node = node->next) {
 		e = (CEntity *)node->item;
+#ifdef _3DS
+		if(CameraCollision3DS::Ignore(e)) continue;
+#endif
 		if(e->m_scanCode != GetCurrentScanCode() && e->bUsesCollision) {
 
 			e->m_scanCode = GetCurrentScanCode();
@@ -1012,6 +1020,9 @@ CWorld::TestSphereAgainstSectorList(CPtrList &list, CVector spherePos, float rad
 
 	for(CPtrNode *node = list.first; node; node = node->next) {
 		CEntity *e = (CEntity *)node->item;
+#ifdef _3DS
+		if(CameraCollision3DS::Ignore(e)) continue;
+#endif
 
 		if(e->m_scanCode != GetCurrentScanCode()) {
 			e->m_scanCode = GetCurrentScanCode();
@@ -1027,6 +1038,17 @@ CWorld::TestSphereAgainstSectorList(CPtrList &list, CVector spherePos, float rad
 					    CCollision::ProcessColModels(sphereMat, OurColModel, e->GetMatrix(), *eCol,
 					                                 gaTempSphereColPoints, nil, nil);
 
+#ifdef _3DS
+					if(CameraOcclusion3DS::Data().collect) {
+						// Only real collision geometry touching the camera sphere may fade.
+						// The vehicle proximity heuristic below is not a contact test.
+						if(collidedSpheres != 0) {
+							CameraOcclusion3DS::Touch(e);
+							CameraOcclusion3DS::Data().contact = true;
+						}
+						continue;
+					}
+#endif
 					if(collidedSpheres != 0 ||
 					   (e->IsVehicle() && ((CVehicle *)e)->m_vehType == VEHICLE_TYPE_CAR && e->GetModelIndex() != MI_DODO &&
 					    radius + eCol->boundingBox.max.x > distance)) {
@@ -1712,84 +1734,63 @@ CWorld::AddParticles(void)
 void
 CWorld::ShutDown(void)
 {
-	for(int i = 0; i < NUMSECTORS_X * NUMSECTORS_Y; i++) {
-		CSector *pSector = GetSector(i % NUMSECTORS_X, i / NUMSECTORS_Y);
-		for(CPtrNode *pNode = pSector->m_lists[ENTITYLIST_BUILDINGS].first; pNode; pNode = pNode->next) {
-			CEntity *pEntity = (CEntity *)pNode->item;
-			Remove(pEntity);
-			delete pEntity;
-		}
-		for(CPtrNode *pNode = pSector->m_lists[ENTITYLIST_VEHICLES].first; pNode; pNode = pNode->next) {
-			CEntity *pEntity = (CEntity *)pNode->item;
-			Remove(pEntity);
-			delete pEntity;
-		}
-		for(CPtrNode *pNode = pSector->m_lists[ENTITYLIST_PEDS].first; pNode; pNode = pNode->next) {
-			CEntity *pEntity = (CEntity *)pNode->item;
-			Remove(pEntity);
-			delete pEntity;
-		}
-		for(CPtrNode *pNode = pSector->m_lists[ENTITYLIST_OBJECTS].first; pNode; pNode = pNode->next) {
-			CEntity *pEntity = (CEntity *)pNode->item;
-			Remove(pEntity);
-			delete pEntity;
-		}
-		for(CPtrNode *pNode = pSector->m_lists[ENTITYLIST_DUMMIES].first; pNode; pNode = pNode->next) {
-			CEntity *pEntity = (CEntity *)pNode->item;
-			Remove(pEntity);
-			delete pEntity;
-		}
-#ifndef FIX_BUGS
-		pSector->m_lists[ENTITYLIST_BUILDINGS].Flush();
-		pSector->m_lists[ENTITYLIST_BUILDINGS_OVERLAP].Flush();
-		pSector->m_lists[ENTITYLIST_DUMMIES].Flush();
-		pSector->m_lists[ENTITYLIST_DUMMIES_OVERLAP].Flush();
-#endif
+	/* Sector nodes are spatial indexes, not owners.  A loaded entity may occur
+	 * in several main/overlap lists, and a stale saved membership can otherwise
+	 * make shutdown delete the same pool slot twice.  Pools are the authoritative
+	 * unique owner sets; delete every live slot once, then discard any leftover
+	 * spatial nodes without dereferencing their items. */
+	CPedPool *pedPool = CPools::GetPedPool();
+	for(int32 i = pedPool->GetSize() - 1; i >= 0; i--) {
+		CPed *ped = pedPool->GetSlot(i);
+		if(ped)
+			delete ped; // CPed::~CPed removes itself from CWorld.
 	}
-	for(int32 i = 0; i < NUM_LEVELS; i++) {
-		for(CPtrNode *pNode = ms_bigBuildingsList[i].first; pNode; pNode = pNode->next) {
-			CEntity *pEntity = (CEntity *)pNode->item;
-			// Maybe remove from world here?
-			delete pEntity;
+	CVehiclePool *vehiclePool = CPools::GetVehiclePool();
+	for(int32 i = vehiclePool->GetSize() - 1; i >= 0; i--) {
+		CVehicle *vehicle = vehiclePool->GetSlot(i);
+		if(vehicle) {
+			Remove(vehicle);
+			delete vehicle;
 		}
+	}
+	CObjectPool *objectPool = CPools::GetObjectPool();
+	for(int32 i = objectPool->GetSize() - 1; i >= 0; i--) {
+		CObject *object = objectPool->GetSlot(i);
+		if(object) {
+			Remove(object);
+			delete object;
+		}
+	}
+	CDummyPool *dummyPool = CPools::GetDummyPool();
+	for(int32 i = dummyPool->GetSize() - 1; i >= 0; i--) {
+		CDummy *dummy = dummyPool->GetSlot(i);
+		if(dummy) {
+			Remove(dummy);
+			delete dummy;
+		}
+	}
+	CBuildingPool *buildingPool = CPools::GetBuildingPool();
+	for(int32 i = buildingPool->GetSize() - 1; i >= 0; i--) {
+		CBuilding *building = buildingPool->GetSlot(i);
+		if(building) {
+			Remove(building);
+			delete building;
+		}
+	}
+	CTreadablePool *treadablePool = CPools::GetTreadablePool();
+	for(int32 i = treadablePool->GetSize() - 1; i >= 0; i--) {
+		CTreadable *treadable = treadablePool->GetSlot(i);
+		if(treadable) {
+			Remove(treadable);
+			delete treadable;
+		}
+	}
+	for(int32 i = 0; i < NUM_LEVELS; i++)
 		ms_bigBuildingsList[i].Flush();
-	}
 	for(int i = 0; i < NUMSECTORS_X * NUMSECTORS_Y; i++) {
 		CSector *pSector = GetSector(i % NUMSECTORS_X, i / NUMSECTORS_Y);
-#ifdef FIX_BUGS
-		pSector->m_lists[ENTITYLIST_BUILDINGS].Flush();
-		pSector->m_lists[ENTITYLIST_BUILDINGS_OVERLAP].Flush();
-		pSector->m_lists[ENTITYLIST_DUMMIES].Flush();
-		pSector->m_lists[ENTITYLIST_DUMMIES_OVERLAP].Flush();
-#endif
-		if(pSector->m_lists[ENTITYLIST_BUILDINGS].first) {
-			sprintf(gString, "Building list %d,%d not empty\n", i % NUMSECTORS_X, i / NUMSECTORS_Y);
-			pSector->m_lists[ENTITYLIST_BUILDINGS].Flush();
-		}
-		if(pSector->m_lists[ENTITYLIST_DUMMIES].first) {
-			sprintf(gString, "Dummy list %d,%d not empty\n", i % NUMSECTORS_X, i / NUMSECTORS_Y);
-			pSector->m_lists[ENTITYLIST_DUMMIES].Flush();
-		}
-		if(pSector->m_lists[ENTITYLIST_BUILDINGS_OVERLAP].first) {
-			sprintf(gString, "Building overlap list %d,%d not empty\n", i % NUMSECTORS_X, i / NUMSECTORS_Y);
-			pSector->m_lists[ENTITYLIST_BUILDINGS_OVERLAP].Flush();
-		}
-		if(pSector->m_lists[ENTITYLIST_VEHICLES_OVERLAP].first) {
-			sprintf(gString, "Vehicle overlap list %d,%d not empty\n", i % NUMSECTORS_X, i / NUMSECTORS_Y);
-			pSector->m_lists[ENTITYLIST_VEHICLES_OVERLAP].Flush();
-		}
-		if(pSector->m_lists[ENTITYLIST_PEDS_OVERLAP].first) {
-			sprintf(gString, "Ped overlap list %d,%d not empty\n", i % NUMSECTORS_X, i / NUMSECTORS_Y);
-			pSector->m_lists[ENTITYLIST_PEDS_OVERLAP].Flush();
-		}
-		if(pSector->m_lists[ENTITYLIST_OBJECTS_OVERLAP].first) {
-			sprintf(gString, "Object overlap list %d,%d not empty\n", i % NUMSECTORS_X, i / NUMSECTORS_Y);
-			pSector->m_lists[ENTITYLIST_OBJECTS_OVERLAP].Flush();
-		}
-		if(pSector->m_lists[ENTITYLIST_DUMMIES_OVERLAP].first) {
-			sprintf(gString, "Dummy overlap list %d,%d not empty\n", i % NUMSECTORS_X, i / NUMSECTORS_Y);
-			pSector->m_lists[ENTITYLIST_DUMMIES_OVERLAP].Flush();
-		}
+		for(int32 list = 0; list < NUMSECTORENTITYLISTS; list++)
+			pSector->m_lists[list].Flush();
 	}
 	ms_listMovingEntityPtrs.Flush();
 }
@@ -2622,8 +2623,15 @@ CWorld::CheckObjectsEffectedByFire(float x, float y, float z, float radius, CEnt
 		CObject* pObject = CPools::GetObjectPool()->GetSlot(i);
 		if (pObject) {
 			if (Abs(pObject->GetPosition().z - z) < 5.0f && Abs(pObject->GetPosition().x - x) < radius &&
-				Abs(pObject->GetPosition().y - y) < radius)
+				Abs(pObject->GetPosition().y - y) < radius) {
 				pObject->m_nLastWeaponToDamage = WEAPONTYPE_FLAMETHROWER;
+				/* Area-effect flames do not create bullet collision points.  Merely
+				 * recording the weapon therefore leaves mission destructibles (the
+				 * leaflets and printing presses in Friggin' the Riggin') intact.
+				 * Feed the contact into the normal object-damage path as explosions
+				 * and melee weapons do.  Objects without a damage effect ignore it. */
+				pObject->ObjectDamage(200.0f);
+			}
 		}
 	}
 }

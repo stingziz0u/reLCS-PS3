@@ -70,6 +70,7 @@ CBike::CBike(int32 id, uint8 CreatedBy)
 	CVehicleModelInfo *mi = (CVehicleModelInfo*)CModelInfo::GetModelInfo(id);
 	switch(id){
 	case MI_ANGEL:
+	case MI_ANGEL2:
 	case MI_FREEWAY:
 		m_bikeAnimType = ASSOCGRP_BIKE_HARLEY;
 		break;
@@ -1687,6 +1688,10 @@ CBike::PreRender(void)
 		mat.SetRotate(m_aWheelRotation[BIKEWHEEL_FRONT], 0.0f, 0.05f*Sin(m_aWheelRotation[BIKEWHEEL_FRONT]));
 	else
 		mat.SetRotateX(m_aWheelRotation[BIKEWHEEL_FRONT]);
+	if(CVehicle::bCheat9){
+		RwV3d scale = { 1.45f, 1.45f, 1.45f };
+		RwMatrixScale(mat.m_attachment, &scale, rwCOMBINEPRECONCAT);
+	}
 	mat.Translate(pos);
 	mat.UpdateRW();
 	// and mudguard
@@ -1701,6 +1706,10 @@ CBike::PreRender(void)
 		mat.SetRotate(m_aWheelRotation[BIKEWHEEL_REAR], 0.0f, 0.07f*Sin(m_aWheelRotation[BIKEWHEEL_REAR]));
 	else
 		mat.SetRotateX(m_aWheelRotation[BIKEWHEEL_REAR]);
+	if(CVehicle::bCheat9){
+		RwV3d scale = { 1.45f, 1.45f, 1.45f };
+		RwMatrixScale(mat.m_attachment, &scale, rwCOMBINEPRECONCAT);
+	}
 	mat.Translate(pos);
 	mat.UpdateRW();
 

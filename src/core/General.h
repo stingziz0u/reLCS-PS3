@@ -140,6 +140,27 @@ public:
 		
 	static int32 GetRandomNumberInRange(int32 low, int32 high)
 		{ return low + (high - low)*(GetRandomNumber()/float(MYRAND_MAX + 1)); }
+#ifdef _3DS
+	// devkitARM's int32 is long, so plain integer literals need exact overloads.
+	static int GetRandomNumberInRange(int low, int high)
+		{ return (int)GetRandomNumberInRange((int32)low, (int32)high); }
+	static int32 GetRandomNumberInRange(int low, int32 high)
+		{ return GetRandomNumberInRange((int32)low, high); }
+	static int32 GetRandomNumberInRange(int32 low, int high)
+		{ return GetRandomNumberInRange(low, (int32)high); }
+	static uint32 GetRandomNumberInRange(uint32 low, uint32 high)
+		{ return low + (uint32)((high - low)*(GetRandomNumber()/float(MYRAND_MAX + 1))); }
+	static uint32 GetRandomNumberInRange(int low, uint32 high)
+		{ return GetRandomNumberInRange((uint32)low, high); }
+	static uint32 GetRandomNumberInRange(uint32 low, int high)
+		{ return GetRandomNumberInRange(low, (uint32)high); }
+	static unsigned int GetRandomNumberInRange(unsigned int low, unsigned int high)
+		{ return (unsigned int)GetRandomNumberInRange((uint32)low, (uint32)high); }
+	static unsigned int GetRandomNumberInRange(int low, unsigned int high)
+		{ return GetRandomNumberInRange((unsigned int)low, high); }
+	static unsigned int GetRandomNumberInRange(unsigned int low, int high)
+		{ return GetRandomNumberInRange(low, (unsigned int)high); }
+#endif
 	static void SetRandomSeed(int32 seed)
 		{ mysrand(seed); }
 };

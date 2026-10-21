@@ -2173,6 +2173,7 @@ void CStoredCar::StoreCar(CVehicle* pVehicle)
 	m_nRadioStation = pVehicle->m_nRadioStation;
 	m_nVariationA = pVehicle->m_aExtras[0];
 	m_nVariationB = pVehicle->m_aExtras[1];
+	m_nCarBombType = CARBOMB_NONE;
 	m_nFlags = 0;
 	if (pVehicle->bRewardVehicle) m_nFlags |= FLAG_REWARD_VEHICLE;
 	if (pVehicle->bBulletProof) m_nFlags |= FLAG_BULLETPROOF;
@@ -2185,6 +2186,7 @@ void CStoredCar::StoreCar(CVehicle* pVehicle)
 	if (pVehicle->bIsHeavy) m_nFlags |= FLAG_HEAVY;
 	if (pVehicle->IsCar()) {
 		CAutomobile* pAutomobile = (CAutomobile*)pVehicle;
+		m_nCarBombType = pAutomobile->m_bombType;
 		if (pAutomobile->bFixedColour) m_nFlags |= FLAG_PERMANENT_COLOUR;
 		if (pAutomobile->m_bombType) m_nFlags |= FLAG_BOMB;
 		if (pAutomobile->bNotDamagedUpsideDown) m_nFlags |= FLAG_NOT_DAMAGED_UPSIDEDOWN;
@@ -2237,10 +2239,6 @@ CVehicle* CStoredCar::RestoreCar()
 	if (pVehicle->IsCar())
 	{
 		((CAutomobile*)pVehicle)->m_bombType = m_nCarBombType;
-#ifdef FIX_BUGS
-		if (m_nCarBombType != CARBOMB_NONE)
-			((CAutomobile*)pVehicle)->m_pBombRigger = FindPlayerPed();
-#endif
 	}
 	pVehicle->bHasBeenOwnedByPlayer = true;
 	pVehicle->m_nDoorLock = CARLOCK_UNLOCKED;
@@ -2254,25 +2252,34 @@ CVehicle* CStoredCar::RestoreCar()
 	if (m_nFlags & FLAG_STRONG) pVehicle->bTakeLessDamage = true;
 	if (m_nFlags & FLAG_HEAVY) {
 		pVehicle->bIsHeavy = true;
-		pVehicle->m_fMass = pVehicle->pHandling->GetMass();
-		pVehicle->m_fTurnMass = pVehicle->pHandling->GetTurnMass();
+		/* Match COMMAND_SET_CAR_HEAVY: mission-heavy vehicles use the
+		 * amplified physical mass as well as carrying the heavy flag. */
+		pVehicle->m_fMass = pVehicle->pHandling->GetMass() * 3.0f;
+		pVehicle->m_fTurnMass = pVehicle->pHandling->GetTurnMass() * 5.0f;
 	}
 	else {
 		pVehicle->bIsHeavy = false;
-		pVehicle->m_fMass = pVehicle->pHandling->GetMass() * 3.0f;
-		pVehicle->m_fTurnMass = pVehicle->pHandling->GetTurnMass() * 5.0f;
+		pVehicle->m_fMass = pVehicle->pHandling->GetMass();
+		pVehicle->m_fTurnMass = pVehicle->pHandling->GetTurnMass();
 	}
 	if (pVehicle->IsCar()) {
 		CAutomobile* pAutomobile = (CAutomobile*)pVehicle;
 		if (m_nFlags & FLAG_PERMANENT_COLOUR) pAutomobile->bFixedColour = true;
-		if (m_nFlags & FLAG_BOMB) pAutomobile->m_bombType = CARBOMB_TIMED;
+		/* Older saves only retained the presence flag; current saves preserve the
+		 * exact bomb type in m_nCarBombType. */
+		if ((m_nFlags & FLAG_BOMB) && m_nCarBombType == CARBOMB_NONE)
+			pAutomobile->m_bombType = CARBOMB_TIMED;
+#ifdef FIX_BUGS
+		if (pAutomobile->m_bombType != CARBOMB_NONE)
+			pAutomobile->m_pBombRigger = FindPlayerPed();
+#endif
 		if (m_nFlags & FLAG_NOT_DAMAGED_UPSIDEDOWN) pAutomobile->bNotDamagedUpsideDown = true;
-		m_fTractionMultiplier = pAutomobile->m_fTraction;
+		pAutomobile->m_fTraction = m_fTractionMultiplier;
 	}
 	else if (pVehicle->IsBike()) {
 		CBike* pBike = (CBike*)pVehicle;
 		if (m_nFlags & FLAG_PERMANENT_COLOUR) pBike->bFixedColour = true;
-		m_fTractionMultiplier = pBike->m_fTraction;
+		pBike->m_fTraction = m_fTractionMultiplier;
 	}
 	return pVehicle;
 }

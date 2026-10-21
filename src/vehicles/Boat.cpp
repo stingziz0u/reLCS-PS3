@@ -14,6 +14,7 @@
 #include "Camera.h"
 #include "Darkel.h"
 #include "Explosion.h"
+#include "FinalMissionMusic.h"
 #include "Particle.h"
 #include "ParticleObject.h"
 #include "WaterLevel.h"
@@ -840,7 +841,11 @@ CBoat::BlowUpCar(CEntity *culprit)
 	RwMatrix *matrix;
 	CObject *obj;
 
-	if(!bCanBeDamaged)
+	/* SALH5 can reach the generic delayed/direct boat explosion path after its
+	 * lighthouse subtitle, bypassing the script EXPLODE_CAR handler entirely.
+	 * The finale tracker records the exact boat carrying Salvatore before that
+	 * transition, since Toni's scripted gunner seat is not a normal vehicle seat. */
+	if(FinalMissionMusic::ShouldSuppressLCSBoatExplosion(this) || !bCanBeDamaged)
 		return;
 
 	// explosion pushes vehicle up

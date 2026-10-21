@@ -237,7 +237,15 @@ public:
 	void PreparePathDataForType(uint8 type, CTempNode *tempnodes, CPathInfoForObject *objectpathinfo,
 		float maxdist, CPathInfoForObject *detachednodes, int32 numDetached);
 
-	bool IsPathObject(int id) { return id < PATHNODESIZE && (InfoForTileCars[id*12].type != 0 || InfoForTilePeds[id*12].type != 0); }
+	bool IsPathObject(int id) {
+		/* The temporary tile-path tables are released after initial world setup.
+		 * IPLs streamed later (such as Fort Staunton's destroyed phase on load)
+		 * still pass through LoadObjectInstance, so treat their instances as
+		 * ordinary buildings once path-object classification is unavailable. */
+		return id >= 0 && id < PATHNODESIZE && InfoForTileCars != nil &&
+			InfoForTilePeds != nil &&
+			(InfoForTileCars[id*12].type != 0 || InfoForTilePeds[id*12].type != 0);
+	}
 
 	float CalcRoadDensity(float x, float y);
 	bool TestForPedTrafficLight(CPathNode *n1, CPathNode *n2);

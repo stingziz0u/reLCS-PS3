@@ -1073,9 +1073,9 @@ cAudioManager::ProcessVehicle(CVehicle* veh)
 					ProcessVehicleFlatTyre(params);
 					ProcessVehicleHorn(params);
 					ProcessVehicleSirenOrAlarm(params);
-					if (UsesReverseWarning(params.m_nIndex))
+					if (UsesReverseWarning(veh->GetModelIndex()))
 						ProcessVehicleReverseWarning(params);
-					if(HasAirBrakes(params.m_nIndex))
+					if(HasAirBrakes(veh->GetModelIndex()))
 						ProcessAirBrakes(params);
 					ProcessCarBombTick(params);
 					ProcessVehicleEngine(params);
@@ -2850,7 +2850,8 @@ cAudioManager::UsesSiren(cVehicleParams& params)
 bool8
 cAudioManager::UsesSirenSwitching(cVehicleParams& params)
 {
-	if (params.m_nIndex == FIRETRUK || params.m_nIndex == MRWHOOP)
+	const int32 model = params.m_pVehicle->GetModelIndex();
+	if (model == MI_FIRETRUCK || model == MI_MRWHOOP)
 		return FALSE;
 	return UsesSiren(params);
 }
@@ -2879,14 +2880,15 @@ cAudioManager::ProcessVehicleSirenOrAlarm(cVehicleParams& params)
 				if (UsesSiren(params)) {
 					if (params.m_pVehicle->GetStatus() == STATUS_ABANDONED)
 						return TRUE;
-					if (veh->m_nCarHornTimer > 0 && params.m_nIndex != FIRETRUK && params.m_nIndex != MRWHOOP) {
+					if (veh->m_nCarHornTimer > 0 && veh->GetModelIndex() != MI_FIRETRUCK &&
+					    veh->GetModelIndex() != MI_MRWHOOP) {
 						m_sQueueSample.m_nSampleIndex = SFX_SIREN_FAST;
-						if (params.m_nIndex == FBIRANCH)
+						if (veh->GetModelIndex() == MI_FBICAR)
 							m_sQueueSample.m_nFrequency = 12668;
 						else
 							m_sQueueSample.m_nFrequency = SampleManager.GetSampleBaseFrequency(SFX_SIREN_FAST);
 						m_sQueueSample.m_nCounter = 60;
-					} else if (params.m_nIndex == VICECHEE) {
+					} else if (veh->GetModelIndex() == MI_VICECHEE) {
 						m_sQueueSample.m_nSampleIndex = SFX_POLICE_SIREN_SLOW;
 						m_sQueueSample.m_nFrequency = 11440;
 					} else {
@@ -2920,7 +2922,12 @@ cAudioManager::ProcessVehicleSirenOrAlarm(cVehicleParams& params)
 bool8
 cAudioManager::UsesReverseWarning(uint32 model)
 {
-	return model == LINERUN || model == FIRETRUK || model == BUS || model == COACH || model == PACKER || model == FLATBED;
+	/* aVehicleSettings is already stored in LCS model order, but the legacy
+	 * eVehicleModel names above still describe Vice City's order.  Using those
+	 * stale enum values here made LCS' Stallion and Leone Mafia car collide with
+	 * COACH and PACKER and play a heavy-vehicle reversing alarm. */
+	return model == MI_LINERUN || model == MI_FIRETRUCK || model == MI_BUS ||
+		model == MI_COACH || model == MI_PACKER || model == MI_FLATBED;
 }
 
 bool8
@@ -3045,8 +3052,9 @@ cAudioManager::ProcessAirBrakes(cVehicleParams& params)
 bool8
 cAudioManager::HasAirBrakes(uint32 model)
 {
-	return model == LINERUN || model == FIRETRUK || model == TRASH || model == BUS || model == BARRACKS 
-		|| model == COACH || model == PACKER || model == FLATBED;
+	return model == MI_LINERUN || model == MI_FIRETRUCK || model == MI_TRASH ||
+		model == MI_BUS || model == MI_BARRACKS || model == MI_COACH ||
+		model == MI_PACKER || model == MI_FLATBED;
 }
 
 bool8
@@ -4017,11 +4025,11 @@ cAudioManager::ProcessBoatMovingOverWater(cVehicleParams& params)
 void
 cAudioManager::ProcessPlane(cVehicleParams& params)
 {
-	switch (params.m_nIndex) {
-	case AIRTRAIN:
+	switch (params.m_pVehicle->GetModelIndex()) {
+	case MI_AIRTRAIN:
 		ProcessJumbo(params);
 		break;
-	case DEADDODO:
+	case MI_DEADDODO:
 		ProcessCesna(params);
 		break;
 	default:

@@ -13,10 +13,12 @@
 #include "Darkel.h"
 #include "Explosion.h"
 #include "Fire.h"
+#include "FinalMissionMusic.h"
 #include "General.h"
 #include "Garages.h"
 #include "Heli.h"
 #include "Messages.h"
+#include "MusicManager.h"
 #include "Pad.h"
 #include "ParticleObject.h"
 #include "Phones.h"
@@ -147,6 +149,16 @@ int8 CRunningScript::ProcessCommands500To599(int32 command)
 		CollectParameters(&m_nIp, 1);
 		CVehicle* pVehicle = CPools::GetVehiclePool()->GetAt(GET_INTEGER_PARAM(0));
 		script_assert(pVehicle);
+		/* The lighthouse transition first detaches Toni from the chase boat,
+		 * then clears the other mission boats.  On a delayed script tick the
+		 * player's former boat can enter that cleanup list too.  Track the exact
+		 * chase-boat pool handle before the detach and suppress only that cleanup
+		 * explosion; real combat damage and the normal low-health failure remain. */
+		if (!CGeneral::faststricmp(m_abScriptName, "SALH5") &&
+		    FinalMissionMusic::ShouldSuppressLCSBoatExplosion(pVehicle))
+			return 0;
+		if (!CGeneral::faststricmp(m_abScriptName, "SALH5") && pVehicle->IsRealHeli())
+			FinalMissionMusic::FadeOutLCSFinale();
 		pVehicle->bCanBeDamaged = true;
 		pVehicle->BlowUpCar(nil);
 		return 0;
@@ -2388,6 +2400,13 @@ int8 CRunningScript::ProcessCommands700To799(int32 command)
 		CStats::CheckPointReachedSuccessfully();
 		CTheScripts::LastMissionPassedTime = CTimer::GetTimeInMilliseconds();
 		CGameLogic::RemoveShortCutDropOffPointForMission();
+#if defined(_3DS) || defined(__PS3__)	// reLCS-PS3: a game fix of the 3DS port
+		/* Some LCS missions apply the scripted car brake during their closing
+		 * sequence.  The frontend happened to clear a leaked brake flag on resume;
+		 * clear it at the actual successful mission handoff instead. */
+		CPad::GetPad(CWorld::PlayerInFocus)->bApplyBrakes = false;
+		MusicManager.ResetRadioAfterMissionPassed();
+#endif
 		return 0;
 	}
 	case COMMAND_SET_CHAR_RUNNING:

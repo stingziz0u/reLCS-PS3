@@ -153,7 +153,7 @@ CFire::ProcessFire(void)
 		fGreen = nRandNumber / 128.f;
 		fRed = nRandNumber / 128.f;
 
-		CPointLights::AddLight(CPointLights::LIGHT_POINT, m_vecPos, CVector(0.0f, 0.0f, 0.0f), 12.0f, fRed, fGreen, 0.0f, 0, 0);
+		CPointLights::AddLight(CPointLights::LIGHT_POINT, m_vecPos, CVector(0.0f, 0.0f, 0.0f), 12.0f, fRed, fGreen, 0.0f, 0, true);
 	} else {
 		Extinguish();
 	}

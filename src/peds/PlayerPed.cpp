@@ -7,6 +7,8 @@
 #include "DMAudio.h"
 #include "Pad.h"
 #include "Camera.h"
+#include "CutsceneMgr.h"
+#include "Vehicle.h"
 #include "WeaponEffects.h"
 #include "ModelIndices.h"
 #include "World.h"
@@ -40,6 +42,112 @@ const uint32 CPlayerPed::nSaveStructSize =
 #endif
 
 int32 idleAnimBlockIndex;
+
+static bool
+HasPlayerVehicleSeatAnim(CPlayerPed *player, CVehicle *vehicle, bool isDriver)
+{
+	AnimationId seatAnim;
+	if (vehicle->IsBoat()) {
+		seatAnim = vehicle->pHandling->Flags & HANDLING_SIT_IN_BOAT ?
+			ANIM_STD_CAR_SIT : ANIM_STD_BOAT_DRIVE;
+	} else if (vehicle->IsBike()) {
+		seatAnim = isDriver ? ANIM_BIKE_RIDE : ANIM_BIKE_RIDE_P;
+	} else if (isDriver) {
+		seatAnim = vehicle->bLowVehicle ? ANIM_STD_CAR_SIT_LO : ANIM_STD_CAR_SIT;
+	} else {
+		seatAnim = vehicle->bLowVehicle ? ANIM_STD_CAR_SIT_P_LO : ANIM_STD_CAR_SIT_P;
+	}
+	return RpAnimBlendClumpGetAssociation(player->GetClump(), seatAnim) != nil;
+}
+
+/* A vehicle's occupant pointer is the authoritative ownership relation.  LCS
+ * cutscenes can leave the real (hidden) player referenced as an occupant while
+ * either clearing the ped-side in-vehicle state or removing only the base seat
+ * animation.  The latter still drives normally, but renders Tony standing
+ * through the vehicle until an exit animation restores his skeleton.  Validate
+ * all three parts of the invariant at the player's own update boundary. */
+static void
+RestorePlayerVehicleInvariant(CPlayerPed *player)
+{
+	if (CCutsceneMgr::IsRunning() || CCutsceneMgr::IsCutsceneProcessing())
+		return;
+
+	CVehicle *vehicle = nil;
+	bool isDriver = false;
+	if (player->m_pMyVehicle) {
+		if (player->m_pMyVehicle->pDriver == player) {
+			vehicle = player->m_pMyVehicle;
+			isDriver = true;
+		} else {
+			for (int32 j = 0; j < ARRAY_SIZE(player->m_pMyVehicle->pPassengers); j++) {
+				if (player->m_pMyVehicle->pPassengers[j] == player) {
+					vehicle = player->m_pMyVehicle;
+					break;
+				}
+			}
+		}
+	}
+	for (int32 i = 0; i < CPools::GetVehiclePool()->GetSize() && !vehicle; i++) {
+		CVehicle *candidate = CPools::GetVehiclePool()->GetSlot(i);
+		if (!candidate)
+			continue;
+		if (candidate->pDriver == player) {
+			vehicle = candidate;
+			isDriver = true;
+			break;
+		}
+		for (int32 j = 0; j < ARRAY_SIZE(candidate->pPassengers); j++) {
+			if (candidate->pPassengers[j] == player) {
+				vehicle = candidate;
+				break;
+			}
+		}
+	}
+	if (!vehicle)
+		return;
+	/* SetArrestPlayer deliberately leaves the player registered as the vehicle's
+	 * occupant while switching the ped to PED_ARRESTED.  Do not mistake that
+	 * temporary mismatch for the post-cutscene standing-in-car bug: restoring
+	 * PED_DRIVING here prevents CGameLogic from ever observing the arrest, so the
+	 * disabled vehicle appears to freeze until the player presses exit. */
+	if (player->m_nPedState == PED_ARRESTED || player->m_pArrestingCop ||
+		player->DyingOrDead() || player->m_fHealth <= 0.0f)
+		return;
+	if (player->EnteringCar() || player->m_nPedState == PED_EXIT_CAR ||
+		player->m_nPedState == PED_DRAG_FROM_CAR ||
+		player->m_objective == OBJECTIVE_LEAVE_CAR ||
+		player->m_objective == OBJECTIVE_LEAVE_CAR_AND_DIE)
+		return;
+	if (player->bInVehicle && player->m_pMyVehicle == vehicle &&
+		player->m_nPedState == PED_DRIVING &&
+		HasPlayerVehicleSeatAnim(player, vehicle, isDriver))
+		return;
+
+	if (player->m_pMyVehicle != vehicle) {
+		if (player->m_pMyVehicle)
+			player->m_pMyVehicle->CleanUpOldReference((CEntity **)&player->m_pMyVehicle);
+		player->m_pMyVehicle = vehicle;
+		vehicle->RegisterReference((CEntity **)&player->m_pMyVehicle);
+	}
+	player->bInVehicle = true;
+	player->m_pVehicleAnim = nil;
+	RpAnimBlendClumpRemoveAllAssociations(player->GetClump());
+	player->SetPedState(PED_DRIVING);
+	player->m_nLastPedState = PED_NONE;
+	player->SetMoveState(PEDMOVE_NONE);
+	player->m_nStoredMoveState = PEDMOVE_NONE;
+	player->bUsesCollision = false;
+	player->bIsStanding = false;
+	player->bWasStanding = false;
+	player->bIsInTheAir = false;
+	player->bIsLanding = false;
+	player->m_vecMoveSpeed = CVector(0.0f, 0.0f, 0.0f);
+	player->bRenderPedInCar = !vehicle->bIsBus;
+	player->RemoveWeaponWhenEnteringVehicle();
+	player->AddInCarAnims(vehicle, isDriver);
+	player->bChangedSeat = false;
+	player->SetPedPositionInCar();
+}
 
 CPad*
 GetPadFromPlayer(CPlayerPed*)
@@ -255,7 +363,8 @@ CPlayerPed::ReApplyMoveAnims(void)
 	for(int i = 0; i < ARRAY_SIZE(moveAnims); i++) {
 		CAnimBlendAssociation *curMoveAssoc = RpAnimBlendClumpGetAssociation(GetClump(), moveAnims[i]);
 		if (curMoveAssoc) {
-			if (CGeneral::faststrcmp(CAnimManager::GetAnimAssociation(m_animGroup, moveAnims[i])->hierarchy->name, curMoveAssoc->hierarchy->name)) {
+			CAnimBlendAssociation *expected = CAnimManager::GetAnimAssociation(m_animGroup, moveAnims[i]);
+			if (expected != nil && CGeneral::faststrcmp(expected->hierarchy->name, curMoveAssoc->hierarchy->name)) {
 				CAnimBlendAssociation *newMoveAssoc = CAnimManager::AddAnimation(GetClump(), m_animGroup, moveAnims[i]);
 				newMoveAssoc->blendDelta = curMoveAssoc->blendDelta;
 				newMoveAssoc->blendAmount = curMoveAssoc->blendAmount;
@@ -713,6 +822,15 @@ CPlayerPed::PlayerControlSniper(CPad *padUsed)
 void
 CPlayerPed::ProcessWeaponSwitch(CPad *padUsed)
 {
+	/* Shoulder 2 is also used for the vehicle look controls on 3DS.  A ped
+	 * whose post-cutscene state was briefly inconsistent could therefore cycle
+	 * away from the only drive-by-capable slot while still attached to a car.
+	 * Vehicle entry chooses the correct SMG; keep that selection until exit. */
+	if (bInVehicle) {
+		m_nSelectedWepSlot = m_currentWeapon;
+		return;
+	}
+
 	if (CDarkel::FrenzyOnGoing() || m_attachedTo)
 		goto switchDetectDone;
 
@@ -810,6 +928,14 @@ switchDetectDone:
 		}
 	}
 }
+
+#ifdef _3DS
+static bool
+Is3DSRifleWeapon(eWeaponType weapon)
+{
+	return weapon == WEAPONTYPE_M4 || weapon == WEAPONTYPE_RUGER || weapon == WEAPONTYPE_M60;
+}
+#endif
 
 void
 CPlayerPed::PlayerControlM16(CPad *padUsed)
@@ -1267,12 +1393,25 @@ CPlayerPed::ProcessPlayerWeapon(CPad *padUsed)
 
 	if (!m_pFire) {
 		eWeaponType weapon = GetWeapon()->m_eWeaponType;
+		bool enterRifleFirstPerson = false;
+#ifdef _3DS
+		enterRifleFirstPerson = Is3DSRifleWeapon(weapon) && padUsed->Get3DSRifleFirstPersonAim() &&
+			!TheCamera.Using1stPersonWeaponMode();
+#endif
 		if (weapon == WEAPONTYPE_ROCKETLAUNCHER || weapon == WEAPONTYPE_SNIPERRIFLE ||
-			weapon == WEAPONTYPE_LASERSCOPE || weapon == WEAPONTYPE_M4 ||
-			weapon == WEAPONTYPE_RUGER || weapon == WEAPONTYPE_M60 ||
+			weapon == WEAPONTYPE_LASERSCOPE ||
+#ifdef _3DS
+			enterRifleFirstPerson ||
+#else
+			weapon == WEAPONTYPE_M4 || weapon == WEAPONTYPE_RUGER || weapon == WEAPONTYPE_M60 ||
+#endif
 			weapon == WEAPONTYPE_CAMERA) {
 
-			if (padUsed->TargetJustDown() || TheCamera.m_bJustJumpedOutOf1stPersonBecauseOfTarget) {
+			if (padUsed->TargetJustDown() || TheCamera.m_bJustJumpedOutOf1stPersonBecauseOfTarget || enterRifleFirstPerson) {
+#ifdef _3DS
+				if (enterRifleFirstPerson)
+					ClearWeaponTarget();
+#endif
 #ifdef FREE_CAM
 				if (CCamera::bFreeCam && TheCamera.Cams[0].Using3rdPersonMouseCam()) {
 					m_fRotationCur = CGeneral::LimitRadianAngle(-TheCamera.Orientation);
@@ -1417,7 +1556,11 @@ CPlayerPed::ProcessPlayerWeapon(CPad *padUsed)
 	}
 #endif
 
-	if (padUsed->GetTarget() && m_nSelectedWepSlot == m_currentWeapon && m_nMoveState != PEDMOVE_SPRINT && !TheCamera.Using1stPersonWeaponMode() && weaponInfo->IsFlagSet(WEAPONFLAG_CANAIM)) {
+	const bool isMeleeLockOn = GetWeapon()->m_eWeaponType == WEAPONTYPE_UNARMED ||
+		GetWeapon()->m_eWeaponType == WEAPONTYPE_BRASSKNUCKLE ||
+		weaponInfo->IsFlagSet(WEAPONFLAG_FIGHTMODE);
+	if (padUsed->GetTarget() && m_nSelectedWepSlot == m_currentWeapon && m_nMoveState != PEDMOVE_SPRINT &&
+		!TheCamera.Using1stPersonWeaponMode() && (weaponInfo->IsFlagSet(WEAPONFLAG_CANAIM) || isMeleeLockOn)) {
 		if (m_pPointGunAt) {
 			// what??
 			if (!m_pPointGunAt
@@ -1439,8 +1582,8 @@ CPlayerPed::ProcessPlayerWeapon(CPad *padUsed)
 				ClearWeaponTarget();
 				return;
 			}
-			if (CPlayerPed::DoesTargetHaveToBeBroken(m_pPointGunAt->GetPosition(), GetWeapon()) || 
-				(!bCanPointGunAtTarget && !weaponInfo->IsFlagSet(WEAPONFLAG_CANAIM_WITHARM))) { // this line isn't on Mobile, idk why
+			if (CPlayerPed::DoesTargetHaveToBeBroken(m_pPointGunAt->GetPosition(), GetWeapon()) ||
+				(!isMeleeLockOn && !bCanPointGunAtTarget && !weaponInfo->IsFlagSet(WEAPONFLAG_CANAIM_WITHARM))) { // this line isn't on Mobile, idk why
 				ClearWeaponTarget();
 				return;
 			}
@@ -1733,6 +1876,7 @@ void
 CPlayerPed::ProcessControl(void)
 {
 	// Mobile has some debug/abandoned cheat thing in here: "gbFrankenTommy"
+	RestorePlayerVehicleInvariant(this);
 
 	if (m_nEvadeAmount != 0)
 		--m_nEvadeAmount;
@@ -1779,6 +1923,14 @@ CPlayerPed::ProcessControl(void)
 	CPad *padUsed = GetPadFromPlayer(this);
 	m_pWanted->Update();
 	PruneReferences();
+
+	/* Keep drowning death authoritative if an old in-car callback restores the
+	 * driving state after health has already reached zero. */
+	if (m_fHealth <= 0.0f && bInVehicle && m_nPedState == PED_DRIVING) {
+		if (m_pMyVehicle)
+			m_pMyVehicle->SetStatus(STATUS_PLAYER_DISABLED);
+		SetPedState(PED_DIE);
+	}
 
 	if (GetWeapon()->m_eWeaponType == WEAPONTYPE_MINIGUN) {
 		CWeaponInfo *weaponInfo = CWeaponInfo::GetWeaponInfo(GetWeapon()->m_eWeaponType);

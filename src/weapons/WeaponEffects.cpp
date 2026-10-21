@@ -30,7 +30,7 @@ CWeaponEffects::Init(void)
 	gCrossHair.m_nRed = 255;
 	gCrossHair.m_nGreen = 0;
 	gCrossHair.m_nBlue = 0;
-	gCrossHair.m_nAlpha = 127;
+	gCrossHair.m_nAlpha = 255;
 	gCrossHair.m_fSize = 1.0f;
 	gCrossHair.m_fRotation = 0.0f;
 	
@@ -56,6 +56,7 @@ CWeaponEffects::MarkTarget(CVector pos, uint8 red, uint8 green, uint8 blue, uint
 {
 	gCrossHair.m_bActive = true;
 	gCrossHair.m_vecPos = pos;
+	gCrossHair.m_nAlpha = 255;
 	gCrossHair.m_fSize = size;
 }
 
@@ -109,15 +110,15 @@ CWeaponEffects::Render(void)
 			float recipz = 1.0f / pos.z;
 			CSprite::RenderOneXLUSprite_Rotate_Aspect(pos.x, pos.y, pos.z,
 				w, h,
-				255, 88, 100, 158,
-				recipz, gCrossHair.m_fRotation, gCrossHair.m_nAlpha);
+				255, 72, 88, 256,
+				recipz, gCrossHair.m_fRotation, 255);
 				
 			float recipz2 = 1.0f / pos.z;
 			
 			CSprite::RenderOneXLUSprite_Rotate_Aspect(pos.x, pos.y, pos.z,
 				size*w, size*h,
-				107, 134, 247, 158,
-				recipz2, TWOPI - gCrossHair.m_fRotation, gCrossHair.m_nAlpha);
+				88, 144, 255, 256,
+				recipz2, TWOPI - gCrossHair.m_fRotation, 255);
 						
 			gCrossHair.m_fRotation += 0.02f;
 			if ( gCrossHair.m_fRotation > TWOPI )

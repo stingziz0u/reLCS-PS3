@@ -1349,3 +1349,17 @@ void re3_usererror(const char *format, ...)
 #ifdef VALIDATE_SAVE_SIZE
 int32 _saveBufCount;
 #endif
+
+// the 3DS port's stall diagnostics (main.cpp, Streaming.cpp, FileLoader.cpp):
+// its log is a 3DS diagnostic build's only; here the clock and nothing else
+double
+re3_wall_time_ms(void)
+{
+	return (double)RsTimer();
+}
+
+void
+re3_stall_log(const char *format, ...)
+{
+	(void)format;
+}

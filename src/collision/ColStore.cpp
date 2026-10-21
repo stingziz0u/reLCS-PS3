@@ -105,7 +105,7 @@ CColStore::AddColSlot(const char *name)
 }
 
 void
-CColStore::RemoveColSlot(int slot)
+CColStore::RemoveColSlot(int32 slot)
 {
 	if(GetSlot(slot)){
 		if(GetSlot(slot)->isLoaded)
@@ -312,15 +312,15 @@ CColStore::LoadCollision(const CVector &pos, eLevelName level)
 */
 
 		if(wantThisOne){
+			if(!CStreaming::HasColLoaded(i))
+				requestedSomething = true;
 			CStreaming::RequestCol(i, STREAMFLAGS_PRIORITY);
-			requestedSomething = true;
 		}else
 			CStreaming::RemoveCol(i);
 	}
 	if(requestedSomething){
 		CTimer::Suspend();
-		// BUG? request was done with priority but now loading non-priority?
-		CStreaming::LoadAllRequestedModels(false);
+		CStreaming::LoadAllRequestedModels(true);
 		CGarages::SetupAnyGaragesForThisIsland();
 		CTimer::Resume();
 	}

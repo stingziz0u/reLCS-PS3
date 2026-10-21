@@ -56,6 +56,9 @@ void LoadingScreen(const char *str1, const char *str2, const char *splashscreen)
 void LoadingIslandScreen(const char *levelName);
 CSprite2d *LoadSplash(const char *name);
 void DestroySplashScreen(void);
+#if defined(RW_3DS) && defined(RESTORIES_3DS_BUILD)
+void ShutdownPlayerVehicleReflection3DS(void);
+#endif
 Const char *GetLevelSplashScreen(int level);
 Const char *GetRandomSplashScreen(void);
 void LittleTest(void);

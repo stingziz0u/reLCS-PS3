@@ -151,7 +151,7 @@ class CPacManPickups
 
 	static CPacManPickup aPMPickUps[NUMPACMANPICKUPS];
 	static CVector LastPickUpCoors;
-	static int PillsEatenInRace;
+	static int32 PillsEatenInRace;
 	static bool bPMActive;
 public:
 	static void Init(void);

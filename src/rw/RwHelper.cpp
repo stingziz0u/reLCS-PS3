@@ -720,6 +720,25 @@ findPlatform(rw::Atomic *a)
 	return 0;
 }
 
+#ifdef RESTORIES_3DS_BUILD
+static RpMaterial*
+RemoveLCSWheelReflectionCB(RpMaterial *material, void *data)
+{
+	RwTexture *texture = RpMaterialGetTexture(material);
+	if(texture == nil)
+		return material;
+	const char *name = RwTextureGetName(texture);
+	if(strcmp(name, "tyres") != 0 && strncmp(name, "wheel_", 6) != 0)
+		return material;
+
+	*(bool*)data = true;
+	material->surfaceProps.specular = 0.0f;
+	if(RpMatFXMaterialGetEffects(material) == rpMATFXEFFECTENVMAP)
+		RpMatFXMaterialSetEffects(material, rpMATFXEFFECTNULL);
+	return material;
+}
+#endif
+
 // Game doesn't read atomic extensions so we never get any other than the default pipe,
 // but we need it for uninstancing
 void
@@ -728,6 +747,16 @@ attachPipe(rw::Atomic *atomic)
 	if(RpSkinGeometryGetSkin(RpAtomicGetGeometry(atomic)))
 		atomic->pipeline = rw::skinGlobals.pipelines[rw::platform];
 	else{
+	#ifdef RESTORIES_3DS_BUILD
+		bool isLCSWheel = false;
+		RpGeometryForAllMaterials(RpAtomicGetGeometry(atomic), RemoveLCSWheelReflectionCB, &isLCSWheel);
+		if(isLCSWheel){
+			/* Use the stable 3DS MatFX material-colour path, but with the LCS wheel
+			 * environment layer removed after the wheel DFF is actually streamed. */
+			RpMatFXAtomicEnableEffects(atomic);
+			return;
+		}
+	#endif
 		int fx = rpMATFXEFFECTNULL;
 		RpGeometryForAllMaterials(RpAtomicGetGeometry(atomic), CVehicleModelInfo::GetMatFXEffectMaterialCB, &fx);
 		if(fx != rpMATFXEFFECTNULL)

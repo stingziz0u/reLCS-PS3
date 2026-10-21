@@ -162,10 +162,12 @@ AnimAssocDesc aStdAnimDescs[] = {
 	{ ANIM_STD_JUMP_LAUNCH,  ASSOC_FADEOUTWHENDONE | ASSOC_PARTIAL | ASSOC_HAS_TRANSLATION },
 	{ ANIM_STD_JUMP_GLIDE,  ASSOC_DELETEFADEDOUT | ASSOC_PARTIAL },
 	{ ANIM_STD_JUMP_LAND,  ASSOC_FADEOUTWHENDONE | ASSOC_PARTIAL | ASSOC_HAS_TRANSLATION },
-	{ ANIM_STD_FALL,  ASSOC_DELETEFADEDOUT },
+	// Match the VC landing chain: the airborne fall pose must remain a partial,
+	// repeating association so SetLanding can fade it into FALL_collapse.
+	{ ANIM_STD_FALL,  ASSOC_REPEAT | ASSOC_DELETEFADEDOUT | ASSOC_PARTIAL },
 	{ ANIM_STD_FALL_GLIDE,  ASSOC_DELETEFADEDOUT | ASSOC_PARTIAL },
 	{ ANIM_STD_FALL_LAND,  ASSOC_FADEOUTWHENDONE | ASSOC_PARTIAL | ASSOC_HAS_TRANSLATION },
-	{ ANIM_STD_FALL_COLLAPSE,  ASSOC_REPEAT | ASSOC_DELETEFADEDOUT | ASSOC_PARTIAL | ASSOC_HAS_TRANSLATION },
+	{ ANIM_STD_FALL_COLLAPSE,  ASSOC_FADEOUTWHENDONE | ASSOC_PARTIAL | ASSOC_HAS_TRANSLATION },
 	{ ANIM_STD_FALL_ONBACK,  ASSOC_DELETEFADEDOUT | ASSOC_PARTIAL },
 	{ ANIM_STD_FALL_ONFRONT,  ASSOC_DELETEFADEDOUT | ASSOC_PARTIAL | ASSOC_FRONTAL },
 	{ ANIM_STD_EVADE_STEP,  ASSOC_FADEOUTWHENDONE | ASSOC_PARTIAL | ASSOC_HAS_TRANSLATION },
@@ -541,10 +543,13 @@ char const *aStdAnimations[] = {
 	"JUMP_launch",
 	"JUMP_glide",
 	"JUMP_land",
-	"FALL_fall",
+	/* LCS PED.IFP stores the airborne flail and landing roll under the
+	 * opposite names from III/VC.  Keep the engine-facing animation IDs in
+	 * the VC order while binding them to the actual LCS motions. */
+	"FALL_collapse",
 	"FALL_glide",
 	"FALL_land",
-	"FALL_collapse",
+	"FALL_fall",
 	"FALL_back",
 	"FALL_front",
 	"EV_step",
@@ -1339,18 +1344,29 @@ CAnimManager::GetAnimGroupName(AssocGroupId groupId)
 CAnimBlendAssociation*
 CAnimManager::CreateAnimAssociation(AssocGroupId groupId, AnimationId animId)
 {
-	return ms_aAnimAssocGroups[groupId].CopyAnimation(animId);
+	CAnimBlendAssociation *anim = nil;
+	if(groupId >= 0 && groupId < NUM_ANIM_ASSOC_GROUPS)
+		anim = ms_aAnimAssocGroups[groupId].CopyAnimation(animId);
+	if(anim == nil){
+		debug("Invalid animation request group=%d anim=%d; using standard idle\n", groupId, animId);
+		anim = ms_aAnimAssocGroups[ASSOCGRP_STD].CopyAnimation(ANIM_STD_IDLE);
+	}
+	return anim;
 }
 
 CAnimBlendAssociation*
 CAnimManager::GetAnimAssociation(AssocGroupId groupId, AnimationId animId)
 {
+	if(groupId < 0 || groupId >= NUM_ANIM_ASSOC_GROUPS)
+		return nil;
 	return ms_aAnimAssocGroups[groupId].GetAnimation(animId);
 }
 
 CAnimBlendAssociation*
 CAnimManager::GetAnimAssociation(AssocGroupId groupId, const char *name)
 {
+	if(groupId < 0 || groupId >= NUM_ANIM_ASSOC_GROUPS)
+		return nil;
 	return ms_aAnimAssocGroups[groupId].GetAnimation(name);
 }
 
@@ -1400,6 +1416,14 @@ CAnimManager::BlendAnimation(RpClump *clump, AssocGroupId groupId, AnimationId a
 	int removePrevAnim = 0;
 	CAnimBlendClumpData *clumpData = *RPANIMBLENDCLUMPDATA(clump);
 	CAnimBlendAssociation *anim = GetAnimAssociation(groupId, animId);
+	if(anim == nil){
+		debug("Invalid blend request group=%d anim=%d; using standard idle\n", groupId, animId);
+		groupId = ASSOCGRP_STD;
+		animId = ANIM_STD_IDLE;
+		anim = GetAnimAssociation(groupId, animId);
+		if(anim == nil)
+			return nil;
+	}
 	bool isMovement = anim->IsMovement();
 	bool isPartial = anim->IsPartial();
 	CAnimBlendLink *link;
@@ -1477,7 +1501,9 @@ CAnimManager::CreateAnimAssocGroups(void)
 			}
 #endif
 			// GetAnimation(i) in III (but it's in LoadAnimFiles), GetAnimation(group->animDesc[j].animId) in VC
-			group->GetAnimation(def->animDescs[j].animId)->flags |= def->animDescs[j].flags;
+			CAnimBlendAssociation *anim = group->GetAnimation(def->animDescs[j].animId);
+			if(anim != nil)
+				anim->flags |= def->animDescs[j].flags;
 		}
 		if(IsClumpSkinned(clump))
 			RpClumpForAllAtomics(clump, AtomicRemoveAnimFromSkinCB, nil);
@@ -1491,6 +1517,35 @@ CAnimManager::LoadAnimFile(const char *filename)
 	RwStream *stream;
 	stream = RwStreamOpen(rwSTREAMFILENAME, rwSTREAMREAD, filename);
 	assert(stream);
+
+#ifdef _3DS
+	/* PED.IFP contains thousands of very small keyframe records. Parsing it
+	 * directly from the FAT-backed stream turns every record into another SD
+	 * read and makes startup spend minutes at "Load animations". Read the
+	 * archive once, then let the unchanged parser consume an in-memory stream. */
+	stream->seek(0, 2);
+	uint32 fileSize = stream->tell();
+	stream->seek(0, 0);
+	uint8 *fileData = (uint8*)RwMalloc(fileSize);
+	if(fileData){
+		uint32 bytesRead = RwStreamRead(stream, fileData, fileSize);
+		RwStreamClose(stream, nil);
+		stream = nil;
+		if(bytesRead == fileSize){
+			RwMemory memory = { fileData, fileSize };
+			RwStream *memoryStream = RwStreamOpen(rwSTREAMMEMORY, rwSTREAMREAD, &memory);
+			assert(memoryStream);
+			LoadAnimFile(memoryStream, true);
+			RwStreamClose(memoryStream, nil);
+			RwFree(fileData);
+			return;
+		}
+		RwFree(fileData);
+		stream = RwStreamOpen(rwSTREAMFILENAME, rwSTREAMREAD, filename);
+		assert(stream);
+	}
+#endif
+
 	LoadAnimFile(stream, true);
 	RwStreamClose(stream, nil);
 }
@@ -1591,14 +1646,15 @@ CAnimManager::LoadAnimFile(RwStream *stream, bool compress, char (*uncompressedA
 			bool hasScale = false;
 			bool hasTranslation = false;
 			READ_IFP_HEADER(info);
+			bool framesAllocated = false;
 			if(strncmp(info.ident, "KRTS", 4) == 0){
 				hasScale = true;
-				seq->SetNumFrames(numFrames, true, compressHier);
+				framesAllocated = seq->SetNumFrames(numFrames, true, compressHier);
 			}else if(strncmp(info.ident, "KRT0", 4) == 0){
 				hasTranslation = true;
-				seq->SetNumFrames(numFrames, true, compressHier);
+				framesAllocated = seq->SetNumFrames(numFrames, true, compressHier);
 			}else if(strncmp(info.ident, "KR00", 4) == 0){
-				seq->SetNumFrames(numFrames, false, compressHier);
+				framesAllocated = seq->SetNumFrames(numFrames, false, compressHier);
 			}
 			if(strstr(seq->name, "L Toe"))
 				debug("anim %s has toe keyframes\n", hier->name); // BUG: seq->name
@@ -1611,7 +1667,9 @@ CAnimManager::LoadAnimFile(RwStream *stream, bool compress, char (*uncompressedA
 					rot.Invert();
 					CVector trans(fbuf[4], fbuf[5], fbuf[6]);
 
-					if(compressHier){
+					if(!framesAllocated){
+						continue;
+					}else if(compressHier){
 						KeyFrameTransCompressed *kf = (KeyFrameTransCompressed*)seq->GetKeyFrameCompressed(l);
 						kf->SetRotation(rot);
 						kf->SetTranslation(trans);
@@ -1631,7 +1689,9 @@ CAnimManager::LoadAnimFile(RwStream *stream, bool compress, char (*uncompressedA
 					rot.Invert();
 					CVector trans(fbuf[4], fbuf[5], fbuf[6]);
 
-					if(compressHier){
+					if(!framesAllocated){
+						continue;
+					}else if(compressHier){
 						KeyFrameTransCompressed *kf = (KeyFrameTransCompressed*)seq->GetKeyFrameCompressed(l);
 						kf->SetRotation(rot);
 						kf->SetTranslation(trans);
@@ -1648,7 +1708,9 @@ CAnimManager::LoadAnimFile(RwStream *stream, bool compress, char (*uncompressedA
 					CQuaternion rot(fbuf[0], fbuf[1], fbuf[2], fbuf[3]);
 					rot.Invert();
 
-					if(compressHier){
+					if(!framesAllocated){
+						continue;
+					}else if(compressHier){
 						KeyFrameCompressed *kf = (KeyFrameCompressed*)seq->GetKeyFrameCompressed(l);
 						kf->SetRotation(rot);
 						kf->SetTime(fbuf[4]);	// absolute time here

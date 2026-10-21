@@ -10,6 +10,7 @@
 #include "Leeds.h"
 #include "Particle.h"
 #include "PlayerPed.h"
+#include "Pools.h"
 #include "Streaming.h"
 #include "TempColModels.h"
 #include "WaterLevel.h"
@@ -214,6 +215,47 @@ void CFerry::InitFerrys(void)
 	CStreaming::LoadAllRequestedModels(false);
 	CStreaming::RequestModel(MI_FERRY, 0);
 	CStreaming::LoadAllRequestedModels(false);
+}
+
+void
+CFerry::RestorePathAfterLoad(bool enabled)
+{
+	/* InitFerrys deliberately clears the runtime pointer table.  Native saves
+	 * may nevertheless contain the two ferry vehicles, while converted saves
+	 * may retain only the script progress flag.  Rebind a complete pair when it
+	 * exists; otherwise recreate the path exactly once if progression unlocked it. */
+	CFerry *loaded[NUM_FERRIES] = { nil };
+	CVehiclePool *pool = CPools::GetVehiclePool();
+	for(int32 i = 0; i < pool->GetSize(); i++) {
+		CVehicle *vehicle = pool->GetSlot(i);
+		if(vehicle && vehicle->m_vehType == VEHICLE_TYPE_FERRY) {
+			CFerry *ferry = (CFerry*)vehicle;
+			if(ferry->m_nFerryId >= 0 && ferry->m_nFerryId < NUM_FERRIES)
+				loaded[ferry->m_nFerryId] = ferry;
+		}
+	}
+
+	if(!enabled)
+		return;
+	bool complete = true;
+	for(int32 i = 0; i < NUM_FERRIES; i++)
+		complete = complete && loaded[i] != nil;
+	if(complete) {
+		for(int32 i = 0; i < NUM_FERRIES; i++)
+			mspInst->m_apFerries[i] = loaded[i];
+		return;
+	}
+
+	/* A partial pair cannot be updated safely because each ferry accesses its
+	 * partner while docking.  Remove it before constructing a coherent pair. */
+	for(int32 i = 0; i < NUM_FERRIES; i++) {
+		if(loaded[i]) {
+			CWorld::Remove(loaded[i]);
+			CWorld::RemoveReferencesToDeletedObject(loaded[i]);
+			delete loaded[i];
+		}
+	}
+	EnableFerryPath(0);
 }
 
 void CFerry::SwitchFerryCollision(int type)
@@ -830,4 +872,3 @@ void CFerry::Write(base::cRelocatableChunkWriter& writer)
 		writer.AddPatch(&mspInst->pPathData[i]->aTrackNodes);
 	}
 }
-

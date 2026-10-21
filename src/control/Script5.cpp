@@ -7,6 +7,7 @@
 #include "ScriptCommands.h"
 
 #include "CarCtrl.h"
+#include "FileMgr.h"
 #include "BulletInfo.h"
 #include "General.h"
 #include "Lines.h"
@@ -18,6 +19,7 @@
 #include "SaveBuf.h"
 #include "Shadows.h"
 #include "SpecialFX.h"
+#include "Streaming.h"
 #include "World.h"
 #include "main.h"
 #include "SaveBuf.h"
@@ -144,9 +146,15 @@ void CRunningScript::LocatePlayerCharCommand(int32 command, uint32* pIp)
 	CollectParameters(pIp, b3D ? 6 : 5);
 	CPlayerInfo* pPlayerInfo = &CWorld::Players[GET_INTEGER_PARAM(0)];
 	CPed* pTarget = CPools::GetPedPool()->GetAt(GET_INTEGER_PARAM(1));
-	script_assert(pTarget);
+	/* A save may legitimately resume one frame before a temporary mission ped is
+	 * recreated.  Treat a missing/stale handle as a failed locate test instead of
+	 * dereferencing it; the controlling script will retry on its next pass. */
+	if (pTarget == nil || pPlayerInfo->m_pPed == nil) {
+		UpdateCompareFlag(false);
+		return;
+	}
 	CVector pos = pPlayerInfo->GetPos();
-	if (pTarget->bInVehicle) {
+	if (pTarget->bInVehicle && pTarget->m_pMyVehicle) {
 		X = pTarget->m_pMyVehicle->GetPosition().x;
 		Y = pTarget->m_pMyVehicle->GetPosition().y;
 		Z = pTarget->m_pMyVehicle->GetPosition().z;
@@ -1421,14 +1429,31 @@ int16 CRunningScript::GetPadState(uint16 pad, uint16 button)
 	case 5: return pPad->NewState.LeftShoulder2;
 	case 6: return pPad->NewState.RightShoulder1;
 	case 7: return pPad->NewState.RightShoulder2;
+#ifdef _3DS
+	// Legacy SCM directions use the Circle Pad; physical D-pad is graphics-only.
+	case 8: return LegacyDirections3DS::Held(pPad->NewState, LegacyDirections3DS::Up) ? 255 : 0;
+	case 9: return LegacyDirections3DS::Held(pPad->NewState, LegacyDirections3DS::Down) ? 255 : 0;
+	case 10: return LegacyDirections3DS::Held(pPad->NewState, LegacyDirections3DS::Left) ? 255 : 0;
+	case 11: return LegacyDirections3DS::Held(pPad->NewState, LegacyDirections3DS::Right) ? 255 : 0;
+#else
 	case 8: return pPad->NewState.DPadUp;
 	case 9: return pPad->NewState.DPadDown;
 	case 10: return pPad->NewState.DPadLeft;
 	case 11: return pPad->NewState.DPadRight;
+#endif
 	case 12: return pPad->NewState.Start;
 	case 13: return pPad->NewState.Select;
 	case 14: return pPad->NewState.Square;
-	case 15: return pPad->NewState.Triangle;
+	case 15:
+#ifdef _3DS
+		/* Keep legacy shop scripts consistent with the 3DS GUI back action. */
+		if (pPad->ArePlayerControlsDisabled()){
+			if(pPad->NewState.Square)
+				CPad::SuppressJumpUntilButtonRelease();
+			return pPad->NewState.Square;
+		}
+#endif
+		return pPad->NewState.Triangle;
 	case 16: return pPad->NewState.Cross;
 	case 17: return pPad->NewState.Circle;
 	case 18: return pPad->NewState.LeftShock;
@@ -1481,7 +1506,8 @@ void CRunningScript::LocateCollectiveCommand(int32 command, uint32* pIp)
 			CTheScripts::CollectiveArray[i].pedIndex = 0;
 			continue;
 		}
-		CVector pos = pPed->bInVehicle ? pPed->m_pMyVehicle->GetPosition() : pPed->GetPosition();
+		CVector pos = pPed->bInVehicle && pPed->m_pMyVehicle ?
+			pPed->m_pMyVehicle->GetPosition() : pPed->GetPosition();
 		switch (command) {
 		case COMMAND_LOCATE_STOPPED_COLL_ANY_MEANS_2D:
 		case COMMAND_LOCATE_STOPPED_COLL_ON_FOOT_2D:
@@ -1561,8 +1587,12 @@ void CRunningScript::LocateCollectiveCharCommand(int32 command, uint32* pIp)
 	}
 	CollectParameters(pIp, b3D ? 6 : 5);
 	CPed* pTarget = CPools::GetPedPool()->GetAt(GET_INTEGER_PARAM(1));
-	script_assert(pTarget);
-	if (pTarget->bInVehicle) {
+	if (!pTarget) {
+		/* A saved collective can outlive its transient target ped. */
+		UpdateCompareFlag(false);
+		return;
+	}
+	if (pTarget->bInVehicle && pTarget->m_pMyVehicle) {
 		X = pTarget->m_pMyVehicle->GetPosition().x;
 		Y = pTarget->m_pMyVehicle->GetPosition().y;
 		Z = pTarget->m_pMyVehicle->GetPosition().z;
@@ -1591,7 +1621,8 @@ void CRunningScript::LocateCollectiveCharCommand(int32 command, uint32* pIp)
 			CTheScripts::CollectiveArray[i].pedIndex = 0;
 			continue;
 		}
-		CVector pos = pPed->bInVehicle ? pPed->m_pMyVehicle->GetPosition() : pPed->GetPosition();
+		CVector pos = pPed->bInVehicle && pPed->m_pMyVehicle ?
+			pPed->m_pMyVehicle->GetPosition() : pPed->GetPosition();
 		bool in_area;
 		if (b3D) {
 			in_area = X - dX <= pos.x &&
@@ -1654,7 +1685,10 @@ void CRunningScript::LocateCollectiveCarCommand(int32 command, uint32* pIp)
 	}
 	CollectParameters(pIp, b3D ? 6 : 5);
 	CVehicle* pTarget = CPools::GetVehiclePool()->GetAt(GET_INTEGER_PARAM(1));
-	script_assert(pTarget);
+	if (!pTarget) {
+		UpdateCompareFlag(false);
+		return;
+	}
 	X = pTarget->GetPosition().x;
 	Y = pTarget->GetPosition().y;
 	Z = pTarget->GetPosition().z;
@@ -1677,7 +1711,8 @@ void CRunningScript::LocateCollectiveCarCommand(int32 command, uint32* pIp)
 			CTheScripts::CollectiveArray[i].pedIndex = 0;
 			continue;
 		}
-		CVector pos = pPed->bInVehicle ? pPed->m_pMyVehicle->GetPosition() : pPed->GetPosition();
+		CVector pos = pPed->bInVehicle && pPed->m_pMyVehicle ?
+			pPed->m_pMyVehicle->GetPosition() : pPed->GetPosition();
 		bool in_area;
 		if (b3D) {
 			in_area = X - dX <= pos.x &&
@@ -2150,50 +2185,20 @@ INITSAVEBUF
 		WriteSaveBuf(buf, CollectiveArray[i]);
 	WriteSaveBuf(buf, NextFreeCollectiveIndex);
 	for (uint32 i = 0; i < MAX_NUM_BUILDING_SWAPS; i++) {
-		CBuilding* pBuilding = BuildingSwapArray[i].m_pBuilding;
-		uint32 type, handle;
-		if (!pBuilding) {
-			type = 0;
-			handle = 0;
-		} else if (pBuilding->GetIsATreadable()) {
-			type = 1;
-			handle = CPools::GetTreadablePool()->GetJustIndex_NoFreeAssert((CTreadable*)pBuilding) + 1;
-		} else {
-			type = 2;
-			handle = CPools::GetBuildingPool()->GetJustIndex_NoFreeAssert(pBuilding) + 1;
-		}
+		/* Never inspect the raw entity pointer here.  Static buildings can be
+		 * streamed/rebuilt between load and save, leaving this cache stale. */
+		uint32 type = BuildingSwapArray[i].m_nPoolType;
+		uint32 handle = BuildingSwapArray[i].m_nPoolHandle;
+		if (BuildingSwapArray[i].m_nNewModel < 0 || BuildingSwapArray[i].m_nOldModel < 0)
+			type = handle = 0;
 		WriteSaveBuf(buf, type);
 		WriteSaveBuf(buf, handle);
 		WriteSaveBuf(buf, BuildingSwapArray[i].m_nNewModel);
 		WriteSaveBuf(buf, BuildingSwapArray[i].m_nOldModel);
 	}
 	for (uint32 i = 0; i < MAX_NUM_INVISIBILITY_SETTINGS; i++) {
-		CEntity* pEntity = InvisibilitySettingArray[i];
-		uint32 type, handle;
-		if (!pEntity) {
-			type = 0;
-			handle = 0;
-		} else {
-			switch (pEntity->GetType()) {
-			case ENTITY_TYPE_BUILDING:
-				if (((CBuilding*)pEntity)->GetIsATreadable()) {
-					type = 1;
-					handle = CPools::GetTreadablePool()->GetJustIndex_NoFreeAssert((CTreadable*)pEntity) + 1;
-				} else {
-					type = 2;
-					handle = CPools::GetBuildingPool()->GetJustIndex_NoFreeAssert((CBuilding*)pEntity) + 1;
-				}
-				break;
-			case ENTITY_TYPE_OBJECT:
-				type = 3;
-				handle = CPools::GetObjectPool()->GetJustIndex_NoFreeAssert((CObject*)pEntity) + 1;
-				break;
-			case ENTITY_TYPE_DUMMY:
-				type = 4;
-				handle = CPools::GetDummyPool()->GetJustIndex_NoFreeAssert((CDummy*)pEntity) + 1;
-			default: break;
-			}
-		}
+		uint32 type = InvisibilitySettingPoolType[i];
+		uint32 handle = InvisibilitySettingPoolHandle[i];
 		WriteSaveBuf(buf, type);
 		WriteSaveBuf(buf, handle);
 	}
@@ -2210,6 +2215,155 @@ INITSAVEBUF
 VALIDATESAVEBUF(*size)
 }
 
+namespace {
+struct WorldDoorBinding {
+	uint32 createIp;
+	uint16 globalIndex;
+	CVector closedPosition;
+};
+
+// Only the six persistent Electricgate controllers in the stock LCS script.
+// Validate the CREATE stream before interpreting a saved global as a door ref.
+static bool MatchesWorldDoorBinding(const WorldDoorBinding &binding, const uint8 *creation)
+{
+	uint32 ip = 0;
+	const uint8 prefix[] = { COMMAND_CREATE_OBJECT_NO_OFFSET & 0xFF,
+		COMMAND_CREATE_OBJECT_NO_OFFSET >> 8, ARGUMENT_INT16, 0x33, 0xFF };
+	if (memcmp(&creation[ip], prefix, sizeof(prefix)) != 0)
+		return false;
+	ip += sizeof(prefix);
+	float coordinates[3];
+	for (int32 i = 0; i < 3; i++) {
+		uint32 bits;
+		uint8 type = creation[ip++];
+		if (type == ARGUMENT_FLOAT) {
+			memcpy(&bits, &creation[ip], 4);
+			bits = LittleU32(bits);	// main.scm is little-endian (PS3: big)
+			ip += 4;
+		} else if (type == ARGUMENT_FLOAT_2BYTES) {
+			bits = (uint32)creation[ip] << 16 |
+				(uint32)creation[ip + 1] << 24;
+			ip += 2;
+		} else
+			return false;
+		memcpy(&coordinates[i], &bits, sizeof(bits));
+	}
+	return CVector(coordinates[0], coordinates[1], coordinates[2]) == binding.closedPosition &&
+		creation[ip] == ARGUMENT_GLOBAL + binding.globalIndex / 256 &&
+		creation[ip + 1] == binding.globalIndex % 256;
+}
+}
+
+void
+CTheScripts::RebindWorldDoorScriptHandles(bool reloadContract)
+{
+	/* A legacy/imported object graph can retain a live, same-generation handle
+	 * for the wrong door. In an observed save, global 1232 addressed the gate
+	 * at (985.3, -328.1), while its controller moves the gate at (1250.4, -812).
+	 * Match the saved instances by model AND their authored movement envelope;
+	 * never revive an old pool slot or allocate a replacement mission object. */
+	static const WorldDoorBinding bindings[] = {
+		{ 272805, 1232, CVector(1250.4f, -812.0f, 13.97f) },
+		{ 272836, 1233, CVector(1016.0f, -1099.955f, 12.294f) },
+		{ 272867, 1234, CVector(985.3f, -328.1f, 9.0f) },
+		{ 274072, 1278, CVector(91.589f, -318.592f, 15.296f) },
+		{ 274197, 1282, CVector(366.158f, -1128.432f, 21.941f) },
+		{ 274230, 1283, CVector(326.3f, -1128.432f, 21.941f) }
+	};
+	int modelId;
+	if (!ScriptSpace || !CModelInfo::GetModelInfo("Electricgate", &modelId) ||
+		NumberOfUsedObjects <= 205 || UsedObjectArray[205].index != modelId)
+		return;
+	static bool checked = false;
+	static bool matches[ARRAY_SIZE(bindings)];
+	if (reloadContract || !checked) {
+		// INITUS is a mission overlay, no longer present in ScriptSpace after
+		// startup. Validate its declarations from the unchanged SCM file once
+		// per load, without loading or executing that overlay again.
+		memset(matches, 0, sizeof(matches));
+		checked = false;
+		int32 file = CFileMgr::OpenFile("DATA/main.scm", "rb");
+		if (file <= 0)
+			return;
+		for (uint32 i = 0; i < ARRAY_SIZE(bindings); i++) {
+			uint8 creation[24];
+			if (CFileMgr::Seek(file, 8 + bindings[i].createIp, SEEK_SET))
+				continue;
+			if (CFileMgr::Read(file, (char*)creation, sizeof(creation)) == sizeof(creation))
+				matches[i] = MatchesWorldDoorBinding(bindings[i], creation);
+		}
+		CFileMgr::CloseFile(file);
+		checked = true;
+	}
+	CObjectPool *pool = CPools::GetObjectPool();
+	for (uint32 i = 0; i < ARRAY_SIZE(bindings); i++) {
+		const WorldDoorBinding &binding = bindings[i];
+		if (!matches[i] ||
+			4u * (binding.globalIndex + 1) > GetSizeOfVariableSpace())
+			continue;
+		int32 *handle = GetPointerToScriptVariable(4 * binding.globalIndex);
+		CObject *door = pool->GetAt(*handle);
+		if (door && door->ObjectCreatedBy == MISSION_OBJECT &&
+			door->GetModelIndex() == modelId &&
+			(door->GetPosition() - binding.closedPosition).MagnitudeSqr() <= 16.0f * 16.0f)
+			continue;
+		CObject *match = nil;
+		for (int32 slot = 0; slot < pool->GetSize(); slot++) {
+			CObject *candidate = pool->GetSlot(slot);
+			if (!candidate || candidate->ObjectCreatedBy != MISSION_OBJECT ||
+				candidate->GetModelIndex() != modelId ||
+				!((candidate->GetPosition() - binding.closedPosition).MagnitudeSqr() <= 16.0f * 16.0f))
+				continue;
+			if (match) { // Ambiguous graph: leave the handle untouched.
+				match = nil;
+				break;
+			}
+			match = candidate;
+		}
+		if (match) {
+			debug("LCS world door %u rebound from %d to %d\n", binding.globalIndex,
+				*handle, pool->GetIndex(match));
+			*handle = pool->GetIndex(match);
+		}
+	}
+}
+
+void
+CTheScripts::RebindPlayerPedScriptHandle()
+{
+	CPlayerPed *player = CWorld::Players[CWorld::PlayerInFocus].m_pPed;
+	if (!player)
+		return;
+
+	/* LCS stores the player index in global 536 and the derived ped-pool handle
+	 * in global 540.  The latter is deliberately not a save variable: the stock
+	 * loader rebuilds it by running GET_PLAYER_CHAR again after loading the ped
+	 * pool.  Our selective script restart does not rerun that bootstrap, leaving
+	 * the handle at zero and breaking the safehouse clothes controller.
+	 *
+	 * Validate the binding against the loaded LCS main.scm before writing it, so
+	 * this cannot silently apply to a different script layout. */
+	static const uint8 playerCharBinding[] = {
+		COMMAND_GET_PLAYER_CHAR & 0xFF, COMMAND_GET_PLAYER_CHAR >> 8,
+		ARGUMENT_GLOBAL + 2, 0x18, ARGUMENT_GLOBAL + 2, 0x1C
+	};
+	bool bindingFound = false;
+	for (uint32 i = 0; i + sizeof(playerCharBinding) <= MainScriptSize; i++) {
+		if (memcmp(&ScriptSpace[i], playerCharBinding, sizeof(playerCharBinding)) == 0) {
+			bindingFound = true;
+			break;
+		}
+	}
+	if (!bindingFound) {
+		debug("LCS player script handle binding was not found\n");
+		return;
+	}
+
+	static const int32 playerCharGlobalOffset = 4 * (2 * 256 + 0x1C);
+	*GetPointerToScriptVariable(playerCharGlobalOffset) =
+		CPools::GetPedPool()->GetIndex(player);
+}
+
 bool CTheScripts::LoadAllScripts(uint8* buf, uint32 size)
 {
 INITSAVEBUF
@@ -2222,14 +2376,16 @@ INITSAVEBUF
 		printf("\n===================================================\nSave Game Mismatch!!!\n");
 		return false;
 	}
-	for (uint32 i = 0; i < varSpace; i++) { // this is not exactly what function does
-		if (i < 8)
-			ReadSaveBuf(&ScriptSpace[i], buf);
-		else if (GetSaveVarIndex(i / 4 * 4) != -1)
-			ReadSaveBuf(&ScriptSpace[i], buf);
-		else
-			SkipSaveBuf(buf, 1);
-	}
+	/* SaveAllScripts writes the complete LCS variable space, including transient
+	 * object handles and controller phases above the declared progress-variable
+	 * list.  Those values are inseparable from the complete RunningScript graph:
+	 * restoring a child at its saved IP while leaving its handle globals at their
+	 * main.scm defaults makes world controllers operate on null objects and lets
+	 * inactive-island safehouse scripts enter their default branches.  re3/reVC
+	 * restore the entire block, and the native PS2-to-ARM converter verifies this
+	 * LCS block byte-for-byte at the same 17484-byte size. */
+	for (uint32 i = 0; i < varSpace; i++)
+		ReadSaveBuf(&ScriptSpace[i], buf);
 	ReadSaveBuf(&tmp, buf);
 	script_assert(tmp == SCRIPT_DATA_SIZE);
 	ReadSaveBuf(&OnAMissionFlag, buf);
@@ -2240,55 +2396,67 @@ INITSAVEBUF
 	for (uint32 i = 0; i < MAX_NUM_BUILDING_SWAPS; i++) {
 		ReadSaveBuf(&type, buf);
 		ReadSaveBuf(&handle, buf);
-		/*
+		BuildingSwapArray[i].m_nPoolType = type;
+		BuildingSwapArray[i].m_nPoolHandle = handle;
+		/* Static LCS IPL pool indices are recreated before save data is loaded.
+		 * Safehouses are stored as explicit building swaps (for example 1089 ->
+		 * 3873 in the Portland save), so restore those records directly. */
 		switch (type) {
 		case 0:
 			BuildingSwapArray[i].m_pBuilding = nil;
 			break;
 		case 1:
-			BuildingSwapArray[i].m_pBuilding = CPools::GetTreadablePool()->GetSlot(handle - 1);
+			BuildingSwapArray[i].m_pBuilding = handle == 0 || handle > (uint32)CPools::GetTreadablePool()->GetSize() ? nil :
+				CPools::GetTreadablePool()->GetSlot(handle - 1);
 			break;
 		case 2:
-			BuildingSwapArray[i].m_pBuilding = CPools::GetBuildingPool()->GetSlot(handle - 1);
+			BuildingSwapArray[i].m_pBuilding = handle == 0 || handle > (uint32)CPools::GetBuildingPool()->GetSize() ? nil :
+				CPools::GetBuildingPool()->GetSlot(handle - 1);
 			break;
 		default:
 			script_assert(false);
+			BuildingSwapArray[i].m_pBuilding = nil;
+			BuildingSwapArray[i].m_nPoolType = 0;
+			BuildingSwapArray[i].m_nPoolHandle = 0;
 		}
-		*/
-		/*BuildingSwapArray[i].m_nNewModel = ReadSaveBuf<uint32>(buf);*/
-		/*BuildingSwapArray[i].m_nOldModel = ReadSaveBuf<uint32>(buf);*/
-		SkipSaveBuf(buf, 8);
-		/*
+		ReadSaveBuf(&BuildingSwapArray[i].m_nNewModel, buf);
+		ReadSaveBuf(&BuildingSwapArray[i].m_nOldModel, buf);
 		if (BuildingSwapArray[i].m_pBuilding)
 			BuildingSwapArray[i].m_pBuilding->ReplaceWithNewModel(BuildingSwapArray[i].m_nNewModel);
-		*/
 	}
 	for (uint32 i = 0; i < MAX_NUM_INVISIBILITY_SETTINGS; i++) {
 		ReadSaveBuf(&type, buf);
 		ReadSaveBuf(&handle, buf);
-		/*
+		InvisibilitySettingPoolType[i] = type;
+		InvisibilitySettingPoolHandle[i] = handle;
 		switch (type) {
 		case 0:
 			InvisibilitySettingArray[i] = nil;
 			break;
 		case 1:
-			InvisibilitySettingArray[i] = CPools::GetTreadablePool()->GetSlot(handle - 1);
+			InvisibilitySettingArray[i] = handle == 0 || handle > (uint32)CPools::GetTreadablePool()->GetSize() ? nil :
+				CPools::GetTreadablePool()->GetSlot(handle - 1);
 			break;
 		case 2:
-			InvisibilitySettingArray[i] = CPools::GetBuildingPool()->GetSlot(handle - 1);
+			InvisibilitySettingArray[i] = handle == 0 || handle > (uint32)CPools::GetBuildingPool()->GetSize() ? nil :
+				CPools::GetBuildingPool()->GetSlot(handle - 1);
 			break;
 		case 3:
-			InvisibilitySettingArray[i] = CPools::GetObjectPool()->GetSlot(handle - 1);
+			InvisibilitySettingArray[i] = handle == 0 || handle > (uint32)CPools::GetObjectPool()->GetSize() ? nil :
+				CPools::GetObjectPool()->GetSlot(handle - 1);
 			break;
 		case 4:
-			InvisibilitySettingArray[i] = CPools::GetDummyPool()->GetSlot(handle - 1);
+			InvisibilitySettingArray[i] = handle == 0 || handle > (uint32)CPools::GetDummyPool()->GetSize() ? nil :
+				CPools::GetDummyPool()->GetSlot(handle - 1);
 			break;
 		default:
 			script_assert(false);
+			InvisibilitySettingArray[i] = nil;
+			InvisibilitySettingPoolType[i] = 0;
+			InvisibilitySettingPoolHandle[i] = 0;
 		}
 		if (InvisibilitySettingArray[i])
 			InvisibilitySettingArray[i]->bIsVisible = false;
-		*/
 	}
 	bool tmpBool;
 	ReadSaveBuf(&tmpBool, buf);
@@ -2309,8 +2477,14 @@ INITSAVEBUF
 	script_assert(tmp16 == NumberOfExclusiveMissionScripts);
 	uint32 runningScripts;
 	ReadSaveBuf(&runningScripts, buf);
+	/* CTheScripts::Init(load) has already reset the active/idle lists before
+	 * GenericLoad reaches this block.  A native LCS save contains the complete
+	 * running-script graph; its IP, stack and locals are authoritative runtime
+	 * state.  Restore every record through the active-list allocator exactly as
+	 * re3/reVC do.  Loading into a temporary CRunningScript consumes the bytes but
+	 * silently discards the thread and permanently truncates subsequent saves. */
 	for (uint32 i = 0; i < runningScripts; i++)
-		CRunningScript().Load(buf);
+		CTheScripts::StartNewScript(0)->Load(buf);
 	return true;
 VALIDATESAVEBUF(size)
 }

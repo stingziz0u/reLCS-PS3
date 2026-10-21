@@ -47,15 +47,23 @@ CAnimBlendAssocGroup::DestroyAssociations(void)
 CAnimBlendAssociation*
 CAnimBlendAssocGroup::GetAnimation(uint32 id)
 {
+	if(assocList == nil || id < (uint32)firstAnimId ||
+		id >= (uint32)(firstAnimId + numAssociations)){
+		debug("Animation %u is outside group %d range [%d, %d)\n",
+			id, groupId, firstAnimId, firstAnimId + numAssociations);
+		return nil;
+	}
 	return &assocList[id - firstAnimId];
 }
 
 CAnimBlendAssociation*
 CAnimBlendAssocGroup::GetAnimation(const char *name)
 {
+	if(assocList == nil || name == nil)
+		return nil;
 	int i;
 	for(i = 0; i < numAssociations; i++)
-		if(!CGeneral::faststricmp(assocList[i].hierarchy->name, name))
+		if(assocList[i].hierarchy != nil && !CGeneral::faststricmp(assocList[i].hierarchy->name, name))
 			return &assocList[i];
 	debug("\n\nCan't find the fucking animation %s\n\n\n", name);
 	return nil;

@@ -125,7 +125,8 @@ uint8 FontRenderStateBuf[1024];
 #ifdef BUTTON_ICONS
 CSprite2d CFont::ButtonSprite[MAX_BUTTON_ICONS];
 int CFont::PS2Symbol = BUTTON_NONE;
-int CFont::ButtonsSlot = -1;
+int32 CFont::ButtonsSlot = -1;
+static char LoadedButtonsPath[64];
 #endif // BUTTON_ICONS
 
 //--TODO(LCS): volatile memory
@@ -186,6 +187,13 @@ CFont::Initialise(void)
 void
 CFont::LoadButtons(const char *txdPath)
 {
+	/* GAMEPAD_MENU calls this every time the pause menu is opened.  Keeping the
+	 * already loaded dictionary avoids a large native-texture conversion spike
+	 * on memory-constrained platforms. */
+	if (ButtonsSlot != -1 && CTxdStore::GetSlot(ButtonsSlot)->texDict &&
+	    strcmp(LoadedButtonsPath, txdPath) == 0)
+		return;
+
 	if (int file = CFileMgr::OpenFile(txdPath)) {
 		CFileMgr::CloseFile(file);
 		if (ButtonsSlot == -1)
@@ -218,6 +226,8 @@ CFont::LoadButtons(const char *txdPath)
 		ButtonSprite[BUTTON_RSTICK_LEFT].SetTexture("thumbrxl");
 		ButtonSprite[BUTTON_RSTICK_RIGHT].SetTexture("thumbrxr");
 		CTxdStore::PopCurrentTxd();
+		strncpy(LoadedButtonsPath, txdPath, sizeof(LoadedButtonsPath) - 1);
+		LoadedButtonsPath[sizeof(LoadedButtonsPath) - 1] = '\0';
 	}
 	else {
 		if (ButtonsSlot != -1) {
@@ -226,6 +236,7 @@ CFont::LoadButtons(const char *txdPath)
 			CTxdStore::RemoveTxdSlot(ButtonsSlot);
 			ButtonsSlot = -1;
 		}
+		LoadedButtonsPath[0] = '\0';
 	}
 }
 #endif // BUTTON_ICONS
@@ -283,6 +294,7 @@ CFont::Shutdown(void)
 			ButtonSprite[i].Delete();
 		CTxdStore::RemoveTxdSlot(ButtonsSlot);
 		ButtonsSlot = -1;
+		LoadedButtonsPath[0] = '\0';
 	}
 #endif
 	Sprite[0].Delete();

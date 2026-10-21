@@ -9,6 +9,9 @@
 #include "RpAnimBlend.h"
 #include "Bones.h"
 #include "Ped.h"
+#ifdef _3DS
+#include "../../../../common/3ds/CameraOcclusion.h"
+#endif
 #include "AnimBlendAssociation.h"
 #include "Fire.h"
 #include "DMAudio.h"
@@ -55,6 +58,8 @@ uint16 CPed::nEnterCarRangeMultiplier = 1;
 bool CPed::bNastyLimbsCheat;
 bool CPed::bFannyMagnetCheat;
 bool CPed::bPedCheat3;
+bool CPed::bBigHeadsCheat;
+bool CPed::bMaleMagnetCheat;
 CVector2D CPed::ms_vec2DFleePosition;
 
 void *CPed::operator new(size_t sz) throw() { return CPools::GetPedPool()->New();  }
@@ -247,6 +252,7 @@ CPed::CPed(uint32 pedType) : m_pedIK(this)
 	bWanderPathAfterExitingCar = false;
 	bIsLeader = false;
 	bDontDragMeOutCar = false;
+	bFinaleHeliBoardingProtected = false;
 	bWillBeQuickJacked = false;
 	bCancelEnteringCar = false;
 	bObstacleShowedUpDuringKillObjective = false;
@@ -477,6 +483,15 @@ CPed::SetModelIndex(uint32 mi)
 		modelInfo->CreateHitColModelSkinned(GetClump());
 
 	UpdateRpHAnim();
+
+	if (bBigHeadsCheat && !(bBodyPartJustCameOff && m_bodyPartBleeding == PED_HEAD)) {
+		RpHAnimHierarchy *hier = GetAnimHierarchyFromSkinClump(GetClump());
+		int32 idx = RpHAnimIDGetIndex(hier, ConvertPedNode2BoneTag(PED_HEAD));
+		if (idx >= 0) {
+			RwV3d scale = { 1.65f, 1.65f, 1.65f };
+			RwMatrixScale(&RpHAnimHierarchyGetMatrixArray(hier)[idx], &scale, rwCOMBINEPRECONCAT);
+		}
+	}
 #ifdef USE_CUTSCENE_SHADOW_FOR_PED
 	if (!m_pRTShadow)
 	{
@@ -3101,6 +3116,8 @@ CPed::ProcessControl(void)
 				&& m_pedStats->m_sexiness > 40 && !m_leader) {
 				SetLeader(FindPlayerPed());
 			}
+			if (bMaleMagnetCheat && m_nPedType == PEDTYPE_CIVMALE && !m_leader)
+				SetLeader(FindPlayerPed());
 
 		} else {
 			if (bIsStanding && (!m_pCurrentPhysSurface || IsPlayer())
@@ -3124,6 +3141,16 @@ CPed::ProcessEntityCollision(CEntity *collidingEnt, CColPoint *collidingPoints)
 
 	CColModel *ourCol = CModelInfo::GetColModel(GetModelIndex());
 	CColModel *hisCol = CModelInfo::GetColModel(collidingEnt->GetModelIndex());
+
+	/* Keep SALH5's real boarding animation, but do not let the Maverick's
+	 * hover correction physically trip Massimo while he reaches its door.
+	 * World/dock collision remains enabled, and ordinary helicopter impacts
+	 * remain unchanged for every other ped and every other sequence. */
+	if (bFinaleHeliBoardingProtected &&
+	    collidingEnt == m_carInObjective &&
+	    collidingEnt->IsVehicle() &&
+	    ((CVehicle*)collidingEnt)->IsRealHeli())
+		return 0;
 
 	if (!bUsesCollision && !bJustCheckCollision)
 		return 0;
@@ -4462,6 +4489,9 @@ CPed::PedSetInCarCB(CAnimBlendAssociation *animAssoc, void *arg)
 	CPed *ped = (CPed*)arg;
 
 	CVehicle *veh = ped->m_pMyVehicle;
+	if (ped->bFinaleHeliBoardingProtected)
+		ped->bAffectedByGravity = true;
+	ped->bFinaleHeliBoardingProtected = false;
 
 	// Pointless code
 	if (!veh)
@@ -5231,7 +5261,11 @@ void
 CPed::Render(void)
 {
 	if (bInVehicle && m_pMyVehicle && m_nPedState != PED_EXIT_CAR && m_nPedState != PED_DRAG_FROM_CAR) {
-		if (!bRenderPedInCar)
+		if (!bRenderPedInCar
+#ifdef _3DS
+		    && !CameraOcclusion3DS::PresetVisible(this)
+#endif
+		)
 			return;
 
 		if (!m_pMyVehicle->IsBike() && !IsPlayer()) {
@@ -5369,6 +5403,18 @@ void
 CPed::SetFall(int extraTime, AnimationId animId, uint8 evenIfNotInControl)
 {
 	PS3_CRUMB("CPed::SetFall model|state<<16", GetModelIndex() | m_nPedState<<16);
+	/* SALH5 deliberately boards a helicopter that is still bobbing in place.
+	 * Do not let a transient ground/vertical-velocity check replace Massimo's
+	 * door animation with a fall animation during that protected sequence. */
+	CVehicle *boardingVehicle = m_carInObjective ? m_carInObjective : m_pMyVehicle;
+	if (bFinaleHeliBoardingProtected &&
+	    boardingVehicle &&
+	    boardingVehicle->IsRealHeli()) {
+		bIsInTheAir = false;
+		m_vecMoveSpeed.z = 0.0f;
+		return;
+	}
+
 	if (m_attachedTo)
 		return;
 

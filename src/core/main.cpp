@@ -2,6 +2,9 @@
 #ifdef __PS3__
 #include "ps3_platform.h"
 #endif
+#ifdef _3DS
+#include "../../../../common/3ds/PS2GraphicsProfile.h"
+#endif
 #include <time.h>
 #include "rpmatfx.h"
 #include "rphanim.h"
@@ -78,11 +81,318 @@
 #include "custompipes.h"
 #include "screendroplets.h"
 #include "VarConsole.h"
+#ifdef ENABLE_3DS_BOTTOM_RADAR
+#include "BottomScreen3DS.h"
+#endif
+#include "PlayerInfo.h"
+#include "Vehicle.h"
+#include "Timer.h"
+#ifdef _3DS
+#include <3ds/os.h>
+#include <3ds.h>
+#endif
 #ifdef USE_OUR_VERSIONING
 #include "GitSHA1.h"
 #endif
 
 GlobalScene Scene;
+
+#if defined(RW_3DS) && defined(RESTORIES_3DS_BUILD)
+static rw::Camera *gPlayerVehicleReflectionCam;
+static rw::Texture *gPlayerVehicleReflectionTex;
+static bool gPlayerVehicleReflectionValid;
+static rw::Camera *gTrafficVehicleReflectionCam;
+static rw::Texture *gTrafficVehicleReflectionTex;
+static bool gTrafficVehicleReflectionValid;
+static bool gPlayerVehicleReflectionWasActive;
+static bool gPlayerVehicleReflectionTransitionActive;
+static uint32 gPlayerVehicleReflectionTransitionStart;
+static rw::Clump *gLastPlayerVehicleClump;
+static rw::Clump *gExitVehicleReflectionClump;
+static bool gExitVehicleReflectionTransitionActive;
+static uint32 gExitVehicleReflectionTransitionStart;
+
+static bool
+CreateVehicleReflection3DS(rw::Camera **outCamera, rw::Texture **outTexture)
+{
+	/* A deliberately tiny panoramic strip: it retains only broad road, sign,
+	 * wall and sky colours, then the vehicle's environment coordinates stretch
+	 * those blocks into the soft bands visible in the PSP presentation. */
+	const int32 width = 32;
+	const int32 height = 8;
+	rw::Raster *fbuf = rw::Raster::create(width, height, 0, rw::Raster::CAMERATEXTURE);
+	if(fbuf == nil)
+		return false;
+	rw::Raster *zbuf = rw::Raster::create(width, height, 0, rw::Raster::ZBUFFER);
+	if(zbuf == nil){
+		fbuf->destroy();
+		return false;
+	}
+	rw::Frame *frame = rw::Frame::create();
+	if(frame == nil){
+		zbuf->destroy();
+		fbuf->destroy();
+		return false;
+	}
+	rw::Camera *cam = rw::Camera::create();
+	if(cam == nil){
+		frame->destroy();
+		zbuf->destroy();
+		fbuf->destroy();
+		return false;
+	}
+
+	cam->frameBuffer = fbuf;
+	cam->zBuffer = zbuf;
+	cam->setFrame(frame);
+	cam->setNearPlane(0.2f);
+	cam->setFarPlane(180.0f);
+	rw::V2d viewWindow = { 2.2f, 0.55f };
+	cam->setViewWindow(&viewWindow);
+	Scene.world->addCamera(cam);
+
+	rw::Texture *texture = rw::Texture::create(fbuf);
+	if(texture == nil){
+		Scene.world->removeCamera(cam);
+		cam->setFrame(nil);
+		cam->destroy();
+		frame->destroy();
+		zbuf->destroy();
+		fbuf->destroy();
+		return false;
+	}
+	texture->setFilter(rw::Texture::LINEAR);
+	texture->setAddressU(rw::Texture::CLAMP);
+	texture->setAddressV(rw::Texture::CLAMP);
+	rw::c3d::TexSetShrinkProtected(GETC3DRASTEREXT(texture->raster));
+
+	*outCamera = cam;
+	*outTexture = texture;
+	return true;
+}
+
+static void
+DestroyVehicleReflection3DS(rw::Camera **camera, rw::Texture **texture)
+{
+	if(*texture){
+		/* The camera owns its framebuffer raster. */
+		(*texture)->raster = nil;
+		(*texture)->destroy();
+		*texture = nil;
+	}
+	if(*camera){
+		rw::Raster *fbuf = (*camera)->frameBuffer;
+		rw::Raster *zbuf = (*camera)->zBuffer;
+		rw::Frame *frame = (*camera)->getFrame();
+		Scene.world->removeCamera(*camera);
+		(*camera)->frameBuffer = nil;
+		(*camera)->zBuffer = nil;
+		(*camera)->setFrame(nil);
+		(*camera)->destroy();
+		*camera = nil;
+		if(frame) frame->destroy();
+		if(zbuf) zbuf->destroy();
+		if(fbuf) fbuf->destroy();
+	}
+}
+
+static void
+CopyVehicleReflection3DS(rw::Camera *camera, rw::Raster *source,
+	const rw::Matrix *captureMatrix)
+{
+	RwCameraEndUpdate(Scene.camera);
+	rw::Matrix capture = *captureMatrix;
+	camera->getFrame()->transform(&capture, rw::COMBINEREPLACE);
+	RwCameraBeginUpdate(camera);
+	source->renderFast(0, 0);
+	RwCameraEndUpdate(camera);
+	RwCameraBeginUpdate(Scene.camera);
+	DefinedState();
+}
+
+static void
+PublishPlayerVehicleReflection3DS(void)
+{
+	rw::Texture *texture = gPlayerVehicleReflectionTex;
+	rw::Frame *frame = gPlayerVehicleReflectionCam ?
+		gPlayerVehicleReflectionCam->getFrame() : nil;
+	float strength = 1.0f;
+
+	if(gPlayerVehicleReflectionTransitionActive &&
+	   gTrafficVehicleReflectionValid){
+		/* Keep the old frozen reflection at full strength on the first frame,
+		 * fade only the reflection overlay to zero, swap snapshots invisibly at
+		 * zero, then fade the current dynamic reflection back in. The underlying
+		 * vehicle paint never fades. */
+		const uint32 halfTransition = 300;
+		const uint32 fullTransition = halfTransition * 2;
+		uint32 elapsed = CTimer::GetTimeInMilliseconds() -
+			gPlayerVehicleReflectionTransitionStart;
+		if(elapsed < halfTransition){
+			texture = gTrafficVehicleReflectionTex;
+			frame = gTrafficVehicleReflectionCam->getFrame();
+			strength = 1.0f - (float)elapsed / (float)halfTransition;
+		}else if(elapsed < fullTransition){
+			strength = (float)(elapsed - halfTransition) /
+				(float)halfTransition;
+		}else
+			gPlayerVehicleReflectionTransitionActive = false;
+	}
+
+	rw::c3d::setPlayerVehicleReflection(texture, frame);
+	rw::c3d::setPlayerVehicleReflectionStrength(strength);
+}
+
+static void
+PublishExitVehicleReflection3DS(void)
+{
+	if(!gExitVehicleReflectionTransitionActive ||
+	   gExitVehicleReflectionClump == nil){
+		rw::c3d::setTransitionVehicleReflection(nil, nil, nil, 1.0f);
+		return;
+	}
+
+	const uint32 halfTransition = 300;
+	const uint32 fullTransition = halfTransition * 2;
+	uint32 elapsed = CTimer::GetTimeInMilliseconds() -
+		gExitVehicleReflectionTransitionStart;
+	rw::Texture *texture;
+	rw::Frame *frame;
+	float strength;
+	if(elapsed < halfTransition){
+		texture = gPlayerVehicleReflectionTex;
+		frame = gPlayerVehicleReflectionCam->getFrame();
+		strength = 1.0f - (float)elapsed / (float)halfTransition;
+	}else if(elapsed < fullTransition){
+		texture = gTrafficVehicleReflectionTex;
+		frame = gTrafficVehicleReflectionCam->getFrame();
+		strength = (float)(elapsed - halfTransition) /
+			(float)halfTransition;
+	}else{
+		gExitVehicleReflectionTransitionActive = false;
+		gExitVehicleReflectionClump = nil;
+		rw::c3d::setTransitionVehicleReflection(nil, nil, nil, 1.0f);
+		return;
+	}
+	rw::c3d::setTransitionVehicleReflection(gExitVehicleReflectionClump,
+		texture, frame, strength);
+}
+
+void
+ShutdownPlayerVehicleReflection3DS(void)
+{
+	rw::c3d::setPlayerVehicleReflection(nil, nil);
+	rw::c3d::setPlayerVehicleReflectionStrength(1.0f);
+	rw::c3d::setTrafficVehicleReflection(nil, nil);
+	rw::c3d::setTransitionVehicleReflection(nil, nil, nil, 1.0f);
+	DestroyVehicleReflection3DS(&gPlayerVehicleReflectionCam,
+		&gPlayerVehicleReflectionTex);
+	DestroyVehicleReflection3DS(&gTrafficVehicleReflectionCam,
+		&gTrafficVehicleReflectionTex);
+	gPlayerVehicleReflectionValid = false;
+	gTrafficVehicleReflectionValid = false;
+	gPlayerVehicleReflectionWasActive = false;
+	gPlayerVehicleReflectionTransitionActive = false;
+	gLastPlayerVehicleClump = nil;
+	gExitVehicleReflectionClump = nil;
+	gExitVehicleReflectionTransitionActive = false;
+}
+
+static void
+UpdatePlayerVehicleReflection3DS(void)
+{
+	CVehicle *vehicle = FindPlayerVehicle();
+	bool playerVehicleActive = vehicle != nil && vehicle->m_rwObject != nil;
+
+	if(gTrafficVehicleReflectionCam == nil &&
+	   !CreateVehicleReflection3DS(&gTrafficVehicleReflectionCam,
+		&gTrafficVehicleReflectionTex)){
+		rw::c3d::setTrafficVehicleReflection(nil, nil);
+	}
+
+	if(!playerVehicleActive){
+		/* On exit, freeze the player's final dynamic sample. The former player car
+		 * therefore continues through the exact same MatFX path with the exact same
+		 * image and camera transform, eliminating the enter/exit colour jump. */
+		if(gPlayerVehicleReflectionWasActive && gPlayerVehicleReflectionValid &&
+		   gTrafficVehicleReflectionCam && gTrafficVehicleReflectionTex){
+			gExitVehicleReflectionClump = gLastPlayerVehicleClump;
+			gExitVehicleReflectionTransitionActive =
+				gExitVehicleReflectionClump != nil;
+			gExitVehicleReflectionTransitionStart =
+				CTimer::GetTimeInMilliseconds();
+			CopyVehicleReflection3DS(gTrafficVehicleReflectionCam,
+				gPlayerVehicleReflectionTex->raster,
+				gPlayerVehicleReflectionCam->getFrame()->getLTM());
+			gTrafficVehicleReflectionValid = true;
+		}else if(!gTrafficVehicleReflectionValid &&
+		         gTrafficVehicleReflectionCam && gTrafficVehicleReflectionTex){
+			/* Before the first vehicle is entered, take one world sample and keep it
+			 * frozen. There is no recurring capture cost while walking around. */
+			CopyVehicleReflection3DS(gTrafficVehicleReflectionCam,
+				Scene.camera->frameBuffer, Scene.camera->getFrame()->getLTM());
+			gTrafficVehicleReflectionValid = true;
+		}
+		rw::c3d::setPlayerVehicleReflection(nil, nil);
+		rw::c3d::setPlayerVehicleReflectionStrength(1.0f);
+		rw::c3d::setTrafficVehicleReflection(
+			gTrafficVehicleReflectionValid ? gTrafficVehicleReflectionTex : nil,
+			gTrafficVehicleReflectionValid ?
+				gTrafficVehicleReflectionCam->getFrame() : nil);
+		gPlayerVehicleReflectionWasActive = false;
+		gPlayerVehicleReflectionTransitionActive = false;
+		PublishExitVehicleReflection3DS();
+		return;
+	}
+
+	rw::c3d::setTransitionVehicleReflection(nil, nil, nil, 1.0f);
+	gExitVehicleReflectionTransitionActive = false;
+	gExitVehicleReflectionClump = nil;
+	if(!gPlayerVehicleReflectionWasActive && gTrafficVehicleReflectionValid){
+		gPlayerVehicleReflectionTransitionActive = true;
+		gPlayerVehicleReflectionTransitionStart = CTimer::GetTimeInMilliseconds();
+	}
+	gPlayerVehicleReflectionWasActive = true;
+	gLastPlayerVehicleClump = (rw::Clump*)vehicle->m_rwObject;
+	if(gPlayerVehicleReflectionCam == nil &&
+	   !CreateVehicleReflection3DS(&gPlayerVehicleReflectionCam,
+		&gPlayerVehicleReflectionTex)){
+		rw::c3d::setPlayerVehicleReflection(nil, nil);
+		return;
+	}
+
+	/* Update every third frame. The previous capture remains valid on the two
+	 * intervening frames and retains its own camera transform, so it does not
+	 * swim. */
+	if(gPlayerVehicleReflectionValid && CTimer::GetFrameCounter() % 3 != 0){
+		PublishPlayerVehicleReflection3DS();
+		rw::c3d::setTrafficVehicleReflection(
+			gTrafficVehicleReflectionValid ? gTrafficVehicleReflectionTex : nil,
+			gTrafficVehicleReflectionValid ?
+				gTrafficVehicleReflectionCam->getFrame() : nil);
+		return;
+	}
+
+	/* The main framebuffer already contains roads and surrounding world at this
+	 * point. Downsample it with one GPU blit instead of submitting the entire
+	 * scene a second time. */
+	CopyVehicleReflection3DS(gPlayerVehicleReflectionCam,
+		Scene.camera->frameBuffer, Scene.camera->getFrame()->getLTM());
+	gPlayerVehicleReflectionValid = true;
+	if(!gTrafficVehicleReflectionValid && gTrafficVehicleReflectionCam &&
+	   gTrafficVehicleReflectionTex){
+		CopyVehicleReflection3DS(gTrafficVehicleReflectionCam,
+			gPlayerVehicleReflectionTex->raster,
+			gPlayerVehicleReflectionCam->getFrame()->getLTM());
+		gTrafficVehicleReflectionValid = true;
+	}
+	PublishPlayerVehicleReflection3DS();
+	rw::c3d::setTrafficVehicleReflection(
+		gTrafficVehicleReflectionValid ? gTrafficVehicleReflectionTex : nil,
+		gTrafficVehicleReflectionValid ?
+			gTrafficVehicleReflectionCam->getFrame() : nil);
+}
+#endif
 
 uint8 work_buff[102400];
 char gString[256];
@@ -395,6 +705,9 @@ DoRWStuffEndOfFrame(void)
 	CDebug::DebugDisplayTextBuffer();
 	FlushObrsPrintfs();
 	RwCameraEndUpdate(Scene.camera);
+#ifdef ENABLE_3DS_BOTTOM_RADAR
+	RenderBottomScreen();
+#endif
 	RsCameraShowRaster(Scene.camera);
 #ifndef MASTER
 	char s[48];
@@ -559,6 +872,10 @@ Initialise3D(void *param)
 	{
 		POP_MEMID();
 
+#ifdef ENABLE_3DS_BOTTOM_RADAR
+		InitialiseBottomScreen();
+#endif
+
 #ifdef DEBUGMENU
 		DebugMenuInit();
 		DebugMenuPopulate();
@@ -639,11 +956,11 @@ GetRandomSplashScreen(void)
 	static char splashName[128];
 	static int splashIndex[12] = {
 		1, 2,
-		3, 0,
+		3, 1,
+		2, 3,
 		1, 2,
-		3, 0,
-		1, 2,
-		3, 0
+		3, 1,
+		2, 3
 	};
 
 	index = splashIndex[2*index2 + CGeneral::GetRandomNumberInRange(0, 2)];
@@ -679,6 +996,7 @@ void
 LoadingScreen(const char *str1, const char *str2, const char *splashscreen)
 {
 	CSprite2d *splash;
+	bool loadingOnly = str1 != nil && str2 == nil && !strcmp(str1, "Loading");
 
 #ifdef __PS3__
 	// the loading steps double as breadcrumbs in the log
@@ -710,8 +1028,6 @@ LoadingScreen(const char *str1, const char *str2, const char *splashscreen)
 		splash->Draw(CRect(0.0f, 0.0f, SCREEN_WIDTH, SCREEN_HEIGHT), CRGBA(255, 255, 255, 255));
 
 		if(str1){
-			NumberOfChunksLoaded += 1;
-
 #ifndef RANDOMSPLASH
 			// this looks nice
 			float hpos = SCREEN_SCALE_X(40);
@@ -726,14 +1042,15 @@ LoadingScreen(const char *str1, const char *str2, const char *splashscreen)
 			float bottom = top + SCREEN_STRETCH_Y(8);
 #endif
 
-			CSprite2d::DrawRect(CRect(hpos+4.0f, top+6.0f, hpos+length+4.0f, bottom+6.0f), CRGBA(0, 0, 0, 200));
+			if(!loadingOnly){
+				NumberOfChunksLoaded += 1;
+				CSprite2d::DrawRect(CRect(hpos, top, hpos+length, bottom), CRGBA(0, 0, 0, 255));
 
-			CSprite2d::DrawRect(CRect(hpos, top, hpos+length, bottom), CRGBA(0, 0, 0, 255));
+				CSprite2d::DrawRect(CRect(hpos+1.0f, top+1.0f, hpos+length-1.0f, bottom-1.0f), CRGBA(99, 99, 99, 255));
 
-			CSprite2d::DrawRect(CRect(hpos+1.0f, top+1.0f, hpos+length-1.0f, bottom-1.0f), CRGBA(99, 99, 99, 255));
-
-			length *= NumberOfChunksLoaded/TOTALNUMCHUNKS;
-			CSprite2d::DrawRect(CRect(hpos+1.0f, top+1.0f, hpos+length-1.0f, bottom-1.0f), CRGBA(126, 15, 0, 255));
+				length *= NumberOfChunksLoaded/TOTALNUMCHUNKS;
+				CSprite2d::DrawRect(CRect(hpos+1.0f, top+1.0f, hpos+length-1.0f, bottom-1.0f), CRGBA(126, 15, 0, 255));
+			}
 
 			// this is done by the game but is unused
 			CFont::SetBackgroundOff();
@@ -1369,7 +1686,9 @@ if(gbRenderVehicles)
 	CParticle::Render();
 	CPacManPickups::Render();
 	CWeaponEffects::Render();
+#ifndef RW_3DS
 	CPointLights::RenderFogEffect();
+#endif
 	CMovingThings::Render();
 	CRenderer::RenderFirstPersonVehicle();
 	POP_RENDERGROUP();
@@ -1483,6 +1802,9 @@ RenderEffects(void)
 void
 Render2dStuff(void)
 {
+#ifdef _3DS
+	rw::c3d::renderPS2Graphics(PS2Graphics3DS::LibertyCityStories, CTimeCycle::GetBlurRed(), CTimeCycle::GetBlurGreen(), CTimeCycle::GetBlurBlue());
+#endif
 	PUSH_RENDERGROUP("Render2dStuff");
 	RwRenderStateSet(rwRENDERSTATEZTESTENABLE, (void*)FALSE);
 	RwRenderStateSet(rwRENDERSTATEZWRITEENABLE, (void*)FALSE);
@@ -1637,6 +1959,8 @@ Render2dStuffAfterFade(void)
 		DrawFpsCounter();
 #endif
 
+
+
 #ifdef MOBILE_IMPROVEMENTS
 	if (CDraw::FadeValue != 0)
 #endif
@@ -1646,9 +1970,42 @@ Render2dStuffAfterFade(void)
 	POP_RENDERGROUP();
 }
 
+static float
+Apply3DSFarClipProfile(float farClip)
+{
+#ifdef _3DS
+	if(rw::c3d::ps2GraphicsEnabled())
+		rw::c3d::preparePS2GraphicsColour(PS2Graphics3DS::LibertyCityStories, CTimeCycle::GetBlurRed(), CTimeCycle::GetBlurGreen(), CTimeCycle::GetBlurBlue());
+	const bool ps2 = rw::c3d::ps2GraphicsEnabled();
+	const float worldRange = PS2Graphics3DS::FarClip(farClip, rw::c3d::adaptiveWorldRangeScale(), ps2, PS2Graphics3DS::LibertyCityStories);
+	rw::c3d::setPS2WorldRange(ps2 ? worldRange : 0.0f);
+	// Only the few authored whole-island LODs may use the extra clipping space.
+	// Ordinary building visibility and sector scans use worldRange in Renderer.
+	return ps2 ? farClip : worldRange;
+#else
+	return farClip;
+#endif
+}
+
+static float
+Apply3DSFogProfile(float fogStart)
+{
+#ifdef _3DS
+	const float clip = Apply3DSFarClipProfile(CTimeCycle::GetFarClip());
+	const float range = rw::c3d::ps2GraphicsEnabled() ? rw::c3d::ps2WorldRange() : clip;
+	return PS2Graphics3DS::FogStart(fogStart, range,
+		rw::c3d::adaptiveWorldRangeScale(), rw::c3d::ps2GraphicsEnabled());
+#else
+	return fogStart;
+#endif
+}
+
 void
 Idle(void *arg)
 {
+#ifdef _3DS
+	rw::c3d::ProfileLogicFrameScope profileLogicFrame;
+#endif
 	CTimer::Update();
 
 	tbInit();
@@ -1659,14 +2016,41 @@ Idle(void *arg)
 	PUSH_MEMID(MEMID_GAME_PROCESS);
 	CPointLights::InitPerFrame();
 
+	double phaseStart = re3_wall_time_ms();
+#ifdef _3DS
+	uint64 profileGameplayStart = rw::c3d::profileTimerStart();
+#endif
 	tbStartTimer(0, "CGame::Process");
 	CGame::Process();
 	tbEndTimer("CGame::Process");
+#ifdef _3DS
+	rw::c3d::profileRecordGameplay(profileGameplayStart);
+#endif
+	double phaseMs = re3_wall_time_ms() - phaseStart;
+	if(phaseMs >= 80.0)
+		re3_stall_log("FRAME game-process %.0f ms", phaseMs);
 	POP_MEMID();
-
+#ifdef _3DS
+	/* Restarting or restoring a save is spread over several frames on 3DS.
+	 * The old player has already gone away while streaming and the main script
+	 * are still creating the replacement.  Keep processing the game each frame,
+	 * but do not let audio or rendering observe that incomplete world. */
+	if(!FrontEndMenuManager.m_bGameNotLoaded && FindPlayerPed() == nil)
+		return;
+#endif
+	phaseStart = re3_wall_time_ms();
+#ifdef _3DS
+	uint64 profileAudioStart = rw::c3d::profileTimerStart();
+#endif
 	tbStartTimer(0, "DMAudio.Service");
 	DMAudio.Service();
 	tbEndTimer("DMAudio.Service");
+#ifdef _3DS
+	rw::c3d::profileRecordAudio(profileAudioStart);
+#endif
+	phaseMs = re3_wall_time_ms() - phaseStart;
+	if(phaseMs >= 80.0)
+		re3_stall_log("FRAME audio-service %.0f ms", phaseMs);
 
 	if(CGame::bDemoMode && CTimer::GetTimeInMilliseconds() > (3*60 + 30)*1000 && !CCutsceneMgr::IsCutsceneProcessing()){
 		WANT_TO_LOAD = false;
@@ -1678,6 +2062,11 @@ Idle(void *arg)
 	{
 		return;
 	}
+
+#ifdef _3DS
+	if(arg != nil && !FrontEndMenuManager.m_bMenuActive && rw::c3d::shouldSkipStereoFrame())
+		return;
+#endif
 	
 	SetLightsWithTimeOfDayColour(Scene.world);
 
@@ -1697,6 +2086,7 @@ Idle(void *arg)
 #endif
 
 		tbStartTimer(0, "CnstrRenderList");
+		phaseStart = re3_wall_time_ms();
 #ifdef PC_WATER
 		CWaterLevel::PreCalcWaterGeometry();
 #endif
@@ -1704,16 +2094,23 @@ Idle(void *arg)
 		CRenderer::ClearForFrame();
 		CRenderer::ConstructRenderList();
 		tbEndTimer("CnstrRenderList");
+		phaseMs = re3_wall_time_ms() - phaseStart;
+		if(phaseMs >= 80.0)
+			re3_stall_log("FRAME construct-render-list %.0f ms", phaseMs);
 
 		tbStartTimer(0, "PreRender");
+		phaseStart = re3_wall_time_ms();
 		CRenderer::PreRender();
 		tbEndTimer("PreRender");
+		phaseMs = re3_wall_time_ms() - phaseStart;
+		if(phaseMs >= 80.0)
+			re3_stall_log("FRAME prerender %.0f ms", phaseMs);
 
 #ifdef FIX_BUGS
 		RwRenderStateSet(rwRENDERSTATEZWRITEENABLE, (void *)FALSE); // TODO: temp? this fixes OpenGL render but there should be a better place for this
 		// This has to be done BEFORE RwCameraBeginUpdate
-		RwCameraSetFarClipPlane(Scene.camera, CTimeCycle::GetFarClip());
-		RwCameraSetFogDistance(Scene.camera, CTimeCycle::GetFogStart());
+		RwCameraSetFarClipPlane(Scene.camera, Apply3DSFarClipProfile(CTimeCycle::GetFarClip()));
+		RwCameraSetFogDistance(Scene.camera, Apply3DSFogProfile(CTimeCycle::GetFogStart()));
 #endif
 
 		if(CWeather::LightningFlash && !CCullZones::CamNoRain()){
@@ -1729,13 +2126,17 @@ Idle(void *arg)
 		DefinedState();
 
 #ifndef FIX_BUGS
-		RwCameraSetFarClipPlane(Scene.camera, CTimeCycle::GetFarClip());
-		RwCameraSetFogDistance(Scene.camera, CTimeCycle::GetFogStart());
+		RwCameraSetFarClipPlane(Scene.camera, Apply3DSFarClipProfile(CTimeCycle::GetFarClip()));
+		RwCameraSetFogDistance(Scene.camera, Apply3DSFogProfile(CTimeCycle::GetFogStart()));
 #endif
 
 		tbStartTimer(0, "RenderScene");
+		phaseStart = re3_wall_time_ms();
 		RenderScene();
 		tbEndTimer("RenderScene");
+		phaseMs = re3_wall_time_ms() - phaseStart;
+		if(phaseMs >= 80.0)
+			re3_stall_log("FRAME render-scene %.0f ms", phaseMs);
 
 #ifdef EXTENDED_PIPELINES
 		CustomPipes::EnvMapRender();
@@ -1749,15 +2150,27 @@ Idle(void *arg)
 		if((TheCamera.m_BlurType == MOTION_BLUR_NONE || TheCamera.m_BlurType == MOTION_BLUR_LIGHT_SCENE) &&
 		   TheCamera.m_ScreenReductionPercentage > 0.0f)
 		        TheCamera.SetMotionBlurAlpha(150);
+		bool stereo3D = false;
+#ifdef _3DS
+		stereo3D = rw::c3d::stereoControlsActive();
+#endif
 
 #ifdef SCREEN_DROPLETS
-		CPostFX::GetBackBuffer(Scene.camera);
-		ScreenDroplets::Process();
-		ScreenDroplets::Render();
+		if(!stereo3D){
+			CPostFX::GetBackBuffer(Scene.camera);
+			ScreenDroplets::Process();
+			ScreenDroplets::Render();
+		}
 #endif
 
 		tbStartTimer(0, "RenderMotionBlur");
-		TheCamera.RenderMotionBlur();
+		if(!stereo3D
+#ifdef _3DS
+		   && (!rw::c3d::ps2GraphicsEnabled() ||
+		       (TheCamera.m_BlurType != MOTION_BLUR_NONE && TheCamera.m_BlurType != MOTION_BLUR_LIGHT_SCENE))
+#endif
+		  )
+			TheCamera.RenderMotionBlur();
 		tbEndTimer("RenderMotionBlur");
 
 		tbStartTimer(0, "Render2dStuff");
@@ -2021,10 +2434,22 @@ void TheGame(void)
 
 			PUSH_MEMID(MEMID_GAME_PROCESS)
 			CPointLights::InitPerFrame();
+#ifdef _3DS
+			uint64 profileGameplayStart = rw::c3d::profileTimerStart();
+#endif
 			CGame::Process();
+#ifdef _3DS
+			rw::c3d::profileRecordGameplay(profileGameplayStart);
+#endif
 			POP_MEMID();
 
+#ifdef _3DS
+			uint64 profileAudioStart = rw::c3d::profileTimerStart();
+#endif
 			DMAudio.Service();
+#ifdef _3DS
+			rw::c3d::profileRecordAudio(profileAudioStart);
+#endif
 
 			if (CGame::bDemoMode && CTimer::GetTimeInMilliseconds() > (3*60 + 30)*1000 && !CCutsceneMgr::IsCutsceneProcessing())
 			{
@@ -2049,8 +2474,8 @@ void TheGame(void)
 
 #ifdef FIX_BUGS
 				// This has to be done BEFORE RwCameraBeginUpdate
-				RwCameraSetFarClipPlane(Scene.camera, CTimeCycle::GetFarClip());
-				RwCameraSetFogDistance(Scene.camera, CTimeCycle::GetFogStart());
+				RwCameraSetFarClipPlane(Scene.camera, Apply3DSFarClipProfile(CTimeCycle::GetFarClip()));
+				RwCameraSetFogDistance(Scene.camera, Apply3DSFogProfile(CTimeCycle::GetFogStart()));
 #endif
 
 				if (CWeather::LightningFlash && !CCullZones::CamNoRain())
@@ -2060,8 +2485,8 @@ void TheGame(void)
 
 				DefinedState();
 #ifndef FIX_BUGS
-				RwCameraSetFarClipPlane(Scene.camera, CTimeCycle::GetFarClip());
-				RwCameraSetFogDistance(Scene.camera, CTimeCycle::GetFogStart());
+				RwCameraSetFarClipPlane(Scene.camera, Apply3DSFarClipProfile(CTimeCycle::GetFarClip()));
+				RwCameraSetFogDistance(Scene.camera, Apply3DSFogProfile(CTimeCycle::GetFogStart()));
 #endif
 
 				RenderScene();
@@ -2501,8 +2926,6 @@ void PlayIntroMPEGs()
 
 	if ( gameAlreadyInitialised )
 		RpSkyResume();
-#else
-	//TODO
 #endif
 }
 

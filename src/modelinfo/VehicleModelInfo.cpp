@@ -35,8 +35,10 @@ CVehicleModelInfo::Statics *CVehicleModelInfo::mspInfo;
 
 //RwTexture *CVehicleModelInfo::ms_colourTextureTable[256];
 
-//RwTexture *gpWhiteTexture;
-//RwFrame *pMatFxIdentityFrame;
+#ifdef RW_3DS
+RwTexture *gpWhiteTexture;
+RwFrame *pMatFxIdentityFrame;
+#endif
 
 enum {
 	VEHICLE_FLAG_COLLAPSE	= 0x2,
@@ -193,6 +195,8 @@ RwObjectNameIdAssocation *CVehicleModelInfo::ms_vehicleDescs[] = {
 
 bool gbBlackCars;
 bool gbPinkCars;
+bool gbWhiteCars;
+bool gbChromeCars;
 
 void
 CVehicleModelInfo::Load(void *inst)
@@ -444,6 +448,34 @@ CVehicleModelInfo::HasAlphaMaterialCB(RpMaterial *material, void *data)
 	return material;
 }
 
+#if defined(RW_3DS) && defined(RESTORIES_3DS_BUILD)
+static RpMaterial*
+FixLCSBlackVehicleGlassMaterial3DSCB(RpMaterial *material, void *data)
+{
+	RwRGBA color = *RpMaterialGetColor(material);
+	if(RpMaterialGetTexture(material) == nil &&
+	   color.red == 0 && color.green == 0 && color.blue == 0 && color.alpha == 128){
+		/* A handful of LCS vehicles use untextured half-opaque black for intact
+		 * windows. Multiple panes blend on top of each other on 3DS and become an
+		 * effectively solid black block, while the textured shattered glass looks
+		 * correct. Preserve the tint but match the lighter alpha used by the other
+		 * untextured LCS vehicle glass materials. */
+		color.alpha = 51;
+		RpMaterialSetColor(material, &color);
+	}
+	return material;
+}
+
+static RpAtomic*
+FixLCSBlackVehicleGlassAtomic3DSCB(RpAtomic *atomic, void *data)
+{
+	const char *name = GetFrameNodeName(RpAtomicGetFrame(atomic));
+	if(strstr(name, "windscreen") || strstr(name, "door_") || strstr(name, "chassis_"))
+		RpGeometryForAllMaterials(RpAtomicGetGeometry(atomic), FixLCSBlackVehicleGlassMaterial3DSCB, nil);
+	return atomic;
+}
+#endif
+
 
 RpAtomic*
 CVehicleModelInfo::SetAtomicRendererCB(RpAtomic *atomic, void *data)
@@ -527,6 +559,21 @@ CVehicleModelInfo::SetAtomicRendererCB_Ferry(RpAtomic *atomic, void *data)
 {
 	char *name;
 	bool alpha;
+
+#ifdef _3DS
+	/* The ferry is authored with the same unstable environment-reflection path
+	 * as LCS's detailed wheels.  On PICA200 that path can turn whole panels into
+	 * unrelated colours and leave black triangular/diamond facets.  Keep this
+	 * strictly ferry-local: remove the environment layer but retain the MatFX
+	 * pipeline's stable texture/material-colour renderer. */
+	RpGeometryForAllMaterials(RpAtomicGetGeometry(atomic), [](RpMaterial *material, void*) {
+		material->surfaceProps.specular = 0.0f;
+		if(RpMatFXMaterialGetEffects(material) == rpMATFXEFFECTENVMAP)
+			RpMatFXMaterialSetEffects(material, rpMATFXEFFECTNULL);
+		return material;
+	}, nil);
+	RpMatFXAtomicEnableEffects(atomic);
+#endif
 
 	name = GetFrameNodeName(RpAtomicGetFrame(atomic));
 	alpha = false;
@@ -649,6 +696,9 @@ CVehicleModelInfo::SetAtomicRendererCB_RealHeli(RpAtomic *atomic, void *data)
 void
 CVehicleModelInfo::SetAtomicRenderCallbacks(void)
 {
+#if defined(RW_3DS) && defined(RESTORIES_3DS_BUILD)
+	RpClumpForAllAtomics(m_clump, FixLCSBlackVehicleGlassAtomic3DSCB, nil);
+#endif
 #ifdef GTA_TRAIN
 	if(m_vehicleType == VEHICLE_TYPE_TRAIN)
 		RpClumpForAllAtomics(m_clump, SetAtomicRendererCB_Train, nil);
@@ -1064,6 +1114,15 @@ CVehicleModelInfo::ChooseVehicleColour(uint8 &col1, uint8 &col2)
 	if(m_numColours == 0 || gbBlackCars){
 		col1 = 0;
 		col2 = 0;
+	}else if(gbWhiteCars){
+		col1 = 1;
+		col2 = 1;
+	}else if(gbChromeCars){
+		/* LCS' 3DS vehicle path deliberately uses a cheap colour reflection.
+		 * Frost white preserves the PS2 chrome-cheat look without restoring the
+		 * expensive texture reflection that was removed for performance. */
+		col1 = 14;
+		col2 = 14;
 	}else if(gbPinkCars){
 		col1 = 68;
 		col2 = 68;
@@ -1092,6 +1151,12 @@ CVehicleModelInfo::AvoidSameVehicleColour(uint8 *col1, uint8 *col2)
 	if(gbBlackCars){
 		*col1 = 0;
 		*col2 = 0;
+	}else if(gbWhiteCars){
+		*col1 = 1;
+		*col2 = 1;
+	}else if(gbChromeCars){
+		*col1 = 14;
+		*col2 = 14;
 	}else if(gbPinkCars){
 		*col1 = 68;
 		*col2 = 68;
@@ -1259,16 +1324,18 @@ CVehicleModelInfo::GetMatFXEffectMaterialCB(RpMaterial *material, void *data)
 	return nil;
 }
 
-/*
+#ifdef RW_3DS
 RpMaterial*
 CVehicleModelInfo::SetDefaultEnvironmentMapCB(RpMaterial *material, void *data)
 {
 	if(RpMatFXMaterialGetEffects(material) == rpMATFXEFFECTENVMAP){
+	#ifndef RESTORIES_3DS_BUILD
 		RpMatFXMaterialSetEnvMapFrame(material, pMatFxIdentityFrame);
+	#endif
 		if(RpMaterialGetTexture(material) == nil)
 			RpMaterialSetTexture(material, gpWhiteTexture);
 		RpMatFXMaterialSetEffects(material, rpMATFXEFFECTENVMAP);
-#ifndef PS2_MATFX
+#if !defined(PS2_MATFX) && !defined(RESTORIES_3DS_BUILD)
 		float coef = RpMatFXMaterialGetEnvMapCoefficient(material);
 		coef *= 0.25f;	// Tone down a bit for PC
 		RpMatFXMaterialSetEnvMapCoefficient(material, coef);
@@ -1276,9 +1343,38 @@ CVehicleModelInfo::SetDefaultEnvironmentMapCB(RpMaterial *material, void *data)
 	}
 	return material;
 }
-*/
 
-/*
+#ifdef RESTORIES_3DS_BUILD
+static RpMaterial*
+SetLCSWheelMaterial3DSCB(RpMaterial *material, void *data)
+{
+	/* A vehicle wheel atomic swaps between the L0 and L1 geometries at render
+	 * time.  Sanitize every material in both source geometries here, otherwise
+	 * the geometry swap can briefly restore the PS2 environment/highlight path
+	 * even when the initially instanced wheel was already fixed. */
+	material->surfaceProps.specular = 0.0f;
+	if(RpMatFXMaterialGetEffects(material) != rpMATFXEFFECTNULL)
+		RpMatFXMaterialSetEffects(material, rpMATFXEFFECTNULL);
+
+	RwTexture *texture = RpMaterialGetTexture(material);
+	if(texture != nil)
+		/* generic.txd contains only a base level for these textures.  Avoid
+		 * selecting generated lower levels while a rotating wheel crosses a LOD
+		 * boundary; on 3DS that showed up as alternating yellow/blue pixels. */
+		RwTextureSetFilterMode(texture, rwFILTERLINEAR);
+	return material;
+}
+
+static void
+SetLCSWheelAtomic3DS(RpAtomic *atomic)
+{
+	RpGeometryForAllMaterials(RpAtomicGetGeometry(atomic), SetLCSWheelMaterial3DSCB, nil);
+	/* The 3DS MatFX default pass uses the base texture/material colour without
+	 * the coloured per-vertex vehicle-light contribution. */
+	RpMatFXAtomicEnableEffects(atomic);
+}
+#endif
+
 RpAtomic*
 CVehicleModelInfo::SetEnvironmentMapCB(RpAtomic *atomic, void *data)
 {
@@ -1289,20 +1385,24 @@ CVehicleModelInfo::SetEnvironmentMapCB(RpAtomic *atomic, void *data)
 	fx = rpMATFXEFFECTNULL;
 	RpGeometryForAllMaterials(geo, GetMatFXEffectMaterialCB, &fx);
 	if(fx != rpMATFXEFFECTNULL){
+		/* LCS damage atomics combine their painted base, xv_vehiclegrunge alpha
+		 * overlay and xv_vehicleenv128 in MatFX.  Keep only atomics which already
+		 * request that content-defined effect on the lightweight 3DS MatFX path. */
 		RpMatFXAtomicEnableEffects(atomic);
 		RpGeometryForAllMaterials(geo, SetDefaultEnvironmentMapCB, data);
 	}
 	return atomic;
 }
-*/
+#endif
 
 void
 CVehicleModelInfo::SetEnvironmentMap(void)
 {
-/*
+#ifdef RW_3DS
 	CSimpleModelInfo *wheelmi;
 	int32 i;
 
+	#ifndef RESTORIES_3DS_BUILD
 	if(pMatFxIdentityFrame == nil){
 		RwV3d axis = { 1.0f, 0.0f, 0.0f };
 		pMatFxIdentityFrame = RwFrameCreate();
@@ -1310,14 +1410,27 @@ CVehicleModelInfo::SetEnvironmentMap(void)
 		RwFrameUpdateObjects(pMatFxIdentityFrame);
 		RwFrameGetLTM(pMatFxIdentityFrame);
 	}
+	#endif
 
 	RpClumpForAllAtomics(m_clump, SetEnvironmentMapCB, nil);
+#ifdef RESTORIES_3DS_BUILD
+	// PreprocessHierarchy detaches optional components before this pass. The
+	// Stallion roof still contains MatFX paint/chrome and must use the same
+	// material pipeline as the body, rather than the unstable vertex lighting.
+	for(i = 0; i < m_numComps; i++)
+		SetEnvironmentMapCB(m_comps[i], nil);
+#endif
 	if(m_wheelId != -1){
 		wheelmi = (CSimpleModelInfo*)CModelInfo::GetModelInfo(m_wheelId);
-		for(i = 0; i < wheelmi->m_numAtomics; i++)
+		for(i = 0; i < wheelmi->m_numAtomics; i++){
+		#ifdef RESTORIES_3DS_BUILD
+			SetLCSWheelAtomic3DS(wheelmi->m_atomics[i]);
+		#else
 			SetEnvironmentMapCB(wheelmi->m_atomics[i], nil);
+		#endif
+		}
 	}
-*/
+#endif
 
 #ifdef EXTENDED_PIPELINES
 	CustomPipes::AttachVehiclePipe(m_clump);
@@ -1332,23 +1445,31 @@ CVehicleModelInfo::LoadEnvironmentMaps(void)
 	txdslot = CTxdStore::FindTxdSlot("particle");
 	CTxdStore::PushCurrentTxd();
 	CTxdStore::SetCurrentTxd(txdslot);
-	/*if(gpWhiteTexture == nil){
+#ifdef RW_3DS
+	if(gpWhiteTexture == nil){
 		gpWhiteTexture = RwTextureRead("white", nil);
-		RwTextureGetName(gpWhiteTexture)[0] = '@';
-		RwTextureSetFilterMode(gpWhiteTexture, rwFILTERLINEAR);
-	}*/
+		if(gpWhiteTexture){
+			RwTextureGetName(gpWhiteTexture)[0] = '@';
+			RwTextureSetFilterMode(gpWhiteTexture, rwFILTERLINEAR);
+		}
+	}
+#endif
 	CTxdStore::PopCurrentTxd();
 }
 
 void
 CVehicleModelInfo::ShutdownEnvironmentMaps(void)
 {
-/*
-	RwTextureDestroy(gpWhiteTexture);
-	gpWhiteTexture = nil;
-	RwFrameDestroy(pMatFxIdentityFrame);
-	pMatFxIdentityFrame = nil;
-*/
+#ifdef RW_3DS
+	if(gpWhiteTexture){
+		RwTextureDestroy(gpWhiteTexture);
+		gpWhiteTexture = nil;
+	}
+	if(pMatFxIdentityFrame){
+		RwFrameDestroy(pMatFxIdentityFrame);
+		pMatFxIdentityFrame = nil;
+	}
+#endif
 }
 
 int

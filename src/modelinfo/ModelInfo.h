@@ -13,6 +13,11 @@
 
 extern C2dEffect *gp2dEffects;
 
+/* LCS has many vegetation models outside the fourteen legacy MI_TREE ids.
+ * Keep this test in one place so streaming distance and entity render flags
+ * agree about which models need the tree/alpha path. */
+bool IsLCSVegetationModel(int32 id);
+
 class CModelInfo
 {
 	static CBaseModelInfo **ms_modelInfoPtrs;

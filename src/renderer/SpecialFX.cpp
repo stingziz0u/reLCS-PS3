@@ -1,4 +1,5 @@
 #include "common.h"
+#include "../regta3ds/EffectBudget.h"	// the 3DS port's (no-op off the 3DS)
 
 #include "SpecialFX.h"
 #include "RenderBuffer.h"
@@ -332,6 +333,10 @@ CMotionBlurStreaks::RegisterStreak(uintptr id, uint8 r, uint8 g, uint8 b, CVecto
 		}
 	}
 
+	int activeStreaks = 0;
+	for(int slot = 0; slot < NUMMBLURSTREAKS; ++slot)
+		if(aStreaks[slot].m_id != 0) ++activeStreaks;
+	if(activeStreaks >= EffectBudget3DS::Limit(NUMMBLURSTREAKS)) return;
 	// Find free slot
 	for(i = 0; aStreaks[i].m_id != 0 ; i++)
 		if(i == NUMMBLURSTREAKS-1)
@@ -395,6 +400,7 @@ void CBulletTraces::AddTrace(CVector* start, CVector* end, float thickness, uint
 	for (int i = 0; i < NUMBULLETTRACES; i++)
 		if (aTraces[i].m_bInUse)
 			enabledCount++;
+	if (enabledCount >= EffectBudget3DS::Limit(NUMBULLETTRACES)) return;
 	if (enabledCount >= 10)
 		modifiedLifeTime = lifeTime / 4;
 	else if (enabledCount >= 5)
@@ -715,11 +721,27 @@ C3dMarker::Render()
 
 	RwFrameUpdateObjects(RpAtomicGetFrame(m_pAtomic));
 	SetBrightMarkerColours(m_fBrightness);
-	if (m_nType != MARKERTYPE_ARROW)
+	RwUInt32 oldZTest = TRUE;
+	RwUInt32 oldZWrite = TRUE;
+	RwUInt32 oldSrcBlend = rwBLENDSRCALPHA;
+	RwUInt32 oldDstBlend = rwBLENDINVSRCALPHA;
+	if (m_nType != MARKERTYPE_ARROW) {
+		RwRenderStateGet(rwRENDERSTATEZTESTENABLE, &oldZTest);
+		RwRenderStateGet(rwRENDERSTATEZWRITEENABLE, &oldZWrite);
+		RwRenderStateGet(rwRENDERSTATESRCBLEND, &oldSrcBlend);
+		RwRenderStateGet(rwRENDERSTATEDESTBLEND, &oldDstBlend);
+		RwRenderStateSet(rwRENDERSTATEZTESTENABLE, (void*)TRUE);
 		RwRenderStateSet(rwRENDERSTATEZWRITEENABLE, (void*)FALSE);
+		RwRenderStateSet(rwRENDERSTATESRCBLEND, (void*)rwBLENDSRCALPHA);
+		RwRenderStateSet(rwRENDERSTATEDESTBLEND, (void*)rwBLENDINVSRCALPHA);
+	}
 	RpAtomicRender(m_pAtomic);
-	if (m_nType != MARKERTYPE_ARROW)
-		RwRenderStateSet(rwRENDERSTATEZWRITEENABLE, (void*)TRUE);
+	if (m_nType != MARKERTYPE_ARROW) {
+		RwRenderStateSet(rwRENDERSTATESRCBLEND, (void*)(uintptr)oldSrcBlend);
+		RwRenderStateSet(rwRENDERSTATEDESTBLEND, (void*)(uintptr)oldDstBlend);
+		RwRenderStateSet(rwRENDERSTATEZWRITEENABLE, (void*)(uintptr)oldZWrite);
+		RwRenderStateSet(rwRENDERSTATEZTESTENABLE, (void*)(uintptr)oldZTest);
+	}
 	ReSetAmbientAndDirectionalColours();
 }
 
@@ -965,7 +987,7 @@ void
 CBrightLights::RegisterOne(CVector pos, CVector up, CVector side, CVector front,
 	uint8 type, uint8 red, uint8 green, uint8 blue)
 {
-	if(NumBrightLights >= NUMBRIGHTLIGHTS)
+	if(NumBrightLights >= EffectBudget3DS::Limit(NUMBRIGHTLIGHTS))
 		return;
 
 	aBrightLights[NumBrightLights].m_camDist = (pos - TheCamera.GetPosition()).Magnitude();
@@ -1210,7 +1232,7 @@ CShinyTexts::RegisterOne(CVector p0, CVector p1, CVector p2, CVector p3,
 	float u0, float v0, float u1, float v1, float u2, float v2, float u3, float v3,
 	uint8 type, uint8 red, uint8 green, uint8 blue, float maxDist)
 {
-	if(NumShinyTexts >= NUMSHINYTEXTS)
+	if(NumShinyTexts >= EffectBudget3DS::Limit(NUMSHINYTEXTS))
 		return;
 
 	aShinyTexts[NumShinyTexts].m_camDist = (p0 - TheCamera.GetPosition()).Magnitude();

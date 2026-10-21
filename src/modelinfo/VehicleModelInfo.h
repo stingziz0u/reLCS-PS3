@@ -197,3 +197,5 @@ public:
 
 extern bool gbBlackCars;
 extern bool gbPinkCars;
+extern bool gbWhiteCars;
+extern bool gbChromeCars;

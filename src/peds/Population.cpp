@@ -28,12 +28,37 @@
 #include "Streaming.h"
 #include "Clock.h"
 #include "WaterLevel.h"
+#ifdef _3DS
+#include <3ds/os.h>
+#endif
 
 #define MIN_CREATION_DIST		40.0f // not for start of the game (look at the GeneratePedsAtStartOfGame)
 #define CREATION_RANGE			10.0f // added over the MIN_CREATION_DIST.
 #define OFFSCREEN_CREATION_MULT	0.5f
 #define PED_REMOVE_DIST			(MIN_CREATION_DIST + CREATION_RANGE + 1.0f)
 #define PED_REMOVE_DIST_SPECIAL	(MIN_CREATION_DIST + CREATION_RANGE + 15.0f) // for peds with bCullExtraFarAway flag
+
+static float
+AmbientPedScale3DS(void)
+{
+	#ifdef _3DS
+	if(rw::c3d::stereoControlsActive())
+		return rw::c3d::performanceModeActive() ? 0.60f : 0.80f;
+	return rw::c3d::performanceModeActive() ? 0.55f : 1.0f;
+#else
+	return 1.0f;
+#endif
+}
+
+static float
+PedDespawnScale3DS(void)
+{
+	#ifdef _3DS
+	if(rw::c3d::stereoControlsActive())
+		return rw::c3d::performanceModeActive() ? 0.70f : 0.82f;
+	#endif
+	return 1.0f;
+}
 
 PedGroup CPopulation::ms_pPedGroups[NUMPEDGROUPS];
 bool CPopulation::ms_bGivePedsWeapons;
@@ -346,8 +371,8 @@ CPopulation::UpdatePedCount(ePedType pedType, bool decrease)
 	}
 }
 
-int
-CPopulation::ChooseGangOccupation(int gangId)
+int32
+CPopulation::ChooseGangOccupation(int32 gangId)
 {
 	return CGangs::ChooseGangPedModel(gangId);
 }
@@ -571,7 +596,8 @@ CPopulation::AddToPopulation(float minDist, float maxDist, float minDistOffScree
 #endif
 	if (ps3Frenzy)
 		missionAndWeatherMult = 1.0f;
-	int selectedMaxPeds = CGame::IsInInterior() ? CPopulation::MaxNumberOfPedsInUseInterior : CPopulation::MaxNumberOfPedsInUse;
+	const float stereoPedScale = AmbientPedScale3DS();
+	float selectedMaxPeds = (CGame::IsInInterior() ? CPopulation::MaxNumberOfPedsInUseInterior : CPopulation::MaxNumberOfPedsInUse) * stereoPedScale;
 
 	// Yeah, float
 	float maxPossiblePedsForArea = (zoneInfo.pedDensity + zoneInfo.carDensity) * playerInfo->m_fRoadDensity * PedDensityMultiplier
@@ -1117,12 +1143,13 @@ CPopulation::ManagePopulation(void)
 			else if (ped->bDeadPedInFrontOfCar && ped->m_vehicleInAccident)
 				dist = 0.0f;
 
+			const float stereoDespawnScale = PedDespawnScale3DS();
 			if (PedCreationDistMultiplier() * (PED_REMOVE_DIST_SPECIAL * TheCamera.GenerationDistMultiplier) < dist ||
 				(!ped->bCullExtraFarAway && PedCreationDistMultiplier() * PED_REMOVE_DIST * TheCamera.GenerationDistMultiplier < dist)) {
 				pedIsFarAway = true;
 			}
 #ifndef EXTENDED_OFFSCREEN_DESPAWN_RANGE
-			else if (PedCreationDistMultiplier() * (MIN_CREATION_DIST + CREATION_RANGE) * OFFSCREEN_CREATION_MULT < dist) {
+			else if (PedCreationDistMultiplier() * (MIN_CREATION_DIST + CREATION_RANGE) * OFFSCREEN_CREATION_MULT * stereoDespawnScale < dist) {
 				if (CTimer::GetTimeInMilliseconds() > ped->m_nExtendedRangeTimer && !ped->GetIsOnScreen()) {
 					if (TheCamera.Cams[TheCamera.ActiveCam].Mode != CCam::MODE_SNIPER
 						&& TheCamera.Cams[TheCamera.ActiveCam].Mode != CCam::MODE_SNIPER_RUNABOUT
@@ -1410,7 +1437,7 @@ CPopulation::ChooseCivilianCoupleOccupations(int32 group, int32& man, int32& wom
 }
 
 void
-CPopulation::PlaceGangMembers(ePedType pedType, int pedAmount, CVector const& coors)
+CPopulation::PlaceGangMembers(ePedType pedType, int32 pedAmount, CVector const& coors)
 {
 	if (CGeneral::GetRandomNumberInRange(0.f, 1.f) < 0.333f) {
 		PlaceGangMembersInFormation(pedType, pedAmount, coors);
@@ -1420,7 +1447,7 @@ CPopulation::PlaceGangMembers(ePedType pedType, int pedAmount, CVector const& co
 }
 
 void
-CPopulation::PlaceGangMembersInFormation(ePedType pedType, int pedAmount, CVector const& coors)
+CPopulation::PlaceGangMembersInFormation(ePedType pedType, int32 pedAmount, CVector const& coors)
 {
 	CPed *createdPeds[5];
 
@@ -1491,7 +1518,7 @@ CPopulation::PlaceGangMembersInFormation(ePedType pedType, int pedAmount, CVecto
 }
 
 void
-CPopulation::PlaceGangMembersInCircle(ePedType pedType, int pedAmount, CVector const& coors)
+CPopulation::PlaceGangMembersInCircle(ePedType pedType, int32 pedAmount, CVector const& coors)
 {
 	CPed *createdPeds[5];
 

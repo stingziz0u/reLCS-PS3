@@ -1,4 +1,5 @@
 #include "common.h"
+#include "../regta3ds/EffectBudget.h"	// the 3DS port's (no-op off the 3DS)
 
 #include "main.h"
 #include "General.h"
@@ -26,7 +27,14 @@
 #include "SaveBuf.h"
 #include "debugmenu.h"
 
+#ifdef RW_3DS
+/* LCS keeps the PS2/PC pool at 750.  New3DS cannot render that many useful
+ * particles in a frame; cap transient particles while leaving the separate
+ * 70-entry logical particle-object pool untouched for missions and hydrants. */
+#define MAX_PARTICLES_ON_SCREEN   (256)
+#else
 #define MAX_PARTICLES_ON_SCREEN   (750)
+#endif
 
 
 //(5)
@@ -238,6 +246,7 @@ RwRaster *gpMultiPlayerHitRaster;
 
 float      CParticle::ms_afRandTable[CParticle::RAND_TABLE_SIZE];
 CParticle *CParticle::m_pUnusedListHead;
+static int nActiveParticles3DS;
 float      CParticle::m_SinTable[CParticle::SIN_COS_TABLE_SIZE];
 float      CParticle::m_CosTable[CParticle::SIN_COS_TABLE_SIZE]; 
 
@@ -257,6 +266,7 @@ void CParticle::ReloadConfig()
 	
 	debug("Initialising CParticle...");
 	
+	nActiveParticles3DS = 0;
 	m_pUnusedListHead = gParticleArray;
 	
 	for ( int32 i = 0; i < MAX_PARTICLES_ON_SCREEN; i++ )
@@ -1060,11 +1070,34 @@ CParticle *CParticle::AddParticle(tParticleType type, CVector const &vecPos, CVe
 {
 	if ( CTimer::GetIsPaused() /*TODO: || byte_355C47*/ )
 		return nil;
+
+#ifdef RESTORIES_3DS_BUILD
+	/* LCS emits roughly twice the persistent wheel particle density of VC.
+	 * Halve only tyre dirt/sand/smoke at the common creation point, and bound
+	 * multi-car/four-wheel bursts without reducing mission or impact effects. */
+	if(type == PARTICLE_WHEEL_DIRT || type == PARTICLE_SAND ||
+	   type == PARTICLE_RUBBER_SMOKE || type == PARTICLE_BURNINGRUBBER_SMOKE){
+		static uint32 wheelParticleSequence;
+		static uint32 wheelParticleFrame = (uint32)-1;
+		static uint32 wheelParticlesThisFrame;
+		uint32 frame = CTimer::GetFrameCounter();
+		if(frame != wheelParticleFrame){
+			wheelParticleFrame = frame;
+			wheelParticlesThisFrame = 0;
+		}
+		if((wheelParticleSequence++ & 1) != 0 || wheelParticlesThisFrame >= 6)
+			return nil;
+		wheelParticlesThisFrame++;
+	}
+#endif
 /*
 	if ( !CReplay::IsPlayingBack() )
 		CReplay::RecordParticle(type, vecPos, vecDir, fSize, color);
 */
 	
+#ifdef _3DS
+	if(nActiveParticles3DS >= EffectBudget3DS::Limit(MAX_PARTICLES_ON_SCREEN)) return nil;
+#endif
 	CParticle *pParticle = m_pUnusedListHead;
 	
 	if ( pParticle == nil )
@@ -1266,6 +1299,7 @@ CParticle *CParticle::AddParticle(tParticleType type, CVector const &vecPos, CVe
 		pParticle->m_fSize = fSize;
 	
 	m_pUnusedListHead = pParticle->m_pNext;
+	++nActiveParticles3DS;
 
 	pParticle->m_pNext = psystem->m_pParticles;
 
@@ -2284,6 +2318,7 @@ void CParticle::RemoveParticle(CParticle *pParticle, CParticle *pPrevParticle, t
 	else
 		pPSystemData->m_pParticles = pParticle->m_pNext;
 
+	if(nActiveParticles3DS > 0) --nActiveParticles3DS;
 	pParticle->m_pNext = m_pUnusedListHead;
 	m_pUnusedListHead = pParticle;
 }

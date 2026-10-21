@@ -57,7 +57,7 @@ public:
 	static int32 ChooseNextCivilianOccupation(int32);
 	static void ChooseCivilianCoupleOccupations(int32, int32&, int32&);
 	static int32 ChoosePolicePedOccupation();
-	static int32 ChooseGangOccupation(int);
+	static int32 ChooseGangOccupation(int32);
 	static void GeneratePedsAtStartOfGame();
 	static float PedCreationDistMultiplier();
 	static CPed *AddPed(ePedType pedType, uint32 mi, CVector const &coors, int32 modifier = 0);

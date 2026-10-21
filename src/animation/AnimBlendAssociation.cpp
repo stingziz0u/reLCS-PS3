@@ -130,13 +130,16 @@ CAnimBlendAssociation::SetCurrentTime(float time)
 {
 	int i;
 
+	/* A compressed hierarchy has no total length until this call calculates it.
+	 * Do that before using totalLength in the wrapping loop below. */
+	CAnimManager::UncompressAnimation(hierarchy);
+
 	for(currentTime = time; currentTime >= hierarchy->totalLength; currentTime -= hierarchy->totalLength)
 		if (!IsRepeating()) {
 			currentTime = hierarchy->totalLength;
 			break;
 		}
 
-	CAnimManager::UncompressAnimation(hierarchy);
 #ifdef ANIM_COMPRESSION
 	// strangely PC has this but android doesn't
 	if(hierarchy->keepCompressed){

@@ -92,6 +92,8 @@ public:
 	// These aren't really in CHud
 	static float BigMessageAlpha[6];
 	static float BigMessageX[6];
+	static uint32 BigMessageDuration[8];
+	static bool BigMessageUsesExactTiming[8];
 	static float OddJob2OffTimer;
 	static bool CounterOnLastFrame[NUMONSCREENCOUNTERS];
 	static float OddJob2XOffset;

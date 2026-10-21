@@ -18,6 +18,14 @@ class CRunningScript;
 
 extern int32 ScriptParams[32];
 
+/* cWorldStream is absent from the flattened 3DS world.  These helpers keep the
+ * authored LCS world states in sync with the SCM progression flags. */
+void ResetLCSWorldBuildingSwaps(void);
+void RecoverLCSWorldBuildingSwapState(void);
+void SyncLCSFortStauntonWorld(void);
+void OpenLCSLiftBridgeRoadblock(void);
+void ApplyLCSWorldBuildingSwap(int32 group, int32 state);
+
 void FlushLog();
 #define script_assert(_Expression) { FlushLog(); assert(_Expression); }
 
@@ -298,6 +306,10 @@ struct tBuildingSwap
 	CBuilding* m_pBuilding;
 	int32 m_nNewModel;
 	int32 m_nOldModel;
+	/* Runtime-only stable pool reference.  The save ABI still writes the
+	 * original type/handle/model quartet explicitly. */
+	uint32 m_nPoolType;
+	uint32 m_nPoolHandle;
 };
 
 struct script_corona
@@ -523,6 +535,8 @@ public:
 	static int32 MultiScriptArray[MAX_NUM_MISSION_SCRIPTS];
 	static tBuildingSwap BuildingSwapArray[MAX_NUM_BUILDING_SWAPS];
 	static CEntity* InvisibilitySettingArray[MAX_NUM_INVISIBILITY_SETTINGS];
+	static uint32 InvisibilitySettingPoolType[MAX_NUM_INVISIBILITY_SETTINGS];
+	static uint32 InvisibilitySettingPoolHandle[MAX_NUM_INVISIBILITY_SETTINGS];
 	static CStoredLine aStoredLines[MAX_NUM_STORED_LINES];
 	static bool DbgFlag;
 	static uint32 OnAMissionFlag;
@@ -584,6 +598,8 @@ public:
 
 	static void SaveAllScripts(uint8*, uint32*);
 	static bool LoadAllScripts(uint8*, uint32);
+	static void RebindPlayerPedScriptHandle();
+	static void RebindWorldDoorScriptHandles(bool reloadContract = false);
 
 	static bool IsDebugOn() { return DbgFlag; };
 	static void InvertDebugFlag() { DbgFlag = !DbgFlag; }
@@ -707,8 +723,6 @@ public:
 #endif
 };
 
-extern int ScriptParams[32];
-
 VALIDATE_SIZE(uStackReturnValue, 4);
 
 #ifdef MISSION_REPLAY
@@ -749,4 +763,3 @@ enum {
 
 extern int gScriptsFile;
 extern CVector gVectorSetInLua;
-

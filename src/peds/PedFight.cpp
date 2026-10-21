@@ -31,40 +31,29 @@ RpClump* flyingClumpTemp;
 
 FightMove tFightMoves[NUM_FIGHTMOVES] =
 {
-/*
-  { ANIM_STD_NUM,  0.0f,  0.0f,  0.0f,  0.0f,  1.0f, HITLEVEL_NULL, 0, 0 },
-  { ANIM_STD_PUNCH, 0.2f, 8.f/30.f, 0.0f, 0.3f, 1.0f, HITLEVEL_HIGH, 1, 0 },
-  { ANIM_STD_FIGHT_IDLE,  0.0f,  0.0f,  0.0f,  0.0f,  1.0f, HITLEVEL_NULL, 0, 0 },
-  { ANIM_STD_FIGHT_SHUFFLE_F,  0.0f,  0.0f,  0.0f,  0.0f,  1.0f, HITLEVEL_NULL, 0, 0 },
-  { ANIM_STD_FIGHT_KNEE, 4.f/30.f, 0.2f, 0.0f, 0.6f, 1.0f, HITLEVEL_LOW, 2, 0 },
-  { ANIM_STD_FIGHT_LHOOK, 8.f/30.f, 10.f/30.f, 0.0f, 0.4f, 1.0f, HITLEVEL_HIGH, 3, 0 },
-  { ANIM_STD_FIGHT_JAB, 4.f/30.f, 0.2f, 0.0f, 0.7f, 1.0f, HITLEVEL_HIGH, 3, 0 },
-  { ANIM_STD_FIGHT_PUNCH, 4.f/30.f, 7.f/30.f, 10.f/30.f, 0.4f, 1.0f, HITLEVEL_HIGH, 1, 0 },
-  { ANIM_STD_FIGHT_LONGKICK, 8.f/30.f, 10.f/30.f, 0.0f, 0.5f, 1.0f, HITLEVEL_MEDIUM, 4, 0 },
-  { ANIM_STD_FIGHT_ROUNDHOUSE, 8.f/30.f, 10.f/30.f, 0.0f,  0.6f, 1.0f, HITLEVEL_MEDIUM, 4, 0 },
-  { ANIM_STD_FIGHT_KICK,  8.f/30.f,  10.f/30.f,  0.0f,  0.5f,  1.0f, HITLEVEL_HIGH, 2, 0 },
-  { ANIM_STD_FIGHT_HEAD,  8.f/30.f,  10.f/30.f,  0.0f,  0.5f,  1.0f, HITLEVEL_MEDIUM, 2, 0 },
-  { ANIM_STD_FIGHT_BKICK_L,  8.f/30.f,  10.f/30.f,  0.0f,  0.5f,  1.0f, HITLEVEL_LOW, 2, 0 },
-  { ANIM_STD_FIGHT_BKICK_L,  8.f/30.f,  10.f/30.f,  0.0f,  0.5f,  1.0f, HITLEVEL_LOW, 2, 0 },
-  { ANIM_STD_FIGHT_ELBOW_L,  8.f/30.f,  10.f/30.f,  0.0f,  0.5f,  1.0f, HITLEVEL_MEDIUM, 2, 0 },
-  { ANIM_STD_FIGHT_BKICK_R,  8.f/30.f,  10.f/30.f,  0.0f,  0.5f,  1.0f, HITLEVEL_MEDIUM, 2, 0 },
-  { ANIM_STD_FIGHT_ELBOW_R,  8.f/30.f,  10.f/30.f,  0.0f,  0.5f,  1.0f, HITLEVEL_HIGH, 2, 0 },
-  { ANIM_STD_KICKGROUND, 10.f/30.f, 14.f/30.f, 0.0f, 0.4f, 1.0f, HITLEVEL_GROUND, 1, 0 },
-  { ANIM_STD_HIT_FRONT,  0.0f,  0.0f,  0.0f,  0.0f,  1.0f, HITLEVEL_NULL, 0, 0 },
-  { ANIM_STD_HIT_BACK,  0.0f,  0.0f,  0.0f,  0.0f,  1.0f, HITLEVEL_NULL, 0, 0 },
-  { ANIM_STD_HIT_RIGHT,  0.0f,  0.0f,  0.0f,  0.0f,  1.0f, HITLEVEL_NULL, 0, 0 },
-  { ANIM_STD_HIT_LEFT,  0.0f,  0.0f,  0.0f,  0.0f,  1.0f, HITLEVEL_NULL, 0, 0 },
-  { ANIM_STD_HIT_BODYBLOW,  0.0f,  0.0f,  0.0f,  0.0f,  1.0f, HITLEVEL_NULL, 0, 0 },
-  { ANIM_STD_HIT_CHEST,  0.0f,  0.0f,  0.0f,  0.0f,  1.0f, HITLEVEL_NULL, 0, 0 },
-  { ANIM_STD_HIT_HEAD,  0.0f,  0.0f,  0.0f,  0.0f,  1.0f, HITLEVEL_NULL, 0, 0 },
-  { ANIM_STD_HIT_WALK,  0.0f,  0.0f,  0.0f,  0.0f,  1.0f, HITLEVEL_NULL, 0, 0 },
-  { ANIM_STD_HIT_FLOOR,  0.0f,  0.0f,  0.0f,  0.0f,  1.0f, HITLEVEL_NULL, 0, 0 },
-  { ANIM_STD_HIT_BEHIND,  0.0f,  0.0f,  0.0f,  0.0f,  1.0f, HITLEVEL_NULL, 0, 0 },
-  { ANIM_ATTACK_1, 4.f/30.f, 7.f/30.f, 10.f/30.f, 0.4f, 1.0f, HITLEVEL_HIGH, 1, 0 },
-  { ANIM_ATTACK_2, 4.f/30.f, 7.f/30.f, 10.f/30.f, 0.4f, 1.0f, HITLEVEL_HIGH, 1, 0 },
-  { ANIM_ATTACK_3, 4.f / 30.f, 7.f / 30.f, 10.f / 30.f, 0.4f, 1.0f, HITLEVEL_HIGH, 1, 0 },
-  { ANIM_STD_FIGHT_2IDLE,  0.0f,  0.0f,  0.0f,  0.0f,  1.0f, HITLEVEL_NULL, 0, 0 }
-*/
+	/* Exact LCS fallback values from DATA/FISTFITE.DAT.  The runtime loader
+	 * overwrites them, but a missing or partial data load must not leave every
+	 * move as animation 0 and feed an invalid id into an association group. */
+	{ ANIM_STD_NUM,             0.0f,     0.0f,     0.0f,     0.0f, 1.0f, HITLEVEL_NULL,   0, 0 },
+	{ ANIM_STD_FIGHT_IDLE,      0.0f,     0.0f,     0.0f,     0.0f, 1.0f, HITLEVEL_NULL,   0, 0 },
+	{ ANIM_STD_FIGHT_SHUFFLE_F, 0.0f,     0.0f,     0.0f,     0.0f, 1.0f, HITLEVEL_NULL,   0, 0 },
+	{ ANIM_FIGHT_ATTACK_A1,     7.f/30.f, 10.f/30.f,15.f/30.f,0.35f,1.0f, HITLEVEL_HIGH,   1, 1 },
+	{ ANIM_FIGHT_ATTACK_A2,     7.f/30.f, 10.f/30.f,15.f/30.f,0.35f,1.0f, HITLEVEL_HIGH,   1, 1 },
+	{ ANIM_FIGHT_ATTACK_A3,    15.f/30.f, 15.f/30.f,17.f/30.f,0.35f,1.0f, HITLEVEL_HIGH,   2, 1 },
+	{ ANIM_FIGHT_ATTACK_B1,    11.f/30.f, 14.f/30.f,16.f/30.f,0.35f,1.0f, HITLEVEL_MEDIUM, 2, 1 },
+	{ ANIM_FIGHT_ATTACK_B2,    12.f/30.f, 17.f/30.f,18.f/30.f,0.35f,1.0f, HITLEVEL_MEDIUM, 2, 1 },
+	{ ANIM_FIGHT_ATTACK_B3,    10.f/30.f, 15.f/30.f,0.0f,     0.35f,1.0f, HITLEVEL_MEDIUM, 3, 1 },
+	{ ANIM_ATTACK_1,            0.0f,     0.0f,     0.0f,     0.0f, 0.8f, HITLEVEL_HIGH,   0, 0 },
+	{ ANIM_ATTACK_2,            0.0f,     0.0f,     0.0f,     0.0f, 0.8f, HITLEVEL_HIGH,   0, 0 },
+	{ ANIM_ATTACK_3,            0.0f,     0.0f,     0.0f,     0.0f, 0.8f, HITLEVEL_MEDIUM, 0, 0 },
+	{ ANIM_STD_KICKGROUND,     11.f/30.f, 15.f/30.f,0.0f,     0.5f, 0.4f, HITLEVEL_GROUND, 3, 0 },
+	{ ANIM_STD_HIT_FRONT,       4.f/30.f, 0.0f,     0.0f,     0.0f, 1.0f, HITLEVEL_NULL,   0, 0 },
+	{ ANIM_STD_HIT_BACK,        4.f/30.f, 0.0f,     0.0f,     0.0f, 1.0f, HITLEVEL_NULL,   0, 0 },
+	{ ANIM_STD_HIT_RIGHT,       4.f/30.f, 0.0f,     0.0f,     0.0f, 1.0f, HITLEVEL_NULL,   0, 0 },
+	{ ANIM_STD_HIT_LEFT,        4.f/30.f, 0.0f,     0.0f,     0.0f, 1.0f, HITLEVEL_NULL,   0, 0 },
+	{ ANIM_STD_HIT_FLOOR,       0.0f,     0.0f,     0.0f,     0.0f, 1.0f, HITLEVEL_NULL,   0, 0 },
+	{ ANIM_STD_HIT_BEHIND,      4.f/30.f, 0.0f,     0.0f,     0.0f, 1.0f, HITLEVEL_NULL,   0, 0 },
+	{ ANIM_STD_FIGHT_2IDLE,     0.0f,     0.0f,     0.0f,     0.0f, 1.0f, HITLEVEL_NULL,   0, 0 },
 };
 
 static PedOnGroundState
@@ -402,7 +391,8 @@ CPed::SetAttack(CEntity *victim)
 			if (bCrouchWhenShooting && bIsDucking && curWeapon->IsFlagSet(WEAPONFLAG_CROUCHFIRE)) {
 				CAnimBlendAssociation* curMoveAssoc = RpAnimBlendClumpGetAssociation(GetClump(), GetCrouchFireAnim(curWeapon));
 				if (curMoveAssoc) {
-					if (strcmp(CAnimManager::GetAnimAssociation(curWeapon->m_AnimToPlay, GetCrouchFireAnim(curWeapon))->hierarchy->name, curMoveAssoc->hierarchy->name) != 0) {
+					CAnimBlendAssociation *expected = CAnimManager::GetAnimAssociation(curWeapon->m_AnimToPlay, GetCrouchFireAnim(curWeapon));
+					if (expected != nil && strcmp(expected->hierarchy->name, curMoveAssoc->hierarchy->name) != 0) {
 						delete curMoveAssoc;
 					}
 				}
@@ -428,7 +418,8 @@ CPed::SetAttack(CEntity *victim)
 
 				CAnimBlendAssociation* curFireAssoc = RpAnimBlendClumpGetAssociation(GetClump(), fireAnim);
 				if (curFireAssoc) {
-					if (strcmp(CAnimManager::GetAnimAssociation(curWeapon->m_AnimToPlay, fireAnim)->hierarchy->name, curFireAssoc->hierarchy->name) != 0) {
+					CAnimBlendAssociation *expected = CAnimManager::GetAnimAssociation(curWeapon->m_AnimToPlay, fireAnim);
+					if (expected != nil && strcmp(expected->hierarchy->name, curFireAssoc->hierarchy->name) != 0) {
 						delete curFireAssoc;
 					}
 				}
@@ -1110,10 +1101,12 @@ CPed::StartFightAttack(uint8 buttonPressure)
 	m_fightButtonPressure = 0;
 
 	if (m_curFightMove > FIGHTMOVE_NULL && m_curFightMove != FIGHTMOVE_IDLE) {
-		animAssoc = CAnimManager::BlendAnimation(GetClump(), m_curFightMove < FIGHTMOVE_MELEE1 ? ASSOCGRP_STD : weaponInfo->m_AnimToPlay,
+		bool isMeleeAttack = m_curFightMove >= FIGHTMOVE_MELEE1 && m_curFightMove <= FIGHTMOVE_MELEE3;
+		animAssoc = CAnimManager::BlendAnimation(GetClump(), isMeleeAttack ? weaponInfo->m_AnimToPlay : ASSOCGRP_STD,
 			tFightMoves[m_curFightMove].animId, 8.0f);
 
-		if (weaponInfo->m_AnimToPlay == ASSOCGRP_KNIFE && m_curFightMove >= FIGHTMOVE_MELEE1) {
+		if (weaponInfo->m_AnimToPlay == ASSOCGRP_KNIFE &&
+			m_curFightMove >= FIGHTMOVE_MELEE1 && m_curFightMove <= FIGHTMOVE_MELEE3) {
 			switch (GetWeapon()->m_eWeaponType) {
 				case WEAPONTYPE_SCREWDRIVER:
 				case WEAPONTYPE_KNIFE:
@@ -1405,6 +1398,12 @@ CPed::Fight(void)
 {
 	CAnimBlendAssociation *currentAssoc, *animAssoc;
 	bool fightWithWeapon = false;
+	if(m_curFightMove >= NUM_FIGHTMOVES){
+		debug("Invalid fight move %u; resetting ped to fight idle\n", m_curFightMove);
+		m_curFightMove = FIGHTMOVE_IDLE;
+		m_lastFightMove = FIGHTMOVE_IDLE;
+		m_fightState = FIGHTSTATE_NO_MOVE;
+	}
 
 	eWeaponType weapon = GetWeapon()->m_eWeaponType;
 	CWeaponInfo *weaponInfo = CWeaponInfo::GetWeaponInfo(weapon);
@@ -1547,10 +1546,11 @@ CPed::Fight(void)
 
 		if (m_curFightMove != FIGHTMOVE_IDLE) {
 
-			animAssoc = CAnimManager::BlendAnimation(GetClump(), m_curFightMove < FIGHTMOVE_MELEE1 ? ASSOCGRP_STD : weaponInfo->m_AnimToPlay,
+			bool isMeleeAttack = m_curFightMove >= FIGHTMOVE_MELEE1 && m_curFightMove <= FIGHTMOVE_MELEE3;
+			animAssoc = CAnimManager::BlendAnimation(GetClump(), isMeleeAttack ? weaponInfo->m_AnimToPlay : ASSOCGRP_STD,
 				tFightMoves[m_curFightMove].animId, 8.0f);
 
-			if (weaponInfo->m_AnimToPlay != ASSOCGRP_KNIFE || m_curFightMove < FIGHTMOVE_MELEE1) {
+			if (!isMeleeAttack || weaponInfo->m_AnimToPlay != ASSOCGRP_KNIFE) {
 				animAssoc->speed = 0.8f;
 			} else {
 				switch (GetWeapon()->m_eWeaponType) {
@@ -1985,7 +1985,9 @@ CPed::EndFight(uint8 endType)
 			break;
 		case ENDFIGHT_FAST:
 			CAnimManager::BlendAnimation(GetClump(), m_animGroup, ANIM_STD_IDLE, 8.0f);
-			CAnimManager::BlendAnimation(GetClump(), ASSOCGRP_STD, ANIM_STD_FIGHT_2IDLE, 8.0f)->speed = 2.0f;
+			animAssoc = CAnimManager::BlendAnimation(GetClump(), ASSOCGRP_STD, ANIM_STD_FIGHT_2IDLE, 8.0f);
+			if(animAssoc != nil)
+				animAssoc->speed = 2.0f;
 			break;
 		default:
 			break;
@@ -2074,6 +2076,9 @@ bool
 CPed::FightStrike(CVector &touchedNodePos, bool fightWithWeapon)
 {
 	PS3_CRUMB("CPed::FightStrike model|state<<16", GetModelIndex() | m_nPedState<<16);
+	if(m_curFightMove >= NUM_FIGHTMOVES)
+		return false;
+
 	CColModel *hisCol;
 	CVector attackDistance;
 	float maxDistanceToBeat;
@@ -2170,6 +2175,9 @@ CPed::FightStrike(CVector &touchedNodePos, bool fightWithWeapon)
 void
 CPed::FightHitPed(CPed *victim, CVector &touchPoint, CVector &dir, int16 piece)
 {
+	if(m_curFightMove >= NUM_FIGHTMOVES)
+		return;
+
 	if (victim->IsPlayer() && victim->m_nPedState == PED_GETUP)
 		return;
 
@@ -2179,7 +2187,7 @@ CPed::FightHitPed(CPed *victim, CVector &touchPoint, CVector &dir, int16 piece)
 
 	if (weaponInfo->IsFlagSet(WEAPONFLAG_FIGHTMODE)) {
 		fightingWithWeapon = true;
-		if (m_curFightMove >= FIGHTMOVE_MELEE1) {
+		if (m_curFightMove >= FIGHTMOVE_MELEE1 && m_curFightMove <= FIGHTMOVE_MELEE3) {
 			damageMult = weaponInfo->m_nDamage;
 			if (m_curFightMove == FIGHTMOVE_MELEE3 && GetWeapon()->m_eWeaponType != WEAPONTYPE_SCREWDRIVER)
 				damageMult *= 5;
@@ -2220,7 +2228,9 @@ CPed::FightHitPed(CPed *victim, CVector &touchPoint, CVector &dir, int16 piece)
 	victim->StartFightDefend(direction, tFightMoves[m_curFightMove].hitLevel, unk2);
 	PlayHitSound(victim);
 	m_fightState = FIGHTSTATE_JUST_ATTACKED;
-	RpAnimBlendClumpGetAssociation(GetClump(), tFightMoves[m_curFightMove].animId)->speed = 0.6f;
+	CAnimBlendAssociation *attackAssoc = RpAnimBlendClumpGetAssociation(GetClump(), tFightMoves[m_curFightMove].animId);
+	if(attackAssoc != nil)
+		attackAssoc->speed = 0.6f;
 
 	if (!victim->DyingOrDead()) {
 		if(fightingWithWeapon)
@@ -2229,7 +2239,8 @@ CPed::FightHitPed(CPed *victim, CVector &touchPoint, CVector &dir, int16 piece)
 			victim->InflictDamage(this, WEAPONTYPE_UNARMED, damageMult * 3.0f, (ePedPieceTypes)piece, direction);
 	}
 
-	if (CGame::nastyGame && weaponInfo->m_AnimToPlay == ASSOCGRP_KNIFE && m_curFightMove >= FIGHTMOVE_MELEE1
+	if (CGame::nastyGame && weaponInfo->m_AnimToPlay == ASSOCGRP_KNIFE &&
+		m_curFightMove >= FIGHTMOVE_MELEE1 && m_curFightMove <= FIGHTMOVE_MELEE3
 		&& victim->GetIsOnScreen()) {
 
 		static float particleRightLen = 0.05f;
@@ -2322,7 +2333,8 @@ CPed::FinishFightMoveCB(CAnimBlendAssociation *animAssoc, void *arg)
 {
 	CPed *ped = (CPed*)arg;
 
-	if (tFightMoves[ped->m_curFightMove].animId == animAssoc->animId) {
+	if (ped->m_curFightMove < NUM_FIGHTMOVES &&
+		tFightMoves[ped->m_curFightMove].animId == animAssoc->animId) {
 		ped->m_fightState = FIGHTSTATE_MOVE_FINISHED;
 		animAssoc->blendDelta = -1000.0f;
 	}
@@ -2345,10 +2357,16 @@ CPed::LoadFightData(void)
 
 	for (bp = 0; bp < buflen; ) {
 		// read file line by line
-		for (linelen = 0; work_buff[bp] != '\n' && bp < buflen; bp++) {
+		for (linelen = 0; bp < buflen && work_buff[bp] != '\n'; bp++) {
+			if(linelen >= (int)sizeof(line) - 1){
+				while(bp < buflen && work_buff[bp] != '\n')
+					bp++;
+				break;
+			}
 			line[linelen++] = work_buff[bp];
 		}
-		bp++;
+		if(bp < buflen)
+			bp++;
 		line[linelen] = '\0';
 
 		// skip white space
@@ -2358,9 +2376,11 @@ CPed::LoadFightData(void)
 			line[lp] == '#')
 			continue;
 
-		sscanf(
+		moveName[0] = '\0';
+		animName[0] = '\0';
+		int fields = sscanf(
 			&line[lp],
-			"%s %f %f %f %f %f %c %s %d %d",
+			"%31s %f %f %f %f %f %c %31s %d %d",
 			moveName,
 			&startFireTime,
 			&endFireTime,
@@ -2372,8 +2392,16 @@ CPed::LoadFightData(void)
 			&damage,
 			&flags);
 
-		if (strncmp(moveName, "ENDWEAPONDATA", 13) == 0)
+		if (fields >= 1 && strncmp(moveName, "ENDWEAPONDATA", 13) == 0)
 			return;
+		if(fields != 10){
+			debug("Ignoring malformed fight move line: %s\n", &line[lp]);
+			continue;
+		}
+		if (moveId >= NUM_FIGHTMOVES) {
+			debug("Ignoring extra fight move %s beyond LCS table size %d\n", moveName, NUM_FIGHTMOVES);
+			continue;
+		}
 
 		tFightMoves[moveId].startFireTime = startFireTime / 30.0f;
 		tFightMoves[moveId].endFireTime = endFireTime / 30.0f;
@@ -2406,7 +2434,10 @@ CPed::LoadFightData(void)
 		if (strcmp(animName, "default") != 0) {
 			if (strcmp(animName, "null") != 0) {
 				animAssoc = CAnimManager::GetAnimAssociation(ASSOCGRP_STD, animName);
-				tFightMoves[moveId].animId = (AnimationId)animAssoc->animId;
+				if (animAssoc != nil)
+					tFightMoves[moveId].animId = (AnimationId)animAssoc->animId;
+				else
+					debug("Unknown fight animation %s for move %s\n", animName, moveName);
 			} else {
 				tFightMoves[moveId].animId = ANIM_STD_WALK;
 			}

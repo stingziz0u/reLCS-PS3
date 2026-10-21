@@ -113,6 +113,7 @@ public:
 	CFerry(int32, uint8);
 	void SetModelIndex(uint32);
 	static void InitFerrys(void);
+	static void RestorePathAfterLoad(bool enabled);
 	static void Init(void*);
 	void ProcessControl(void);
 	void PlayArrivedHorn(void);

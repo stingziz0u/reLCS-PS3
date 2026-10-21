@@ -581,7 +581,11 @@ CGlass::RenderShatteredPolys(void)
 {
 	if ( TempBufferVerticesStoredShattered != TEMPBUFFERVERTSHATTEREDOFFSET )
 	{
-		RwRenderStateSet(rwRENDERSTATETEXTURERASTER, (void *)RwTextureGetRaster(gpCrackedGlassTex));
+		/* LCS's particle dictionary has no wincrack_32 texture, so Shadows.cpp
+		 * supplies the inherited GTA III/VC texture from an embedded copy.  Retain
+		 * the nil guard as a last-resort allocation-failure fallback. */
+		RwRenderStateSet(rwRENDERSTATETEXTURERASTER,
+			gpCrackedGlassTex ? (void *)RwTextureGetRaster(gpCrackedGlassTex) : nil);
 		RwRenderStateSet(rwRENDERSTATESRCBLEND,      (void *)rwBLENDSRCALPHA);
 		RwRenderStateSet(rwRENDERSTATEDESTBLEND,     (void *)rwBLENDINVSRCALPHA);
 

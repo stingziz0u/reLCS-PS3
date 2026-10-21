@@ -15,6 +15,7 @@
 #include "DMAudio.h"
 #include "World.h"
 #include "PlayerPed.h"
+#include "Vehicle.h"
 #include "Wanted.h"
 #include "RpAnimBlend.h"
 #include "ModelIndices.h"
@@ -25,6 +26,7 @@
 #include "crossplatform.h"
 
 static bool bModelsRemovedForCutscene;
+static bool bRestorePlayerVehicleAfterCutscene;
 static int32 NumberOfSavedWeapons;
 static eWeaponType SavedWeaponIDs[TOTAL_WEAPON_SLOTS];
 static int32 SavedWeaponAmmo[TOTAL_WEAPON_SLOTS];
@@ -52,6 +54,7 @@ CCutsceneMgr::Initialise(void *dir)
 	ms_useLodMultiplier = false;
 	ms_wasCutsceneSkipped = false;
 	ms_hasFileInfo = false;
+	bRestorePlayerVehicleAfterCutscene = false;
 	//ms_numCutsceneObjs = 0;
 	//ms_loaded = false;
 	if (gMakeResources) {
@@ -90,6 +93,79 @@ CCutsceneMgr::DeleteCutsceneData(void)
 	DeleteCutsceneData_overlay();
 	if (bModelsRemovedForCutscene)
 		LoadEverythingBecauseCutsceneDeletedAllOfIt();
+
+	/* CLEAR_CUTSCENE runs inside the script pass.  Restoring the vehicle pose
+	 * here is too early: the rest of that same script pass can put the player
+	 * back into the cutscene/on-foot state.  Defer the repair until scripts have
+	 * finished for the frame. */
+	bRestorePlayerVehicleAfterCutscene = true;
+}
+
+void
+CCutsceneMgr::RestorePlayerVehicleAfterCutscene(void)
+{
+	if (!bRestorePlayerVehicleAfterCutscene)
+		return;
+	bRestorePlayerVehicleAfterCutscene = false;
+
+	/* LCS cutscenes hide the real player instead of replacing it.  When the
+	 * player was already in a vehicle, bInVehicle and m_pMyVehicle themselves
+	 * can be stale even though the vehicle still owns the player as an occupant.
+	 * Resolve the authoritative driver/passenger pointer from the vehicle pool,
+	 * then rebuild the same animation and physical presentation as a fresh
+	 * vehicle entry. */
+	CPlayerPed *player = FindPlayerPed();
+	if (!player)
+		return;
+
+	CVehicle *vehicle = nil;
+	bool isDriver = false;
+	for (int32 i = 0; i < CPools::GetVehiclePool()->GetSize() && !vehicle; i++) {
+		CVehicle *candidate = CPools::GetVehiclePool()->GetSlot(i);
+		if (!candidate)
+			continue;
+		if (candidate->pDriver == player) {
+			vehicle = candidate;
+			isDriver = true;
+			break;
+		}
+		for (int32 j = 0; j < ARRAY_SIZE(candidate->pPassengers); j++) {
+			if (candidate->pPassengers[j] == player) {
+				vehicle = candidate;
+				break;
+			}
+		}
+	}
+	if (!vehicle)
+		return;
+
+	if (player->m_pMyVehicle != vehicle) {
+		if (player->m_pMyVehicle)
+			player->m_pMyVehicle->CleanUpOldReference((CEntity **)&player->m_pMyVehicle);
+		player->m_pMyVehicle = vehicle;
+		vehicle->RegisterReference((CEntity **)&player->m_pMyVehicle);
+	}
+	player->bInVehicle = true;
+	player->m_pVehicleAnim = nil;
+	RpAnimBlendClumpRemoveAllAssociations(player->GetClump());
+	player->SetPedState(PED_DRIVING);
+	player->m_nLastPedState = PED_NONE;
+	player->SetMoveState(PEDMOVE_NONE);
+	player->m_nStoredMoveState = PEDMOVE_NONE;
+	player->bUsesCollision = false;
+	player->bIsStanding = false;
+	player->bWasStanding = false;
+	player->bIsInTheAir = false;
+	player->bIsLanding = false;
+	player->m_vecMoveSpeed = CVector(0.0f, 0.0f, 0.0f);
+	player->bRenderPedInCar = !vehicle->bIsBus;
+	player->RemoveWeaponWhenEnteringVehicle();
+	player->AddInCarAnims(vehicle, isDriver);
+	player->bChangedSeat = false;
+	player->SetIsStatic(false);
+	player->bIsStaticWaitingForCollision = false;
+	player->AddToMovingList();
+	player->SetPedPositionInCar();
 }
 
 void

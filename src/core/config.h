@@ -181,7 +181,7 @@ enum Config {
 #define GTA_VERSION	GTAVC_PC_11
 
 // Enable configuration for handheld console ports
-#if defined(__SWITCH__) || defined(PSP2)
+#if defined(__SWITCH__) || defined(PSP2) || defined(_3DS)
 	#define GTA_HANDHELD
 #endif
 
@@ -265,6 +265,13 @@ enum Config {
 //#define COMPRESSED_COL_VECTORS	// use compressed vectors for collision vertices
 //#define ANIM_COMPRESSION	// only keep most recently used anims uncompressed
 
+/* Cutscene IFPs can require several MiB of contiguous keyframe storage.  Keep
+ * the original handheld-style compressed representation on 3DS so a late-game
+ * cutscene does not exhaust a fragmented application heap. */
+#ifdef _3DS
+#define ANIM_COMPRESSION
+#endif
+
 #if defined GTA_PC && defined GTA_PS2_STUFF
 #	define USE_PS2_RAND
 #	define RANDOMSPLASH	// use random splash as on PS2
@@ -326,6 +333,12 @@ enum Config {
 #define MISSION_SWITCHER // from debug menu
 #endif
 
+#ifdef _3DS
+#undef DEBUGMENU
+#undef RELOADABLES
+#undef MISSION_SWITCHER
+#endif
+
 // Rendering/display
 #define ASPECT_RATIO_SCALE	// Not just makes everything scale with aspect ratio, also adds support for all aspect ratios
 #define PROPER_SCALING		// use original DEFAULT_SCREEN_WIDTH/DEFAULT_SCREEN_HEIGHT from PS2 instead of PC(R* changed HEIGHT here to make radar look better, but broke other hud elements aspect ratio).
@@ -342,6 +355,12 @@ enum Config {
 #define EXTENDED_PIPELINES		// custom render pipelines (includes Neo)
 #define SCREEN_DROPLETS			// neo water droplets
 #define NEW_RENDERER		// leeds-like world rendering, needs librw
+#endif
+
+#ifdef _3DS
+#undef EXTENDED_PIPELINES
+#undef SCREEN_DROPLETS
+#undef NEW_RENDERER
 #endif
 
 #define FIX_SPRITES	// fix sprites aspect ratio(moon, coronas, particle etc)
@@ -480,8 +499,22 @@ static_assert(false, "SUPPORT_XBOX_SCRIPT and SUPPORT_MOBILE_SCRIPT are mutually
 #define PAUSE_RADIO_IN_FRONTEND // pause radio when game is paused
 #define ATTACH_RELEASING_SOUNDS_TO_ENTITIES // sounds would follow ped and vehicles coordinates if not being queued otherwise
 #define USE_TIME_SCALE_FOR_AUDIO // slow down/speed up sounds according to the speed of the game
+#ifndef _3DS
 #define MULTITHREADED_AUDIO // for streams. requires C++11 or later
+#endif
 #define CUSTOM_SOUND_TRACK // LCS PSP feature - TODO
+
+#ifdef _3DS
+	// Keep the handheld audio budget: these PC/PS2 extras consume CPU and voices
+	// without being part of the LCS gameplay or mission-audio contract.
+	#undef AUDIO_REFLECTIONS
+	#undef AUDIO_REVERB
+	#undef PS2_AUDIO_CHANNELS
+	// Match re3/reVC on 3DS: save the native 32-bit ARM structures.  The PC
+	// compatibility layout still contains VC-sized blocks (notably 50 phones
+	// instead of LCS's 60), so using it here corrupts the following save blocks.
+	#undef COMPATIBLE_SAVES
+#endif
 
 #ifdef AUDIO_OPUS
 #define AUDIO_OAL_USE_OPUS // enable support of opus files
@@ -496,7 +529,7 @@ static_assert(false, "SUPPORT_XBOX_SCRIPT and SUPPORT_MOBILE_SCRIPT are mutually
 #endif
 
 // Streaming
-#if !defined(_WIN32) && !defined(__SWITCH__)
+#if !defined(_WIN32) && !defined(__SWITCH__) && !defined(_3DS)
 	//#define ONE_THREAD_PER_CHANNEL // Don't use if you're not on SSD/Flash - also not utilized too much right now(see commented LoadAllRequestedModels in Streaming.cpp)
 	#define FLUSHABLE_STREAMING // Make it possible to interrupt reading when processing file isn't needed anymore.
 #endif
@@ -553,4 +586,8 @@ static_assert(false, "SUPPORT_XBOX_SCRIPT and SUPPORT_MOBILE_SCRIPT are mutually
 #undef MISSION_REPLAY		// mobile: autosaves when a mission starts; the PC game never did
 #define GAMEPAD_MENU		// pad settings page (setup 1-4, controller picture, invert, vibration) instead of the mouse one
 #define NO_MOVIES
+// the 3DS port's LCS save (patch 18: the ped pool, vehicles, objects, zones...)
+// in the CPU's own structures, as it does: the PC compatibility layout still
+// has VC's block sizes (50 phones instead of LCS's 60) and broke what follows
+#undef COMPATIBLE_SAVES
 #endif

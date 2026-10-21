@@ -144,11 +144,20 @@ INITSAVEBUF
 	ReadSaveBuf(&nNumBoats, buf);
 	ReadSaveBuf(&nNumBikes, buf);
 	for (int i = 0; i < nNumCars + nNumBoats + nNumBikes; i++) {
-		uint32 type;
+		/* SaveVehiclePool writes m_vehType as its native uint8.  Reading four
+		 * bytes here consumed the following model id and first slot byte too,
+		 * shifting every vehicle record by three bytes.  MASTER builds then ran
+		 * past the disabled assertion with an uninitialised vehicle pointer. */
+		uint8 type;
 		int16 model;
 		int32 slot;
 
 		ReadSaveBuf(&type, buf);
+		if (type != VEHICLE_TYPE_BOAT && type != VEHICLE_TYPE_CAR &&
+		    type != VEHICLE_TYPE_BIKE) {
+			debug("Invalid saved vehicle type %u\n", type);
+			return;
+		}
 		ReadSaveBuf(&model, buf);
 		CStreaming::RequestModel(model, STREAMFLAGS_DEPENDENCY);
 		CStreaming::LoadAllRequestedModels(false);
@@ -206,10 +215,8 @@ INITSAVEBUF
 		pVehicle->m_currentColour2 = pBufferVehicle->m_currentColour2;
 		pVehicle->m_nAlarmState = pBufferVehicle->m_nAlarmState;
 		pVehicle->m_nNumMaxPassengers = pBufferVehicle->m_nNumMaxPassengers;
-		pVehicle->field_1D0[0] = pBufferVehicle->field_1D0[0];
-		pVehicle->field_1D0[1] = pBufferVehicle->field_1D0[1];
-		pVehicle->field_1D0[2] = pBufferVehicle->field_1D0[2];
-		pVehicle->field_1D0[3] = pBufferVehicle->field_1D0[3];
+		// LCS replaced VC's four-float field_1D0 with this vector-sized state.
+		pVehicle->m_vehLCS_230 = pBufferVehicle->m_vehLCS_230;
 		pVehicle->m_fSteerAngle = pBufferVehicle->m_fSteerAngle;
 		pVehicle->m_fGasPedal = pBufferVehicle->m_fGasPedal;
 		pVehicle->m_fBrakePedal = pBufferVehicle->m_fBrakePedal;
@@ -282,9 +289,9 @@ INITSAVEBUF
 #endif
 		}
 	}
-	*size = nNumCars * (sizeof(uint32) + sizeof(int16) + sizeof(int32) + CAutomobile::nSaveStructSize) + sizeof(int) +
-		nNumBoats * (sizeof(uint32) + sizeof(int16) + sizeof(int32) + CBoat::nSaveStructSize) + sizeof(int) +
-		nNumBikes * (sizeof(uint32) + sizeof(int16) + sizeof(int32) + CBike::nSaveStructSize) + sizeof(int);
+	*size = nNumCars * (sizeof(eVehicleType) + sizeof(int16) + sizeof(int32) + CAutomobile::nSaveStructSize) + sizeof(int) +
+		nNumBoats * (sizeof(eVehicleType) + sizeof(int16) + sizeof(int32) + CBoat::nSaveStructSize) + sizeof(int) +
+		nNumBikes * (sizeof(eVehicleType) + sizeof(int16) + sizeof(int32) + CBike::nSaveStructSize) + sizeof(int);
 	WriteSaveBuf(buf, nNumCars);
 	WriteSaveBuf(buf, nNumBoats);
 	WriteSaveBuf(buf, nNumBikes);
@@ -612,6 +619,12 @@ INITSAVEBUF
 			pPed = pPlayerPed;
 		}
 		pPed->SetPosition(pBufferPlayer->GetPosition());
+		/* The native ARM save contains CEntity::m_area, but this reconstruction
+		 * path only copied selected CPlayerPed fields.  LCS places safehouse
+		 * interiors at coordinates that also exist in the exterior world, so
+		 * dropping the area makes Tony appear on the corresponding island and
+		 * prevents every interior interaction from seeing him. */
+		pPed->m_area = pBufferPlayer->m_area;
 		pPed->m_fHealth = pBufferPlayer->m_fHealth;
 		pPed->m_fArmour = pBufferPlayer->m_fArmour;
 		pPed->CharCreatedBy = pBufferPlayer->CharCreatedBy;

@@ -681,7 +681,7 @@ int8 CRunningScript::ProcessCommands1000To1099(int32 command)
 	}
 	case COMMAND_START_CREDITS:
 		CollectParameters(&m_nIp, 1);
-		CCredits::Start(); // TODO: CCredits::Start(GET_INTEGER_PARAM(0))
+		CCredits::Start(GET_INTEGER_PARAM(0));
 		return 0;
 	case COMMAND_STOP_CREDITS:
 		CCredits::Stop();

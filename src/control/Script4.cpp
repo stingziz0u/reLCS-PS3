@@ -16,6 +16,7 @@
 #include "Darkel.h"
 #include "Explosion.h"
 #include "Fire.h"
+#include "FinalMissionMusic.h"
 #include "Frontend.h"
 #include "Garages.h"
 #include "General.h"
@@ -53,6 +54,20 @@ static bool IsSlideObjectUsedWrongByScript(const CVector& posTarget, const CVect
 	return false;
 }
 #endif
+
+// Retry a missing movement operand after a door rebind. Yield this controller
+// at the same opcode if it is still absent, so subsequent GET/SET commands do
+// not dereference the same stale handle or mistake a missing door for completion.
+static CObject *ResolveMovingScriptObject(CRunningScript *script, uint32 commandIp)
+{
+	CObject *object = CPools::GetObjectPool()->GetAt(GET_INTEGER_PARAM(0));
+	if (!object) {
+		CTheScripts::RebindWorldDoorScriptHandles();
+		SET_INTEGER_PARAM(0, script->CollectNextParameterWithoutIncreasingPC(commandIp + 2));
+		object = CPools::GetObjectPool()->GetAt(GET_INTEGER_PARAM(0));
+	}
+	return object;
+}
 
 int8 CRunningScript::ProcessCommands800To899(int32 command)
 {
@@ -484,9 +499,14 @@ int8 CRunningScript::ProcessCommands800To899(int32 command)
 		return 0;
 	case COMMAND_ROTATE_OBJECT:
 	{
+		const uint32 commandIp = m_nIp - 2;
 		CollectParameters(&m_nIp, 4);
-		CObject* pObject = CPools::GetObjectPool()->GetAt(GET_INTEGER_PARAM(0));
-		script_assert(pObject);
+		CObject* pObject = ResolveMovingScriptObject(this, commandIp);
+		if (!pObject) {
+			m_nIp = commandIp;
+			m_nWakeTime = CTimer::GetTimeInMilliseconds() + 100;
+			return 1;
+		}
 		float fx = pObject->GetForward().x;
 		float fy = pObject->GetForward().y;
 		float heading = LimitAngleOnCircle(
@@ -540,9 +560,14 @@ int8 CRunningScript::ProcessCommands800To899(int32 command)
 	}
 	case COMMAND_SLIDE_OBJECT:
 	{
+		const uint32 commandIp = m_nIp - 2;
 		CollectParameters(&m_nIp, 8);
-		CObject* pObject = CPools::GetObjectPool()->GetAt(GET_INTEGER_PARAM(0));
-		script_assert(pObject);
+		CObject* pObject = ResolveMovingScriptObject(this, commandIp);
+		if (!pObject) {
+			m_nIp = commandIp;
+			m_nWakeTime = CTimer::GetTimeInMilliseconds() + 100;
+			return 1;
+		}
 		CVector pos = pObject->GetPosition();
 		CVector posTarget = GET_VECTOR_PARAM(1);
 		CVector slideBy = GET_VECTOR_PARAM(4);
@@ -1576,6 +1601,8 @@ int8 CRunningScript::ProcessCommands900To999(int32 command)
 			str[i] = tolower(str[i]);
 		m_nIp += KEY_LENGTH_IN_SCRIPT;
 		strncpy(m_abScriptName, str, KEY_LENGTH_IN_SCRIPT);
+		if (!CGeneral::faststricmp(m_abScriptName, "SALH5"))
+			FinalMissionMusic::BeginLCSFinale();
 		return 0;
 	}
 	/*
@@ -2010,8 +2037,14 @@ int8 CRunningScript::ProcessCommands900To999(int32 command)
 		CTimer::Stop();
 #endif
 		CStreaming::LoadSceneCollision(pos);
+#if defined(_3DS) || defined(__PS3__)	// reLCS-PS3: a game fix of the 3DS port
+		/* The LCS port reduced LOAD_SCENE to collision-only loading.  Desktop
+		 * storage usually hides that omission, but a cutscene camera jump on SD
+		 * reaches the destination before its buildings are resident. */
+		CStreaming::LoadScene(pos);
+#endif
 #ifdef FIX_BUGS
-		CTimer::Suspend();
+		CTimer::Resume();
 #else
 		CTimer::Update();
 #endif
@@ -2325,6 +2358,15 @@ void CTheScripts::SwapNearestBuildingModel(float x, float y, float z, float radi
 
 void CTheScripts::AddToBuildingSwapArray(CBuilding* pBuilding, int32 old_model, int32 new_model)
 {
+	uint32 poolType;
+	uint32 poolHandle;
+	if (pBuilding->GetIsATreadable()) {
+		poolType = 1;
+		poolHandle = CPools::GetTreadablePool()->GetJustIndex_NoFreeAssert((CTreadable*)pBuilding) + 1;
+	} else {
+		poolType = 2;
+		poolHandle = CPools::GetBuildingPool()->GetJustIndex_NoFreeAssert(pBuilding) + 1;
+	}
 	int i = 0;
 	bool found = false;
 	while (i < MAX_NUM_BUILDING_SWAPS && !found) {
@@ -2337,9 +2379,13 @@ void CTheScripts::AddToBuildingSwapArray(CBuilding* pBuilding, int32 old_model, 
 		if (BuildingSwapArray[i].m_nOldModel == new_model) {
 			BuildingSwapArray[i].m_pBuilding = nil;
 			BuildingSwapArray[i].m_nOldModel = BuildingSwapArray[i].m_nNewModel = -1;
+			BuildingSwapArray[i].m_nPoolType = 0;
+			BuildingSwapArray[i].m_nPoolHandle = 0;
 		}
 		else {
 			BuildingSwapArray[i].m_nNewModel = new_model;
+			BuildingSwapArray[i].m_nPoolType = poolType;
+			BuildingSwapArray[i].m_nPoolHandle = poolHandle;
 		}
 	}
 	else {
@@ -2354,12 +2400,39 @@ void CTheScripts::AddToBuildingSwapArray(CBuilding* pBuilding, int32 old_model, 
 			BuildingSwapArray[i].m_pBuilding = pBuilding;
 			BuildingSwapArray[i].m_nNewModel = new_model;
 			BuildingSwapArray[i].m_nOldModel = old_model;
+			BuildingSwapArray[i].m_nPoolType = poolType;
+			BuildingSwapArray[i].m_nPoolHandle = poolHandle;
 		}
 	}
 }
 
 void CTheScripts::AddToInvisibilitySwapArray(CEntity* pEntity, bool remove)
 {
+	uint32 poolType = 0;
+	uint32 poolHandle = 0;
+	if (!remove) {
+		switch (pEntity->GetType()) {
+		case ENTITY_TYPE_BUILDING:
+			if (((CBuilding*)pEntity)->GetIsATreadable()) {
+				poolType = 1;
+				poolHandle = CPools::GetTreadablePool()->GetJustIndex_NoFreeAssert((CTreadable*)pEntity) + 1;
+			} else {
+				poolType = 2;
+				poolHandle = CPools::GetBuildingPool()->GetJustIndex_NoFreeAssert((CBuilding*)pEntity) + 1;
+			}
+			break;
+		case ENTITY_TYPE_OBJECT:
+			poolType = 3;
+			poolHandle = CPools::GetObjectPool()->GetJustIndex_NoFreeAssert((CObject*)pEntity) + 1;
+			break;
+		case ENTITY_TYPE_DUMMY:
+			poolType = 4;
+			poolHandle = CPools::GetDummyPool()->GetJustIndex_NoFreeAssert((CDummy*)pEntity) + 1;
+			break;
+		default:
+			break;
+		}
+	}
 	int i = 0;
 	bool found = false;
 	while (i < MAX_NUM_INVISIBILITY_SETTINGS && !found) {
@@ -2369,8 +2442,11 @@ void CTheScripts::AddToInvisibilitySwapArray(CEntity* pEntity, bool remove)
 			i++;
 	}
 	if (found) {
-		if (remove)
+		if (remove) {
 			InvisibilitySettingArray[i] = nil;
+			InvisibilitySettingPoolType[i] = 0;
+			InvisibilitySettingPoolHandle[i] = 0;
+		}
 	}
 	else if (!remove) {
 		i = 0;
@@ -2380,18 +2456,31 @@ void CTheScripts::AddToInvisibilitySwapArray(CEntity* pEntity, bool remove)
 			else
 				i++;
 		}
-		if (found)
+		if (found) {
 			InvisibilitySettingArray[i] = pEntity;
+			InvisibilitySettingPoolType[i] = poolType;
+			InvisibilitySettingPoolHandle[i] = poolHandle;
+		}
 	}
 }
 
 void CTheScripts::UndoBuildingSwaps()
 {
 	for (int i = 0; i < MAX_NUM_BUILDING_SWAPS; i++) {
-		if (BuildingSwapArray[i].m_pBuilding) {
-			BuildingSwapArray[i].m_pBuilding->ReplaceWithNewModel(BuildingSwapArray[i].m_nOldModel);
+		CBuilding *building = nil;
+		const uint32 handle = BuildingSwapArray[i].m_nPoolHandle;
+		if (handle != 0 && BuildingSwapArray[i].m_nPoolType == 1 &&
+		    handle <= (uint32)CPools::GetTreadablePool()->GetSize())
+			building = CPools::GetTreadablePool()->GetSlot(handle - 1);
+		else if (handle != 0 && BuildingSwapArray[i].m_nPoolType == 2 &&
+		         handle <= (uint32)CPools::GetBuildingPool()->GetSize())
+			building = CPools::GetBuildingPool()->GetSlot(handle - 1);
+		if (building) {
+			building->ReplaceWithNewModel(BuildingSwapArray[i].m_nOldModel);
 			BuildingSwapArray[i].m_pBuilding = nil;
 			BuildingSwapArray[i].m_nOldModel = BuildingSwapArray[i].m_nNewModel = -1;
+			BuildingSwapArray[i].m_nPoolType = 0;
+			BuildingSwapArray[i].m_nPoolHandle = 0;
 		}
 	}
 }
@@ -2399,9 +2488,25 @@ void CTheScripts::UndoBuildingSwaps()
 void CTheScripts::UndoEntityInvisibilitySettings()
 {
 	for (int i = 0; i < MAX_NUM_INVISIBILITY_SETTINGS; i++) {
-		if (InvisibilitySettingArray[i]) {
-			InvisibilitySettingArray[i]->bIsVisible = true;
+		CEntity *entity = nil;
+		const uint32 handle = InvisibilitySettingPoolHandle[i];
+		if (handle != 0 && InvisibilitySettingPoolType[i] == 1 &&
+		    handle <= (uint32)CPools::GetTreadablePool()->GetSize())
+			entity = CPools::GetTreadablePool()->GetSlot(handle - 1);
+		else if (handle != 0 && InvisibilitySettingPoolType[i] == 2 &&
+		         handle <= (uint32)CPools::GetBuildingPool()->GetSize())
+			entity = CPools::GetBuildingPool()->GetSlot(handle - 1);
+		else if (handle != 0 && InvisibilitySettingPoolType[i] == 3 &&
+		         handle <= (uint32)CPools::GetObjectPool()->GetSize())
+			entity = CPools::GetObjectPool()->GetSlot(handle - 1);
+		else if (handle != 0 && InvisibilitySettingPoolType[i] == 4 &&
+		         handle <= (uint32)CPools::GetDummyPool()->GetSize())
+			entity = CPools::GetDummyPool()->GetSlot(handle - 1);
+		if (entity) {
+			entity->bIsVisible = true;
 			InvisibilitySettingArray[i] = nil;
+			InvisibilitySettingPoolType[i] = 0;
+			InvisibilitySettingPoolHandle[i] = 0;
 		}
 	}
 }

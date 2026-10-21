@@ -1,4 +1,5 @@
 #include "common.h"
+#include "../regta3ds/EffectBudget.h"	// the 3DS port's (no-op off the 3DS)
 
 #include "main.h"
 #include "TxdStore.h"
@@ -237,6 +238,11 @@ CSkidmarks::RegisterOne(uintptr id, const CVector &pos, float fwdX, float fwdY, 
 		return;
 	}
 
+	// Admission only: existing strips must continue and fade normally.
+	int active = 0;
+	for(int slot = 0; slot < NUMSKIDMARKS; ++slot)
+		if(aSkidmarks[slot].m_state != 0) ++active;
+	if(active >= EffectBudget3DS::Limit(NUMSKIDMARKS)) return;
 	// Start a new one
 	for(i = 0; i < NUMSKIDMARKS; i++)
 		if(aSkidmarks[i].m_state == 0)

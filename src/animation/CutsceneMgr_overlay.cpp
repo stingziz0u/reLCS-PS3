@@ -215,20 +215,34 @@ CCutsceneMgr::SetCutsceneAnim(const char *animName, CObject *pObject)
 	debug("Give cutscene anim %s\n", animName);
 	/*assert(RwObjectGetType(pObject->m_rwObject) == rpCLUMP);
 	debug("Give cutscene anim %s\n", animName);
-	RpAnimBlendClumpRemoveAllAssociations((RpClump*)pObject->m_rwObject);
+	RpAnimBlendClumpRemoveAllAssociations((RpClump*)pObject->m_rwObject);*/
 
-	pNewAnim = ms_cutsceneAssociations.GetAnimation(animName);
-	if (!pNewAnim) {
-		debug("\n\nHaven't I told you I can't find the fucking animation %s\n\n\n", animName);
+	CAnimBlendAssociation *pSourceAnim = ms_cutsceneAssociations.GetAnimation(animName);
+	if (!pSourceAnim) {
+		debug("Cannot find cutscene animation %s\n", animName);
 		return;
 	}
 
-	if (pNewAnim->hierarchy->IsCompressed())
-		pNewAnim->hierarchy->keepCompressed = true;*/
+#ifdef ANIM_COMPRESSION
+	/* CopyAnimation normally expands a compressed hierarchy first.  Mark the
+	 * source before copying so the 3DS compressed playback callbacks keep the
+	 * keyframes compact for the entire cutscene, not just while loading it. */
+	if (pSourceAnim->hierarchy->IsCompressed())
+		pSourceAnim->hierarchy->keepCompressed = true;
+#endif
 
 	CStreaming::ImGonnaUseStreamingMemory();
 	pNewAnim = ms_cutsceneAssociations.CopyAnimation(animName);
 	CStreaming::IHaveUsedStreamingMemory();
+	if (!pNewAnim) {
+		debug("Cannot find cutscene animation %s\n", animName);
+		return;
+	}
+
+#ifdef ANIM_COMPRESSION
+	if (pNewAnim->hierarchy->IsCompressed())
+		pNewAnim->hierarchy->keepCompressed = true;
+#endif
 
 	pNewAnim->SetCurrentTime(0.0f);
 	pNewAnim->flags |= ASSOC_HAS_TRANSLATION;
@@ -237,8 +251,10 @@ CCutsceneMgr::SetCutsceneAnim(const char *animName, CObject *pObject)
 	pAnimBlendClumpData = *RPANIMBLENDCLUMPDATA(pObject->m_rwObject);
 	pAnimBlendClumpData->link.Prepend(&pNewAnim->link);
 
-	//if (pNewAnim->hierarchy->keepCompressed)
-	//	pAnimBlendClumpData->frames->flag |= AnimBlendFrameData::COMPRESSED;
+#ifdef ANIM_COMPRESSION
+	if (pNewAnim->hierarchy->keepCompressed)
+		pAnimBlendClumpData->frames->flag |= AnimBlendFrameData::COMPRESSED;
+#endif
 }
 
 void
@@ -271,6 +287,19 @@ CCutsceneMgr::SetupCutsceneToStart(void)
 		TheCamera.TakeControlWithSpline(JUMP_CUT);
 		TheCamera.SetWideScreenOn();
 		CHud::SetHelpMessage(nil, true);
+
+#if defined(_3DS) || defined(__PS3__)	// reLCS-PS3: a game fix of the 3DS port
+		/* The wider 3DS world range can still be streaming and cross-fading its
+		 * near models when a new-game intro hands control to the cutscene camera.
+		 * Complete that camera's scene load while the screen is black and before
+		 * any cutscene association starts running. LoadScene's synchronous path
+		 * also promotes loaded simple-model alpha to 255, so the coach and the
+		 * surrounding world begin on the same first frame. */
+		if (CGeneral::faststricmp(ms_cutsceneName, "intro") == 0) {
+			TheCamera.Process();
+			CStreaming::LoadScene(TheCamera.GetPosition());
+		}
+#endif
 	}
 
 	ms_cutsceneOffset.z += 1.0f;
@@ -384,7 +413,7 @@ CCutsceneMgr::HideRequestedObjects(void)
 			int16 foundEntities;
 			CEntity* pEntities[32];
 			CWorld::FindObjectsOfTypeInRange(id, pos, 1.5f, true, &foundEntities, 32, pEntities, true, false, false, true, true);
-			for (int j = 0; i < foundEntities; j++) {
+			for (int j = 0; j < foundEntities; j++) {
 				if (pEntities[j]->bIsVisible) {
 					ms_pHiddenEntities[ms_iNumHiddenEntities] = pEntities[j];
 					ms_pHiddenEntities[ms_iNumHiddenEntities]->RegisterReference(&ms_pHiddenEntities[ms_iNumHiddenEntities]);
@@ -526,6 +555,11 @@ CCutsceneMgr::LoadCutsceneData_overlay(const char *szCutsceneName)
 	ms_pCutsceneDir->ReadDirFile("ANIM\\CUTS.DIR");
 
 	CStreaming::RemoveUnusedModelsInLoadedList();
+	/* Reserve transient ordinary-heap space before the CUT descriptor, models,
+	 * camera path and IFP allocations begin arriving over several frames. */
+#ifdef _3DS
+	CStreaming::MakeSpaceFor(8 << 20);
+#endif
 	CGame::DrasticTidyUpMemory(true);
 
 	strcpy(ms_cutsceneName, szCutsceneName);
@@ -804,6 +838,15 @@ CCutsceneMgr::LoadCutsceneData_preload(void)
 		else
 		{
 			delete[]cutsBuf;
+
+#ifdef _3DS
+			/* cscoach starts with a DummyRoot translation above +32 units.  The
+			 * compact int16/1024 representation wraps that coordinate and places
+			 * the coach on the wrong side of the cutscene until the turn brings it
+			 * back into range.  Keep only this intro animation at source precision. */
+			if (CGeneral::faststricmp(ms_cutsceneName, "intro") == 0)
+				LoadAnimationUncompressed("cscoach");
+#endif
 
 			// add manually inserted objects
 			for (int i = 0; i < ms_numAppendObjectNames; i++) {

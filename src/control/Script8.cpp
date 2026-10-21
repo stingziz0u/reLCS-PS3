@@ -14,6 +14,7 @@
 #include "GenericGameStorage.h"
 #endif
 #include "Hud.h"
+#include "MusicManager.h"
 #include "Pad.h"
 #include "PedAttractor.h"
 #include "Pickups.h"
@@ -333,6 +334,9 @@ int8 CRunningScript::ProcessCommands1400To1499(int32 command)
 		CStats::CheckPointReachedSuccessfully();
 		CTheScripts::LastMissionPassedTime = CTimer::GetTimeInMilliseconds();
 		CGameLogic::RemoveShortCutDropOffPointForMission();
+#if defined(_3DS) || defined(__PS3__)	// reLCS-PS3: a game fix of the 3DS port
+		MusicManager.ResetRadioAfterMissionPassed();
+#endif
 		return 0;
 	case COMMAND_IS_PLAYER_IN_SHORTCUT_TAXI:
 	{

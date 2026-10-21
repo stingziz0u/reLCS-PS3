@@ -6,6 +6,7 @@
 #include "ScriptCommands.h"
 
 #include "Camera.h"
+#include "AnimBlendAssociation.h"
 #include "CarCtrl.h"
 #include "CarGen.h"
 #include "CivilianPed.h"
@@ -13,6 +14,7 @@
 #include "Cranes.h"
 #include "DMAudio.h"
 #include "EmergencyPed.h"
+#include "FinalMissionMusic.h"
 #include "Garages.h"
 #include "General.h"
 #include "Messages.h"
@@ -22,6 +24,7 @@
 #include "Population.h"
 #include "Radar.h"
 #include "Restart.h"
+#include "RpAnimBlend.h"
 #include "Shadows.h"
 #include "User.h"
 #include "Wanted.h"
@@ -947,20 +950,21 @@ int8 CRunningScript::ProcessCommands400To499(int32 command)
 	{
 		CollectParameters(&m_nIp, 2);
 		CPlayerInfo* pPlayer = &CWorld::Players[GET_INTEGER_PARAM(0)];
-		if (FindPlayerPed()) {
-			if (FindPlayerPed()->GetPedState() != PED_JUMP) {
-				FindPlayerPed()->bIsLanding = false;
-				FindPlayerPed()->bIsInTheAir = false;
+		CPlayerPed *pPlayerPed = pPlayer->m_pPed;
+		if (pPlayerPed) {
+			if (pPlayerPed->GetPedState() != PED_JUMP) {
+				pPlayerPed->bIsLanding = false;
+				pPlayerPed->bIsInTheAir = false;
 #ifdef FIX_BUGS
 				// the glide the ped got for being in the air goes too: LCS
 				// resets the player's animations here (SetIdleAndResetAnim,
 				// the TODOs below). Without it, a player put somewhere by a
 				// cutscene's end in the frame he was "in the air" (Slacker)
 				// keeps falling until he jumps.
-				if (FindPlayerPed()->GetClump()) {
+				if (pPlayerPed->GetClump()) {
 					static const AnimationId glides[] = { ANIM_STD_JUMP_GLIDE, ANIM_STD_FALL_GLIDE, ANIM_STD_FALL };
 					for (int i = 0; i < ARRAY_SIZE(glides); i++) {
-						CAnimBlendAssociation *glide = RpAnimBlendClumpGetAssociation(FindPlayerPed()->GetClump(), glides[i]);
+						CAnimBlendAssociation *glide = RpAnimBlendClumpGetAssociation(pPlayerPed->GetClump(), glides[i]);
 						if (glide) {
 							glide->blendDelta = -8.0f;
 							glide->flags |= ASSOC_DELETEFADEDOUT;
@@ -969,12 +973,37 @@ int8 CRunningScript::ProcessCommands400To499(int32 command)
 				}
 #endif
 			}
-			FindPlayerPed()->RestoreHeadingRate();
+			pPlayerPed->RestoreHeadingRate();
 		}
 		if (GET_INTEGER_PARAM(1)) {
 			pPlayer->MakePlayerSafe(false);
-			if (FindPlayerPed()->GetStatus() != PED_DRIVING && !FindPlayerPed()->m_attachedTo) {
-				// FindPlayerPed()->SetIdleAndResetAnim(); // TODO!
+			if (pPlayerPed && pPlayerPed->GetStatus() != PED_DRIVING && !pPlayerPed->m_attachedTo) {
+#if defined(_3DS) || defined(__PS3__)	// reLCS-PS3: a game fix of the 3DS port
+				// LCS calls SetIdleAndResetAnim here. Clear the equivalent deferred
+				// objective/wait state so a finished cutscene cannot strand the player.
+				if (pPlayerPed->bClearObjective || pPlayerPed->m_objective == OBJECTIVE_NONE) {
+					pPlayerPed->m_objective = OBJECTIVE_NONE;
+					pPlayerPed->m_pedInObjective = nil;
+					pPlayerPed->m_carInObjective = nil;
+					pPlayerPed->bClearObjective = false;
+					pPlayerPed->ClearWaitState();
+					static const AnimationId airborneAnims[] = {
+						ANIM_STD_JUMP_LAUNCH, ANIM_STD_JUMP_GLIDE, ANIM_STD_JUMP_LAND,
+						ANIM_STD_FALL, ANIM_STD_FALL_GLIDE, ANIM_STD_FALL_LAND,
+						ANIM_STD_FALL_COLLAPSE, ANIM_STD_FALL_ONBACK, ANIM_STD_FALL_ONFRONT
+					};
+					for (int32 i = 0; i < ARRAY_SIZE(airborneAnims); i++) {
+						CAnimBlendAssociation *assoc = RpAnimBlendClumpGetAssociation(
+							pPlayerPed->GetClump(), airborneAnims[i]);
+						if (assoc)
+							assoc->Remove();
+					}
+					pPlayerPed->SetIdle();
+					pPlayerPed->SetMoveState(PEDMOVE_STILL);
+				}
+#else
+				// pPlayerPed->SetIdleAndResetAnim(); // TODO!
+#endif
 			}
 		}
 		else {
@@ -1347,6 +1376,12 @@ int8 CRunningScript::ProcessCommands400To499(int32 command)
 		CPed* pPed = CPools::GetPedPool()->GetAt(GET_INTEGER_PARAM(0));
 		script_assert(pPed);
 		CVehicle* pVehicle = CPools::GetVehiclePool()->GetAt(GET_INTEGER_PARAM(1));
+		script_assert(pVehicle);
+		/* Preserve Massimo's complete door/open/get-in animation in SALH5.
+		 * Narrow collision and gravity guards keep him aligned with the hovering
+		 * Maverick like the PSP sequence, without teleporting him to a seat. */
+		pPed->bFinaleHeliBoardingProtected =
+			!CGeneral::faststricmp(m_abScriptName, "SALH5") && pVehicle->IsRealHeli();
 		pPed->bScriptObjectiveCompleted = false;
 		pPed->SetObjective(OBJECTIVE_ENTER_CAR_AS_PASSENGER, pVehicle);
 		return 0;

@@ -161,7 +161,8 @@ public:
 	}
 	T *GetAt(int handle){
 #ifdef FIX_BUGS
-		if (handle == -1)
+		// A handle is a live slot plus its generation, never a free-slot flag.
+		if (((uint32)handle >> 8) >= (uint32)m_size || (handle & POOLFLAG_ISFREE))
 			return nil;
 #endif
 		return m_flags[handle>>8] == (handle & 0xFF) ?

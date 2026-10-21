@@ -503,6 +503,32 @@ InitClump(RpClump *clump)
 #define InitClump(clump)
 #endif
 
+#ifdef _3DS
+static RpAtomic*
+NeutralizeBuildingPrelight3DS(RpAtomic *atomic, void*)
+{
+	RpGeometry *geometry = RpAtomicGetGeometry(atomic);
+	RwRGBA *colors = RpGeometryGetPreLightColors(geometry);
+	if(colors == nil)
+		return atomic;
+
+	const int32 count = RpGeometryGetNumVertices(geometry);
+	RpGeometryLock(geometry, rpGEOMETRYLOCKPRELIGHT);
+	for(int32 i = 0; i < count; i++){
+		/* LCS bakes saturated red, blue, cyan and yellow/green light pools into
+		 * otherwise neutral walls, stairs and roads. Retain their luminance and
+		 * alpha while removing the hue, so texture colour and authored shading
+		 * survive without the conspicuous coloured patches. */
+		const uint32 grey = (77u * colors[i].red +
+		                     150u * colors[i].green +
+		                      29u * colors[i].blue + 128u) >> 8;
+		colors[i].red = colors[i].green = colors[i].blue = (uint8)grey;
+	}
+	RpGeometryUnlock(geometry);
+	return atomic;
+}
+#endif
+
 void
 CFileLoader::LoadModelFile(const char *filename)
 {
@@ -571,10 +597,10 @@ bool
 CFileLoader::StartLoadClumpFile(RwStream *stream, uint32 id)
 {
 	if(RwStreamFindChunk(stream, rwID_CLUMP, nil, nil)){
-		printf("Start loading %s\n", CModelInfo::GetModelInfo(id)->GetModelName());
 		return RpClumpGtaStreamRead1(stream);
 	}else{
-		printf("FAILED\n");
+		re3_stall_log("STREAM vehicle-start failed id %u model %s", id,
+			CModelInfo::GetModelInfo(id)->GetModelName());
 		return false;
 	}
 }
@@ -585,7 +611,6 @@ CFileLoader::FinishLoadClumpFile(RwStream *stream, uint32 id)
 	RpClump *clump;
 	CClumpModelInfo *mi;
 
-	printf("Finish loading %s\n", CModelInfo::GetModelInfo(id)->GetModelName());
 	clump = RpClumpGtaStreamRead2(stream);
 
 	if(clump){
@@ -594,7 +619,8 @@ CFileLoader::FinishLoadClumpFile(RwStream *stream, uint32 id)
 		mi->SetClump(clump);
 		return true;
 	}else{
-		printf("FAILED\n");
+		re3_stall_log("STREAM vehicle-finish failed id %u model %s", id,
+			CModelInfo::GetModelInfo(id)->GetModelName());
 		return false;
 	}
 }
@@ -610,8 +636,12 @@ CFileLoader::LoadAtomicFile(RwStream *stream, uint32 id)
 		clump = RpClumpStreamRead(stream);
 		if(clump == nil)
 			return false;
-		InitClump(clump);
 		gpRelatedModelInfo = (CSimpleModelInfo*)CModelInfo::GetModelInfo(id);
+		InitClump(clump);
+#ifdef _3DS
+		if(gpRelatedModelInfo->IsBuilding())
+			RpClumpForAllAtomics(clump, NeutralizeBuildingPrelight3DS, nil);
+#endif
 		RpClumpForAllAtomics(clump, SetRelatedModelInfoCB, clump);
 		RpClumpDestroy(clump);
 	}

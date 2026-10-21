@@ -102,8 +102,37 @@ RwTexDictionaryGtaStreamRead(RwStream *stream)
 	return texDict;
 }
 
-static int32 numberTextures = -1;
-static int32 streamPosition;
+struct TxdReadState
+{
+	RwTexDictionary *texDict;
+	int32 numberTextures;
+	int32 streamPosition;
+};
+
+/* CdStream has two conversion channels.  Keep their incremental TXD cursors
+ * separate: a single global cursor lets the second channel overwrite the first
+ * one and can corrupt or crash a dense-area stream transition. */
+static TxdReadState txdReadStates[2];
+
+static TxdReadState*
+findTxdReadState(RwTexDictionary *texDict)
+{
+	for(uint32 i = 0; i < ARRAY_SIZE(txdReadStates); i++)
+		if(txdReadStates[i].texDict == texDict)
+			return &txdReadStates[i];
+	return nil;
+}
+
+static TxdReadState*
+allocTxdReadState(RwTexDictionary *texDict)
+{
+	for(uint32 i = 0; i < ARRAY_SIZE(txdReadStates); i++)
+		if(txdReadStates[i].texDict == nil){
+			txdReadStates[i].texDict = texDict;
+			return &txdReadStates[i];
+		}
+	return nil;
+}
 
 RwTexDictionary*
 RwTexDictionaryGtaStreamRead1(RwStream *stream)
@@ -112,8 +141,8 @@ RwTexDictionaryGtaStreamRead1(RwStream *stream)
 	RwInt32 numTextures;
 	RwTexDictionary *texDict;
 	RwTexture *tex;
+	TxdReadState *state;
 
-	numberTextures = 0;
 	if(!RwStreamFindChunk(stream, rwID_STRUCT, &size, &version))
 		return nil;
 	assert(size == 4);
@@ -124,23 +153,29 @@ RwTexDictionaryGtaStreamRead1(RwStream *stream)
 	texDict = RwTexDictionaryCreate();
 	if(texDict == nil)
 		return nil;
+	state = allocTxdReadState(texDict);
+	if(state == nil){
+		RwTexDictionaryDestroy(texDict);
+		return nil;
+	}
 
-	numberTextures = numTextures/2;
-
-	while(numTextures > numberTextures){
+	/* Keep the original two-stage TXD completion, but retain an independent
+	 * cursor for each streaming channel.  One-texture-per-frame caused severe
+	 * world and cutscene resource latency on real hardware. */
+	state->numberTextures = numTextures/2;
+	while(numTextures > state->numberTextures){
 		numTextures--;
-
 		tex = RwTextureGtaStreamRead(stream);
 		if(tex == nil){
 			RwTexDictionaryForAllTextures(texDict, destroyTexture, nil);
 			RwTexDictionaryDestroy(texDict);
+			state->texDict = nil;
 			return nil;
 		}
 		RwTexDictionaryAddTexture(texDict, tex);
 	}
 
-	numberTextures = numTextures;
-	streamPosition = STREAMPOS(stream);
+	state->streamPosition = STREAMPOS(stream);
 
 	return texDict;
 }
@@ -149,20 +184,42 @@ RwTexDictionary*
 RwTexDictionaryGtaStreamRead2(RwStream *stream, RwTexDictionary *texDict)
 {
 	RwTexture *tex;
+	TxdReadState *state = findTxdReadState(texDict);
+	if(state == nil)
+		return texDict;
 
-	RwStreamSkip(stream, streamPosition - STREAMPOS(stream));
+	RwStreamSkip(stream, state->streamPosition - STREAMPOS(stream));
 
-	while(numberTextures--){
+	while(state->numberTextures > 0){
+		state->numberTextures--;
 		tex = RwTextureGtaStreamRead(stream);
 		if(tex == nil){
 			RwTexDictionaryForAllTextures(texDict, destroyTexture, nil);
 			RwTexDictionaryDestroy(texDict);
+			state->texDict = nil;
 			return nil;
 		}
 		RwTexDictionaryAddTexture(texDict, tex);
 	}
+	state->streamPosition = STREAMPOS(stream);
+	state->texDict = nil;
 
 	return texDict;
+}
+
+bool
+RwTexDictionaryGtaStreamReadInProgress(RwTexDictionary *texDict)
+{
+	TxdReadState *state = findTxdReadState(texDict);
+	return state != nil && state->numberTextures > 0;
+}
+
+void
+RwTexDictionaryGtaStreamReadCancel(RwTexDictionary *texDict)
+{
+	TxdReadState *state = findTxdReadState(texDict);
+	if(state)
+		state->texDict = nil;
 }
 
 #ifdef GTA_PC

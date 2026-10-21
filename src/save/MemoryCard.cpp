@@ -439,6 +439,7 @@ CMemoryCard::LoadSavedGame(void)
 	
 	printf("Loading PedPool \n");
 	ReadDataFromBlock(CPools::LoadPedPool);
+	CTheScripts::RebindPlayerPedScriptHandle();
 	
 	printf("Loading Garages \n");
 	ReadDataFromBlock(CGarages::Load);

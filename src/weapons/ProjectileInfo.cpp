@@ -2,14 +2,17 @@
 #include "Pools.h"
 
 #include "Camera.h"
+#include "Collision.h"
 #include "General.h"
 #include "Heli.h"
 #include "ModelIndices.h"
 #include "Particle.h"
 #include "Ped.h"
 #include "Plane.h"
+#include "Pools.h"
 #include "ProjectileInfo.h"
 #include "Projectile.h"
+#include "Vehicle.h"
 #include "Explosion.h"
 #include "Weapon.h"
 #include "World.h"
@@ -21,10 +24,21 @@ uint32 projectileInUse;
 CProjectileInfo gaProjectileInfo[NUM_PROJECTILES];
 CProjectile *CProjectileInfo::ms_apProjectile[NUM_PROJECTILES];
 
-#define PROJECTILE_BOUNDARY_MIN_X -2390.0f
-#define PROJECTILE_BOUNDARY_MAX_X 1590.0f
-#define PROJECTILE_BOUNDARY_MIN_Y -1990.0f
-#define PROJECTILE_BOUNDARY_MAX_Y 1990.0f
+static bool
+TestRealHeliRocketCollision(const CVector &from, const CVector &to, CEntity *source)
+{
+	CVehiclePool *pool = CPools::GetVehiclePool();
+	for (int32 i = 0; i < pool->GetSize(); i++) {
+		CVehicle *vehicle = pool->GetSlot(i);
+		if (vehicle == nil || vehicle == source || !vehicle->IsRealHeli() ||
+		    vehicle->bExplosionProof || vehicle->bRenderScorched)
+			continue;
+		const float radius = Max(vehicle->GetBoundRadius(), 5.0f);
+		if (CCollision::DistToLine(&from, &to, &vehicle->GetPosition()) < radius)
+			return true;
+	}
+	return false;
+}
 
 
 #ifdef __PS3__
@@ -316,7 +330,7 @@ CProjectileInfo::Update()
 		const CVector &projectilePos = ms_apProjectile[i]->GetPosition();
 		CVector nextPos = CTimer::GetTimeStep() * ms_apProjectile[i]->m_vecMoveSpeed + projectilePos;
 
-		if ( nextPos.x <= PROJECTILE_BOUNDARY_MIN_X || nextPos.x >= PROJECTILE_BOUNDARY_MAX_X || nextPos.y <= PROJECTILE_BOUNDARY_MIN_Y || nextPos.y >= PROJECTILE_BOUNDARY_MAX_Y ) {
+		if ( nextPos.x <= WORLD_MIN_X || nextPos.x >= WORLD_MAX_X || nextPos.y <= WORLD_MIN_Y || nextPos.y >= WORLD_MAX_Y ) {
 			// Not RemoveProjectile, because we don't want no explosion
 			gaProjectileInfo[i].m_bInUse = false;
 			CWorld::Remove(ms_apProjectile[i]);
@@ -342,8 +356,11 @@ CProjectileInfo::Update()
 				CWorld::pIgnoreEntity = ms_apProjectile[i];
 				if (ms_apProjectile[i]->bHasCollided
 					|| !CWorld::GetIsLineOfSightClear(gaProjectileInfo[i].m_vecPos, pos, true, true, true, true, false, false)
-					|| CHeli::TestRocketCollision(&pos) || CPlane::TestRocketCollision(&pos)) {
+					|| CHeli::TestRocketCollision(&pos) || CPlane::TestRocketCollision(&pos)
+					|| TestRealHeliRocketCollision(gaProjectileInfo[i].m_vecPos, pos, gaProjectileInfo[i].m_pSource)) {
 					RemoveProjectile(&gaProjectileInfo[i], ms_apProjectile[i]);
+					CWorld::pIgnoreEntity = nil;
+					continue;
 				}
 				CWorld::pIgnoreEntity = nil;
 				ms_apProjectile[i]->m_vecMoveSpeed *= 1.07f;

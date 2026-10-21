@@ -20,6 +20,7 @@
 #include "Weather.h"
 #include "DMAudio.h"
 #include "GenericGameStorage.h"
+#include "FinalMissionMusic.h"
 
 #if !defined FIX_BUGS && (defined RADIO_SCROLL_TO_PREV_STATION || defined RADIO_OFF_TEXT)
 static_assert(false, "R*'s radio implementation is quite buggy, RADIO_SCROLL_TO_PREV_STATION and RADIO_OFF_TEXT won't work without FIX_BUGS");
@@ -31,6 +32,9 @@ int32 gRetuneCounter;
 bool8 g_bAnnouncementReadPosAlready;
 uint8 RadioStaticCounter = 5;
 uint32 RadioStaticTimer;
+#ifdef _3DS
+static bool8 gGameStreamPausedForMenu3DS;
+#endif
 
 CVector vecRiotPosition(300.7f, -322.0f, 12.0f);
 
@@ -125,6 +129,20 @@ cMusicManager::ResetMusicAfterReload()
 }
 
 void
+cMusicManager::ResetRadioAfterMissionPassed()
+{
+	/* Leaving and re-entering the car fixes LCS's leaked post-mission radio
+	 * input state.  Perform the same game-mode edge without stopping the current
+	 * station: the following frame treats the occupied car as newly radio-ready. */
+	gNumRetunePresses = 0;
+	gRetuneCounter = 0;
+	m_bSetNextStation = FALSE;
+	m_bRadioSetByScript = FALSE;
+	m_bGameplayAllowsRadio = FALSE;
+	m_bRadioStreamReady = FALSE;
+}
+
+void
 cMusicManager::SetStartingTrackPositions(bool8 isNewGameTimer)
 {
 	int pos;
@@ -178,6 +196,9 @@ bool8
 cMusicManager::Initialise()
 {
 	if (!IsInitialised()) {
+#ifdef _3DS
+		gGameStreamPausedForMenu3DS = FALSE;
+#endif
 		m_bIsInitialised = TRUE;
 		SetStartingTrackPositions(FALSE);
 		m_bResetTimers = FALSE;
@@ -210,6 +231,18 @@ cMusicManager::Initialise()
 	}
 	return m_bIsInitialised;
 }
+
+#ifdef _3DS
+void
+Set3DSGameStreamPausedForMenu(bool8 paused)
+{
+	/* This flag is owned by the music manager rather than the frontend so every
+	 * service pass sees the pause before it can interpret the stopped OpenAL
+	 * source as EOF and rebuild the radio from the beginning. */
+	gGameStreamPausedForMenu3DS = paused;
+	SampleManager.PauseStream(paused);
+}
+#endif
 
 void
 cMusicManager::Terminate()
@@ -311,11 +344,21 @@ cMusicManager::ChangeMusicMode(uint8 mode)
 	switch (mode)
 	{
 	case MUSICMODE_FRONTEND:
+		/* Preserve the live radio cursor before the frontend transition can
+		 * clear its bookkeeping.  The 3DS pause menu is visible immediately,
+		 * so there is no longer a long texture-loading interval in which the
+		 * normal mode-change service is guaranteed to save this position. */
+		if (SampleManager.IsStreamPlaying() && m_nPlayingTrack < NUM_RADIOS) {
+			m_aTracks[m_nPlayingTrack].m_nPosition = SampleManager.GetStreamedFilePosition();
+			m_aTracks[m_nPlayingTrack].m_nLastPosCheckTimer = CTimer::GetTimeInMillisecondsPauseMode();
+		}
 		m_nUpcomingMusicMode = MUSICMODE_FRONTEND;
 
 #ifdef PAUSE_RADIO_IN_FRONTEND
 		// rewind those streams we weren't listening right now
 		for( uint32 i = STREAMED_SOUND_RADIO_HEAD; i < STREAMED_SOUND_CUTSCENE_BIKER; i++ ) {
+			if (i == m_nPlayingTrack)
+				continue;
 			m_aTracks[i].m_nPosition = GetTrackStartPos(i);
 			m_aTracks[i].m_nLastPosCheckTimer = CTimer::GetTimeInMillisecondsPauseMode();
 		}
@@ -370,6 +413,16 @@ cMusicManager::Service()
 	static bool8 bRadioStatsRecorded = FALSE;
 
 	if (!m_bIsInitialised || m_bDisabled) return;
+
+#ifdef _3DS
+	/* Reassert the transport pause on every service pass.  Initialise() services
+	 * audio once before CTimer's user-pause flag is set, so checking only the
+	 * timer leaves a window in which ServiceGameMode restarts the station. */
+	if (gGameStreamPausedForMenu3DS) {
+		SampleManager.PauseStream(TRUE);
+		return;
+	}
+#endif
 
 	if (!m_bMusicModeChangeStarted)
 		m_nMusicModeToBeSet = m_nUpcomingMusicMode;
@@ -477,9 +530,17 @@ cMusicManager::ServiceFrontEndMode()
 				if (m_nNextTrack != NO_TRACK) {
 					SampleManager.SetStreamedFileLoopFlag(m_nNextLoopFlag);
 					SampleManager.StartStreamedFile(m_nNextTrack, trackStartPos);
-					m_nVolumeLatency = 3;
-					m_nCurrentVolume = 0;
-					m_nMaxVolume = 100;
+					if (m_nNextTrack == STREAMED_SOUND_MISSION_COMPLETED) {
+						/* This short confirmation sting was spending most of its
+						 * duration inside the normal slow frontend fade. */
+						m_nVolumeLatency = 0;
+						m_nCurrentVolume = MAX_VOLUME;
+						m_nMaxVolume = MAX_VOLUME;
+					} else {
+						m_nVolumeLatency = 3;
+						m_nCurrentVolume = 0;
+						m_nMaxVolume = 100;
+					}
 					SampleManager.SetStreamedVolumeAndPan(m_nCurrentVolume, 63, FALSE);
 					if (m_nNextTrack < STREAMED_SOUND_CITY_AMBIENT)
 						m_nLastTrackServiceTime = CTimer::GetTimeInMillisecondsPauseMode();
@@ -504,6 +565,20 @@ cMusicManager::ServiceGameMode()
 {
 	CPed *ped = FindPlayerPed();
 	CVehicle *vehicle = AudioManager.FindVehicleOfPlayer();
+	if (FinalMissionMusic::IsRadioLocked()) {
+		/* SALH5 owns the music mix. Close the stock stream and discard retune
+		 * state without changing the vehicle's saved station, so normal radio
+		 * resumes only after the mission releases the lock. */
+		SampleManager.StopStreamedFile();
+		m_nPlayingTrack = NO_TRACK;
+		m_nFrontendTrack = NO_TRACK;
+		m_bGameplayAllowsRadio = FALSE;
+		m_bRadioStreamReady = FALSE;
+		m_bSetNextStation = FALSE;
+		gNumRetunePresses = 0;
+		gRetuneCounter = 0;
+		return;
+	}
 	m_bRadioStreamReady = m_bGameplayAllowsRadio;
 	m_bGameplayAllowsRadio = FALSE;
 
@@ -534,24 +609,6 @@ cMusicManager::ServiceGameMode()
 		m_bSetNextStation = FALSE;
 	} else if (ped) {
 		if(!ped->DyingOrDead() && vehicle) {
-#ifdef GTA_PC
-			if (SampleManager.IsMP3RadioChannelAvailable()
-				&& vehicle->m_nRadioStation < USERTRACK
-				&& ControlsManager.GetIsKeyboardKeyJustDown(rsF9))
-			{
-				if (!UsesPoliceRadio(vehicle) && !UsesTaxiRadio(vehicle)) {
-					gNumRetunePresses = 0;
-					gRetuneCounter = 20;
-					RadioStaticCounter = 0;
-					if (vehicle->m_nRadioStation < USERTRACK)
-					{
-						do
-							++gNumRetunePresses;
-						while (gNumRetunePresses + vehicle->m_nRadioStation < USERTRACK);
-					}
-				}
-			}
-#endif
 			if (CPad::GetPad(0)->ChangeStationJustDown())
 			{
 				if (!UsesPoliceRadio(vehicle) && !UsesTaxiRadio(vehicle)) {
@@ -572,9 +629,8 @@ cMusicManager::ServiceGameMode()
 						gRetuneCounter = 20;
 						RadioStaticCounter = 0;
 						int track = gNumRetunePresses + vehicle->m_nRadioStation;
-						while(track < 0) track += NUM_RADIOS + 1;
-						while(track >= NUM_RADIOS + 1) track -= NUM_RADIOS + 1;
-						if(!DMAudio.IsMP3RadioChannelAvailable() && track == USERTRACK) gNumRetunePresses--;
+						while(track < 0) track += RADIO_OFF + 1;
+						while(track >= RADIO_OFF + 1) track -= RADIO_OFF + 1;
 					}
 				}
 			}
@@ -670,16 +726,10 @@ cMusicManager::ServiceGameMode()
 			{
 				int32 station = gNumRetunePresses + vehicle->m_nRadioStation;
 #ifdef RADIO_SCROLL_TO_PREV_STATION
-				while (station < 0) station += NUM_RADIOS + 1;
+				while (station < 0) station += RADIO_OFF + 1;
 #endif
-				while (station >= NUM_RADIOS + 1) station -= NUM_RADIOS + 1;
+				while (station >= RADIO_OFF + 1) station -= RADIO_OFF + 1;
 
-				// Scrolling back won't hit here, so increasing isn't problem
-				if (!DMAudio.IsMP3RadioChannelAvailable() && station == USERTRACK)
-				{
-					++gNumRetunePresses;
-					station = RADIO_OFF;
-				}
 				if (station == RADIO_OFF)
 				{
 					if (gRetuneCounter == 19) // One less then what switching radio sets, so runs right after turning off radio
@@ -926,6 +976,27 @@ cMusicManager::ServiceTrack(CVehicle *veh, CPed *ped)
 	uint8 volume;
 	if (!m_bTrackChangeStarted)
 		m_nNextTrack = m_nFrontendTrack;
+	/* Slot 10 is the legacy MP3/HEAD stream, but the LCS tuner uses the same
+	 * numeric value for RADIO_OFF.  Intercept only a vehicle that is actually
+	 * tuned off; keep the public tuning value intact so retune timing and static
+	 * continue to advance normally. */
+	if (veh != nil && veh->m_nRadioStation == RADIO_OFF && m_nNextTrack == RADIO_OFF) {
+		if (SampleManager.IsStreamPlaying()) {
+			if (m_nPlayingTrack != NO_TRACK) {
+				m_aTracks[m_nPlayingTrack].m_nPosition = SampleManager.GetStreamedFilePosition();
+				m_aTracks[m_nPlayingTrack].m_nLastPosCheckTimer = CTimer::GetTimeInMillisecondsPauseMode();
+				RecordRadioStats();
+			}
+			SampleManager.SetStreamedVolumeAndPan(0, 63, FALSE);
+			SampleManager.StopStreamedFile();
+		}
+		m_nPlayingTrack = NO_TRACK;
+		m_bTrackChangeStarted = FALSE;
+		m_bVerifyNextTrackStartedToPlay = FALSE;
+		bRadioStatsRecorded = FALSE;
+		bRadioStatsRecorded2 = FALSE;
+		return;
+	}
 	if (gRetuneCounter != 0 || m_bSetNextStation) {
 		if (SampleManager.IsStreamPlaying()) {
 			if (m_nPlayingTrack != NO_TRACK && !bRadioStatsRecorded) {
@@ -1149,17 +1220,19 @@ cMusicManager::GetNextCarTuning()
 #ifdef RADIO_SCROLL_TO_PREV_STATION
 		// m_nRadioStation is unsigned, so...
 		int station = veh->m_nRadioStation + gNumRetunePresses;
-		while(station < 0) station += NUM_RADIOS + 1;
-		while(station >= NUM_RADIOS + 1) station -= NUM_RADIOS + 1;
+		while(station < 0) station += RADIO_OFF + 1;
+		while(station >= RADIO_OFF + 1) station -= RADIO_OFF + 1;
 		veh->m_nRadioStation = station;
 #else
 		veh->m_nRadioStation += gNumRetunePresses;
-		while(veh->m_nRadioStation >= NUM_RADIOS + 1)
-			veh->m_nRadioStation -= NUM_RADIOS + 1;
+		while(veh->m_nRadioStation >= RADIO_OFF + 1)
+			veh->m_nRadioStation -= RADIO_OFF + 1;
 #endif
-		DMAudio.IsMP3RadioChannelAvailable(); // woof, just call and do nothing =P they manipulate gNumRetunePresses on DisplayRadioStationName in this case
 		gNumRetunePresses = 0;
 	}
+	/* RADIO_OFF is a tuning/UI value.  Its numeric value happens to equal the
+	 * old MP3-player stream slot, so passing it to ServiceTrack starts that file
+	 * from the beginning instead of turning the radio off. */
 	return veh->m_nRadioStation;
 }
 
@@ -1170,8 +1243,6 @@ cMusicManager::GetCarTuning()
 	if (veh == nil) return STREAMED_SOUND_CITY_AMBIENT;
 	if (UsesPoliceRadio(veh)) return STREAMED_SOUND_RADIO_POLICE;
 	if (UsesTaxiRadio(veh)) return STREAMED_SOUND_RADIO_TAXI;
-	if (veh->m_nRadioStation == USERTRACK && !SampleManager.IsMP3RadioChannelAvailable())
-		veh->m_nRadioStation = AudioManager.m_anRandomTable[2] % USERTRACK;
 	return veh->m_nRadioStation;
 }
 
@@ -1272,9 +1343,25 @@ cMusicManager::SetStripClubTrackPos(uint8 scriptObject)
 void
 cMusicManager::DisplayRadioStationName()
 {
+	static bool wasFinaleRadio = false;
+	if (FinalMissionMusic::IsRadioLocked()) {
+		wasFinaleRadio = true;
+		FinalMissionMusic::DisplayTrackName();
+		return;
+	}
 	uint8 gStreamedSound;
 	static wchar *pCurrentStation = nil;
 	static uint8 cDisplay = 0;
+#ifdef _3DS
+	static uint32 displayStarted = 0;
+#endif
+	if (wasFinaleRadio) {
+		// OFF (or mission end) restores the normal station title, even if
+		// the car is still tuned to the same station as before the finale.
+		pCurrentStation = nil;
+		cDisplay = 0;
+		wasFinaleRadio = false;
+	}
 
 	if(!CTimer::GetIsPaused() && !TheCamera.m_WideScreenOn && PlayerInCar() &&
 	   !CReplay::IsPlayingBack()) {
@@ -1295,13 +1382,10 @@ cMusicManager::DisplayRadioStationName()
 			{
 				track = gNumRetunePresses + gStreamedSound;
 #ifdef RADIO_SCROLL_TO_PREV_STATION
-				while (track < 0) track += NUM_RADIOS + 1;
+				while (track < 0) track += RADIO_OFF + 1;
 #endif
-				while (track >= NUM_RADIOS + 1) track -= NUM_RADIOS + 1;
+				while (track >= RADIO_OFF + 1) track -= RADIO_OFF + 1;
 
-				// On scrolling back we handle this condition on key press. No need to change this.
-				if (!DMAudio.IsMP3RadioChannelAvailable() && track == USERTRACK)
-					gNumRetunePresses++;
 			}
 			else
 #ifdef RADIO_OFF_TEXT
@@ -1320,24 +1404,32 @@ cMusicManager::DisplayRadioStationName()
 			case RADIO_ESPANTOSO: string = TheText.Get("FEA_FM6"); break;
 			case EMOTION: string = TheText.Get("FEA_FM7"); break;
 			case WAVE: string = TheText.Get("FEA_FM8"); break;
-			case 9: string = TheText.Get("FEA_FM9"); break;
-			case 10:
-				if (!SampleManager.IsMP3RadioChannelAvailable())
-					return;
-				string = TheText.Get("FEA_MP3"); break;
+			case LCFR: string = TheText.Get("FEA_FM9"); break;
+			case RADIO_OFF: string = TheText.Get("FEA_NON"); break;
 			default: string = TheText.Get("FEA_NON"); break;
 			};
 
 			if (pCurrentStation != string) {
 				pCurrentStation = string;
 				cDisplay = 60;
+#ifdef _3DS
+			displayStarted = CTimer::GetTimeInMilliseconds();
+#endif
 			}
 			else {
 				if (cDisplay == 0) return;
+#ifdef _3DS
+			// Expire by game time, including skipped presentation frames.
+			if (uint32(CTimer::GetTimeInMilliseconds() - displayStarted) >= 2000) {
+				cDisplay = 0;
+				return;
+			}
+#else
 #ifdef FIX_BUGS
 				cDisplay -= CTimer::GetLogicalFramesPassed();
 #else
 				cDisplay--;
+#endif
 #endif
 			}
 
@@ -1401,7 +1493,7 @@ cMusicManager::ServiceAmbience()
 bool8
 cMusicManager::ChangeRadioChannel()
 {
-	return TRUE;
+	return !FinalMissionMusic::IsRadioLocked();
 }
 
 // these two are empty

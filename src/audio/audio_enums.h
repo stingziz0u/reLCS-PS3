@@ -11,7 +11,10 @@ enum eRadioStation
 	RADIO_ESPANTOSO,
 	EMOTION,
 	WAVE,
-	USERTRACK,
+	LCFR,
+#ifdef __PS3__
+	USERTRACK = LCFR,	// VC's name for slot 9, still used by the PS3 frontend code
+#endif
 	NUM_RADIOS = 11,
 	POLICE_RADIO = 11,
 	RADIO_OFF = 10,

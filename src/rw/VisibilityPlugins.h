@@ -48,12 +48,13 @@ public:
 
 	static void SetRenderWareCamera(RwCamera *camera);
 	static void SetupVehicleVariables(RpClump *vehicle);
+	static bool IsVehicleHighDetail(RpClump *vehicle, bool bigVehicle);
 
 	static RpAtomic *RenderWheelAtomicCB(RpAtomic *atomic);
 	static RpAtomic *RenderObjNormalAtomic(RpAtomic *atomic);
 	static RpAtomic *RenderAlphaAtomic(RpAtomic *atomic, int alpha);
 //	static RpAtomic *RenderWeaponCB(RpAtomic *atomic);
-	static RpAtomic *RenderFadingAtomic(RpAtomic *atm, float dist);
+	static RpAtomic *RenderFadingAtomic(RpAtomic *atm, float dist, float lodScale);
 
 	static RpAtomic *RenderVehicleHiDetailCB(RpAtomic *atomic);
 	static RpAtomic *RenderVehicleHiDetailAlphaCB(RpAtomic *atomic);

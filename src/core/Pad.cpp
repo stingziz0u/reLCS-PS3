@@ -1,5 +1,9 @@
 #define WITHDINPUT
 #include "common.h"
+
+// the 3DS port's upside-down camera cheat (Camera.cpp reads it; its cheat
+// isn't in this port's pad code): always off
+bool gLCSUpsideDownCheat;
 #include "crossplatform.h"
 #include "platform.h"
 #ifdef XINPUT
