@@ -15,6 +15,7 @@
 #include "Wanted.h"
 #include "World.h"
 #include "MemoryHeap.h"
+#include "main.h"	// work_buff
 #include "SaveBuf.h"
 
 CCPtrNodePool *CPools::ms_pPtrNodePool;
@@ -148,14 +149,19 @@ INITSAVEBUF
 		 * bytes here consumed the following model id and first slot byte too,
 		 * shifting every vehicle record by three bytes.  MASTER builds then ran
 		 * past the disabled assertion with an uninitialised vehicle pointer. */
-		uint8 type;
+		// reLCS-PS3: "native uint8" is the 3DS compiler's: its enums take the
+		// fewest bytes they fit in. On PS3 an enum is 4 bytes, so the type is
+		// read as what was written (sizeof(eVehicleType)): with a uint8 the
+		// first byte of a big-endian 4-byte 0..2 is always 0 ("invalid type"),
+		// and every saved vehicle was dropped.
+		eVehicleType type;
 		int16 model;
 		int32 slot;
 
 		ReadSaveBuf(&type, buf);
 		if (type != VEHICLE_TYPE_BOAT && type != VEHICLE_TYPE_CAR &&
 		    type != VEHICLE_TYPE_BIKE) {
-			debug("Invalid saved vehicle type %u\n", type);
+			debug("Invalid saved vehicle type %u\n", (uint32)type);
 			return;
 		}
 		ReadSaveBuf(&model, buf);
@@ -241,6 +247,14 @@ INITSAVEBUF
 		(pVehicle->GetAddressOfEntityProperties())[0] = (pBufferVehicle->GetAddressOfEntityProperties())[0];
 		(pVehicle->GetAddressOfEntityProperties())[1] = (pBufferVehicle->GetAddressOfEntityProperties())[1];
 		pVehicle->AutoPilot = pBufferVehicle->AutoPilot;
+#ifdef __PS3__
+		// pointers of the game that saved it (path nodes, its target car): in
+		// another build or after another boot they point anywhere
+		for (int n = 0; n < NUM_PATH_NODES_IN_AUTOPILOT; n++)
+			pVehicle->AutoPilot.m_aPathFindNodesInfo[n] = nil;
+		pVehicle->AutoPilot.m_nPathFindNodesCount = 0;
+		pVehicle->AutoPilot.m_pTargetCar = nil;
+#endif
 		CCarCtrl::UpdateCarCount(pVehicle, false);
 		CWorld::Add(pVehicle);
 		delete[] vbuf;
@@ -249,6 +263,24 @@ INITSAVEBUF
 VALIDATESAVEBUF(size)
 }
 
+#ifdef __PS3__
+// The save is built in work_buff (100 KB) without a bound. A PS3 vehicle is
+// about 2 KB (the 3DS port's, with 4-byte pointers, much less): past ~50
+// unoccupied mission vehicles the block would run over the memory after
+// work_buff. The ones past the budget are left out of the save (logged).
+static bool
+PS3_VehicleFitsSave(CVehicle *pVehicle, uint32 &budget)
+{
+	uint32 need = sizeof(eVehicleType) + sizeof(int16) + sizeof(int32) +
+		(pVehicle->IsBoat() ? CBoat::nSaveStructSize : pVehicle->IsBike() ? CBike::nSaveStructSize : CAutomobile::nSaveStructSize);
+	if (need > budget)
+		return false;
+	budget -= need;
+	return true;
+}
+#define PS3_VEHICLE_SAVE_BUDGET ((uint32)sizeof(work_buff) - 64)
+#endif
+
 void CPools::SaveVehiclePool(uint8* buf, uint32* size)
 {
 INITSAVEBUF
@@ -256,6 +288,10 @@ INITSAVEBUF
 	int nNumBoats = 0;
 	int nNumBikes = 0;
 	int nPoolSize = GetVehiclePool()->GetSize();
+#ifdef __PS3__
+	uint32 budget = PS3_VEHICLE_SAVE_BUDGET;
+	int nLeftOut = 0;
+#endif
 	for (int i = 0; i < nPoolSize; i++) {
 		CVehicle* pVehicle = GetVehiclePool()->GetSlot(i);
 		if (!pVehicle)
@@ -280,6 +316,13 @@ INITSAVEBUF
 				++nNumBikes;
 #else
 		if (!pVehicle->pDriver && !bHasPassenger) {
+#ifdef __PS3__
+			if ((pVehicle->IsCar() || pVehicle->IsBoat() || pVehicle->IsBike()) &&
+			    pVehicle->VehicleCreatedBy == MISSION_VEHICLE && !PS3_VehicleFitsSave(pVehicle, budget)) {
+				nLeftOut++;
+				continue;
+			}
+#endif
 			if (pVehicle->IsCar() && pVehicle->VehicleCreatedBy == MISSION_VEHICLE)
 				++nNumCars;
 			if (pVehicle->IsBoat() && pVehicle->VehicleCreatedBy == MISSION_VEHICLE)
@@ -295,6 +338,11 @@ INITSAVEBUF
 	WriteSaveBuf(buf, nNumCars);
 	WriteSaveBuf(buf, nNumBoats);
 	WriteSaveBuf(buf, nNumBikes);
+#ifdef __PS3__
+	if (nLeftOut)
+		debug("PS3: %d mission vehicles left out of the save (no room)\n", nLeftOut);
+	budget = PS3_VEHICLE_SAVE_BUDGET;	// the same ones as above
+#endif
 	for (int i = 0; i < nPoolSize; i++) {
 		CVehicle* pVehicle = GetVehiclePool()->GetSlot(i);
 		if (!pVehicle)
@@ -311,6 +359,11 @@ INITSAVEBUF
 		if ((!pVehicle->pDriver && !bHasPassenger) || bForceSaving) {
 #else
 		if (!pVehicle->pDriver && !bHasPassenger) {
+#endif
+#ifdef __PS3__
+			if ((pVehicle->IsCar() || pVehicle->IsBoat() || pVehicle->IsBike()) &&
+			    pVehicle->VehicleCreatedBy == MISSION_VEHICLE && !PS3_VehicleFitsSave(pVehicle, budget))
+				continue;
 #endif
 #ifdef COMPATIBLE_SAVES
 #ifdef MISSION_REPLAY

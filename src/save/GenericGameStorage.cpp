@@ -548,7 +548,17 @@ GenericLoad()
 	if(has3DSPlayerPool) {
 		LoadSaveDataBlock();
 		ReadDataFromBlock("Loading PedPool \n", CPools::LoadPedPool);
-	} else {
+	}
+#ifdef __PS3__
+	// a ped pool without Toni (saved in a vehicle, or his model didn't load):
+	// he is made here as for the saves without one, not left nil (the first
+	// frame after the load went back to the XMB)
+	if(!has3DSPlayerPool || CWorld::Players[0].m_pPed == nil) {
+		if(has3DSPlayerPool)
+			debug("PS3: the save's ped pool had no player, making him\n");
+#else
+	else {
+#endif
 		/* Legacy reStories saves omitted the ped block entirely. Recreate Tony
 		 * near the stored camera so their restored scripts have a valid player;
 		 * native LCS5 saves restore the complete player instead. */

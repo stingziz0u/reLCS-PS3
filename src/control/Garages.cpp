@@ -2826,6 +2826,14 @@ INITSAVEBUF
 		aGarages[i].m_pDoor1 = nil;
 		aGarages[i].m_pDoor2 = nil;
 		aGarages[i].m_pTarget = nil;
+#ifndef COMPATIBLE_SAVES
+		// read whole from the save (WriteSaveBuf(buf, aGarages[i])): the
+		// saving game's pointers, stale here
+		aGarages[i].m_pSSTargetCar = nil;
+#ifdef GTA_NETWORK
+		aGarages[i].m_pSSVehicle = nil;
+#endif
+#endif
 		aGarages[i].m_bRecreateDoorOnNextRefresh = true;
 		aGarages[i].RefreshDoorPointers(true);
 		if (aGarages[i].m_eGarageType == GARAGE_CRUSHER)
