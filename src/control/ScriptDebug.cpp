@@ -1957,25 +1957,93 @@ void CRunningScript::LogAfterProcessingCommand(int32 command)
 #endif // USE_ADVANCED_SCRIPT_DEBUG_OUTPUT
 
 #ifdef MISSION_SWITCHER
-void
-CTheScripts::SwitchToMission(int32 mission)
+#ifdef __PS3__
+#include "World.h"
+#include "PlayerInfo.h"
+#include "Remote.h"
+#include "Pad.h"
+#include "Camera.h"
+#include "CutsceneMgr.h"
+#include "ps3_platform.h"
+#endif
+
+// a script running mission code (loaded at MainScriptSize), or called from it
+static bool
+InMissionArea(CRunningScript *pScript)
 {
-	for (CRunningScript* pScript = CTheScripts::pActiveScripts; pScript != nil; pScript = pScript->GetNext()) {
-		if (!pScript->m_bIsMissionScript || !pScript->m_bDeatharrestEnabled) {
+	if (pScript->m_nIp >= CTheScripts::MainScriptSize)
+		return true;
+	for (int i = 0; i < pScript->m_nStackPointer; i++)
+		if (pScript->m_anStack[i] >= CTheScripts::MainScriptSize)
+			return true;
+	return false;
+}
+
+// the running mission fails (its death/arrest handler, as the original
+// switcher), then whatever is left in the mission area is stopped and its
+// cleanup done (reVC-PS3: a handler that never ends, a script started by
+// the mission, a stale stack that would run main.scm from its start)
+static void
+KillMissionScripts(void)
+{
+	CRunningScript *next;
+	for (CRunningScript *pScript = CTheScripts::pActiveScripts; pScript != nil; pScript = next) {
+		next = pScript->GetNext();
+		if (!pScript->m_bIsMissionScript || !pScript->m_bDeatharrestEnabled || !InMissionArea(pScript))
 			continue;
-		}
+		if (pScript->m_nStackPointer == 0)
+			continue;	// no handler to return to: stopped below
 		while (pScript->m_nStackPointer > 0)
 			--pScript->m_nStackPointer;
-
 		pScript->m_nIp = pScript->m_anStack[pScript->m_nStackPointer];
 		*(int32*)&CTheScripts::ScriptSpace[CTheScripts::OnAMissionFlag] = 0;
 		pScript->m_nWakeTime = 0;
 		pScript->m_bDeatharrestExecuted = true;
-
-		while (!pScript->ProcessOneCommand());
-
+		for (int n = 0; n < 100000 && !pScript->ProcessOneCommand(); n++);
 		CMessages::ClearMessages();
 	}
+
+	bool killed = false;
+	for (CRunningScript *pScript = CTheScripts::pActiveScripts; pScript != nil; pScript = next) {
+		next = pScript->GetNext();
+		if (!InMissionArea(pScript))
+			continue;
+#ifdef __PS3__
+		char name[9];
+		memcpy(name, pScript->m_abScriptName, 8);
+		name[8] = '\0';
+		PS3_Logf("[script] %s stopped (ip %u)", name, pScript->m_nIp);
+#endif
+		pScript->RemoveScriptFromList(&CTheScripts::pActiveScripts);
+		pScript->AddScriptToList(&CTheScripts::pIdleScripts);
+		pScript->m_bIsActive = false;
+		killed = true;
+	}
+	if (CWorld::Players[CWorld::PlayerInFocus].m_pRemoteVehicle)
+		CRemote::TakeRemoteControlledCarFromPlayer();	// an RC mission's toy
+	if (killed) {
+		CTheScripts::MissionCleanUp.Process();
+		*(int32*)&CTheScripts::ScriptSpace[CTheScripts::OnAMissionFlag] = 0;
+		CTheScripts::bAlreadyRunningAMissionScript = false;
+		CPad::GetPad(0)->SetEnablePlayerControls(0xFF);
+		CWorld::Players[CWorld::PlayerInFocus].MakePlayerSafe(false);
+		TheCamera.SetWideScreenOff();
+		CMessages::ClearMessages();
+	}
+	if (CCutsceneMgr::IsRunning() || CCutsceneMgr::IsCutsceneProcessing())
+		CCutsceneMgr::DeleteCutsceneData();
+}
+
+void
+CTheScripts::EndMissionScripts(void)
+{
+	KillMissionScripts();
+}
+
+void
+CTheScripts::SwitchToMission(int32 mission)
+{
+	KillMissionScripts();
 
 	if (CTheScripts::NumberOfExclusiveMissionScripts > 0 && mission <= UINT16_MAX - 2)
 		return;
@@ -1997,6 +2065,9 @@ CTheScripts::SwitchToMission(int32 mission)
 	CFileMgr::Read(gScriptsFile, (const char*)&CTheScripts::ScriptSpace[CTheScripts::MainScriptSize], size);
 	CRunningScript* pMissionScript = CTheScripts::StartNewScript(CTheScripts::MainScriptSize);
 	CTimer::Resume();
+#ifdef __PS3__
+	PS3_Logf("[script] mission %d started (offset %d, %d bytes)", mission, offset, size);
+#endif
 	pMissionScript->m_bIsMissionScript = true;
 	pMissionScript->m_bMissionFlag = true;
 	CTheScripts::bAlreadyRunningAMissionScript = true;

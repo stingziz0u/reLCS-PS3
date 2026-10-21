@@ -380,8 +380,7 @@ GenericSave(int file)
 	if (totalSize + 4 > SIZE_OF_ONE_GAME_IN_BYTES) {
 		debug("PS3: save blocks take %u bytes, more than the %u of a save\n", totalSize, SIZE_OF_ONE_GAME_IN_BYTES);
 		PcSaveHelper.nErrorCode = SAVESTATUS_ERR_SAVE_WRITE;
-		CloseFile(file);
-		return false;
+		return false;	// SaveSlot closes the file
 	}
 	debug("PS3: save blocks %u bytes of %u\n", totalSize, SIZE_OF_ONE_GAME_IN_BYTES);
 #endif
