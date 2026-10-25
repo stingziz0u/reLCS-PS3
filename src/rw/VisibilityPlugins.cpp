@@ -284,8 +284,10 @@ void
 CVisibilityPlugins::RenderAtomicList(CLinkList<AlphaObjectInfo> &list)
 {
 	CLink<AlphaObjectInfo> *node;
-	for(node = list.tail.prev; node != &list.head; node = node->prev)
+	for(node = list.tail.prev; node != &list.head; node = node->prev){
+		PS3_CRUMB("render: alpha atomic (sort key)", (int)node->item.sort);
 		RENDERCALLBACK(node->item.atomic);
+	}
 }
 
 void
@@ -312,6 +314,11 @@ CVisibilityPlugins::RenderFadingEntities(CLinkList<AlphaObjectInfo> &list)
 	CSimpleModelInfo *mi;
 	for(node = list.tail.prev; node != &list.head; node = node->prev){
 		CEntity *e = node->item.entity;
+#ifdef __PS3__
+		// patch 22: which one (RenderOneNonRoad says it again for the others)
+		PS3_renderEntity = e;
+		PS3_CRUMB("render fading: model|type<<16", e->GetModelIndex() | e->GetType()<<16);
+#endif
 		if(e->m_rwObject == nil)
 			continue;
 #ifdef _3DS

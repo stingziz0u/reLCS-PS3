@@ -1916,6 +1916,21 @@ PS3_DumpCurrentEntity(void)
 {
 	CEntity *e = PS3_curEntity;
 	char desc[48];
+	// patch 22: where the camera was, and what was being drawn (Renderer.cpp)
+	PS3_Logf("[crash] camera at %.1f %.1f %.1f looking %.2f %.2f %.2f; player at %.1f %.1f %.1f",
+	         TheCamera.GetPosition().x, TheCamera.GetPosition().y, TheCamera.GetPosition().z,
+	         TheCamera.GetForward().x, TheCamera.GetForward().y, TheCamera.GetForward().z,
+	         FindPlayerCoors().x, FindPlayerCoors().y, FindPlayerCoors().z);
+	if (PS3_renderEntity) {
+		CEntity *r = PS3_renderEntity;
+		PS3_DescribeEntityPtr(r, desc, sizeof(desc));
+		if (PS3_EntityLive(r))
+			PS3_Logf("[crash] drawing %p (%s), model %d (%s), type %d, rwObject %p, pos %.1f %.1f %.1f",
+			         r, desc, r->GetModelIndex(), CModelInfo::GetModelInfo(r->GetModelIndex())->GetModelName(),
+			         r->GetType(), (void*)r->m_rwObject, r->GetPosition().x, r->GetPosition().y, r->GetPosition().z);
+		else
+			PS3_Logf("[crash] drawing %p (%s)", r, desc);
+	}
 	if (e == nil)
 		return;
 	PS3_DescribeEntityPtr(e, desc, sizeof(desc));

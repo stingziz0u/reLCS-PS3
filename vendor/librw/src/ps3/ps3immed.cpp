@@ -19,6 +19,11 @@
 #ifdef RW_PS3_RSX
 #include "ps3rsx.h"
 
+// patch 22: a crumb per draw while RenderScene runs (common.h, ps3_log.cpp)
+extern "C" void PS3_Crumb(const char *tag, int val);
+extern "C" int PS3_crumbRender;
+#define RW_CRUMB(tag, val) do { if(PS3_crumbRender) PS3_Crumb(tag, val); } while(0)
+
 namespace rw {
 namespace ps3 {
 
@@ -75,6 +80,7 @@ im2DSetup(void *vertices, int32 numVertices)
 void
 im2DRenderPrimitive(PrimitiveType primType, void *vertices, int32 numVertices)
 {
+	RW_CRUMB("rw: Im2D draw, vertices", numVertices);
 	if(!im2DSetup(vertices, numVertices))
 		return;
 	if(!flushCache())
@@ -91,6 +97,7 @@ im2DRenderIndexedPrimitive(PrimitiveType primType,
 	void *vertices, int32 numVertices,
 	void *indices, int32 numIndices)
 {
+	RW_CRUMB("rw: Im2D indexed draw, indices", numIndices);
 	if(numIndices <= 0 || !im2DSetup(vertices, numVertices))
 		return;
 	uint32 ioff = ringWrite(indices, numIndices*2);
@@ -111,6 +118,7 @@ static bool im3DValid;
 void
 im3DTransform(void *vertices, int32 numVertices, Matrix *world, uint32 flags)
 {
+	RW_CRUMB("rw: Im3D vertices", numVertices);
 	if(world == nil)
 		setWorldIdentity();
 	else
@@ -135,6 +143,7 @@ im3DTransform(void *vertices, int32 numVertices, Matrix *world, uint32 flags)
 void
 im3DRenderPrimitive(PrimitiveType primType)
 {
+	RW_CRUMB("rw: Im3D draw", num3DVertices);
 	if(!im3DValid)
 		return;
 	setVertexProgram(VP_IM3D);
@@ -150,6 +159,7 @@ im3DRenderPrimitive(PrimitiveType primType)
 void
 im3DRenderIndexedPrimitive(PrimitiveType primType, void *indices, int32 numIndices)
 {
+	RW_CRUMB("rw: Im3D indexed draw, indices", numIndices);
 	if(!im3DValid || numIndices <= 0)
 		return;
 	uint32 ioff = ringWrite(indices, numIndices*2);

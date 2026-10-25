@@ -1705,20 +1705,28 @@ RenderScene(void)
 	}
 #endif
 	PUSH_RENDERGROUP("RenderScene");
+#ifdef __PS3__
+	PS3_crumbRender = 1;
+#endif
 	PS3_SCENE_STEP("clouds, horizon");
 	CClouds::Render();
+	PS3_CRUMB("scene: horizon", 0);
 	DoRWRenderHorizon();
 	PS3_SCENE_STEP("roads");
 	CRenderer::RenderRoads();
+	PS3_CRUMB("scene: CCoronas::RenderReflections", 0);
 	CCoronas::RenderReflections();
 	PS3_SCENE_STEP("everything bar roads");
 	CRenderer::RenderEverythingBarRoads();
 	RwRenderStateSet(rwRENDERSTATECULLMODE, (void*)rwCULLMODECULLNONE);
 	PS3_SCENE_STEP("water, boats");
 	CWaterLevel::RenderWater();
+	PS3_CRUMB("scene: CRenderer::RenderBoats", 0);
 	CRenderer::RenderBoats();
+	PS3_CRUMB("scene: CRenderer::RenderFadingInUnderwaterEntities", 0);
 	CRenderer::RenderFadingInUnderwaterEntities();
 	RwRenderStateSet(rwRENDERSTATECULLMODE, (void*)rwCULLMODECULLNONE);
+	PS3_CRUMB("scene: CWaterLevel::RenderTransparentWater", 0);
 	CWaterLevel::RenderTransparentWater();
 	PS3_SCENE_STEP("fading in");
 	CRenderer::RenderFadingInEntities();
@@ -1733,9 +1741,14 @@ RenderScene(void)
 #endif
 	PS3_SCENE_STEP("rain streaks");
 	CWeather::RenderRainStreaks();
+	PS3_CRUMB("scene: CCoronas::RenderSunReflection", 0);
 	CCoronas::RenderSunReflection();
 	POP_RENDERGROUP();
 	PS3_SCENE_STEP(nil);
+#ifdef __PS3__
+	PS3_crumbRender = 0;
+	PS3_renderEntity = nil;
+#endif
 }
 
 void

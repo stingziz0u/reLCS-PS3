@@ -3028,6 +3028,7 @@ CAutomobile::Render(void)
 		rotorAlpha = Min(rotorAlpha, 255);
 		int blurAlpha = Max(1.5f*m_aWheelSpeed[1]/0.22f - 0.4f, 0.0f)*150.0f;
 		blurAlpha = Min(blurAlpha, 150);
+		PS3_CRUMB("render heli: rotor alpha*1000 + blur alpha", rotorAlpha*1000 + blurAlpha);
 
 		// Top rotor
 		if(m_aCarNodes[CAR_BONNET]){

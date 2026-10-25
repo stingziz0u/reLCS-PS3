@@ -102,7 +102,17 @@ static inline unsigned long long PS3_Ticks(void) { unsigned long long t; __asm__
 #define PS3_PROF_WORLD	1
 #define PS3_PROF_SCENE	2
 #define PS3_GAME_STEP(tag) do { PS3_Crumb(tag, 0); PS3_ProfStep(PS3_PROF_GAME, tag); } while (0)
-#define PS3_SCENE_STEP(tag) PS3_ProfStep(PS3_PROF_SCENE, tag)
+// the scene steps also leave a crumb (patch 22: RenderScene had none, a crash
+// there said only "RenderScene 1")
+static inline const char *PS3_SceneTag(const char *tag) { return tag ? tag : "scene: done"; }
+#define PS3_SCENE_STEP(tag) do { PS3_Crumb(PS3_SceneTag(tag), 0); PS3_ProfStep(PS3_PROF_SCENE, tag); } while (0)
+// While RenderScene runs, librw's PS3 backend leaves a crumb per draw (atomic,
+// Im3D, Im2D): a crash in the drawing names the last one. Off elsewhere, so
+// the 2D and the effects don't push the useful crumbs out of the ring.
+extern "C" int PS3_crumbRender;	// ps3_log.cpp
+// the entity being drawn (Renderer.cpp), printed by the crash dump (Ped.cpp)
+class CEntity;
+extern CEntity *PS3_renderEntity;
 #define PS3_FX_STEP(tag) do { PS3_Crumb(tag, 0); PS3_ProfStep(PS3_PROF_SCENE, tag); } while (0)
 #else
 #define PS3_CRUMB(tag, val)

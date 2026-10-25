@@ -239,6 +239,8 @@ void (*PS3_crashDumpHook)(void);
 void (*PS3_hangDumpHook)(void);	// more for the [hang] dump (sampman_ps3.cpp: the audio threads)
 static volatile unsigned crumbHead;
 unsigned PS3_crumbFrame;
+// set while RenderScene runs: librw's PS3 backend leaves a crumb per draw (common.h)
+extern "C" { int PS3_crumbRender; }
 
 static char scriptName[9];
 static volatile int scriptCommand = -1;

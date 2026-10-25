@@ -25,6 +25,11 @@
 #include "ps3rsx.h"
 #endif
 
+// patch 22: a crumb per draw while RenderScene runs (common.h, ps3_log.cpp)
+extern "C" void PS3_Crumb(const char *tag, int val);
+extern "C" int PS3_crumbRender;
+#define RW_CRUMB(tag, val) do { if(PS3_crumbRender) PS3_Crumb(tag, val); } while(0)
+
 namespace rw {
 namespace ps3 {
 
@@ -203,6 +208,7 @@ render(rw::ObjPipeline *rwpipe, Atomic *atomic)
 {
 	ObjPipeline *pipe = (ObjPipeline*)rwpipe;
 	Geometry *geo = atomic->geometry;
+	RW_CRUMB("rw: atomic, vertices", geo ? geo->numVertices : -1);
 	pipe->instance(atomic);
 	InstanceDataHeader *header = (InstanceDataHeader*)geo->instData;
 	if(header == nil || header->platform != PLATFORM_PS3 || header->vb.ptr == nil || header->ib.ptr == nil)

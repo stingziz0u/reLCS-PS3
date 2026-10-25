@@ -1458,6 +1458,7 @@ CWaterLevel::RenderTransparentWater(void)
 
 		RwFrameTranslate(RpAtomicGetFrame(ms_pMaskAtomic), &pos, rwCOMBINEREPLACE);
 				
+		PS3_CRUMB("water: the mask atomic", 0);
 		RpAtomicRender(ms_pMaskAtomic);
 	}
 #else
@@ -1513,6 +1514,7 @@ CWaterLevel::RenderTransparentWater(void)
 
 void CWaterLevel::RenderOneFlatSmallWaterPoly(float fX, float fY, float fZ, RwRGBA const &color)
 {
+	PS3_CRUMB("water: RenderOneFlatSmallWaterPoly (x+4000)*10000 + y+4000", ((int)fX + 4000)*10000 + (int)fY + 4000);
 	if ( TempBufferIndicesStored >= TEMPBUFFERINDEXSIZE-6 || TempBufferVerticesStored >= TEMPBUFFERVERTSIZE-4 )
 		RenderAndEmptyRenderBuffer();
 	
@@ -1555,6 +1557,7 @@ void CWaterLevel::RenderOneFlatSmallWaterPoly(float fX, float fY, float fZ, RwRG
 void
 CWaterLevel::RenderOneFlatLargeWaterPoly(float fX, float fY, float fZ, RwRGBA const &color)
 {
+	PS3_CRUMB("water: RenderOneFlatLargeWaterPoly (x+4000)*10000 + y+4000", ((int)fX + 4000)*10000 + (int)fY + 4000);
 	if ( TempBufferIndicesStored >= TEMPBUFFERINDEXSIZE-6 || TempBufferVerticesStored >= TEMPBUFFERVERTSIZE-4 )
 		RenderAndEmptyRenderBuffer();
 	
@@ -1597,6 +1600,7 @@ CWaterLevel::RenderOneFlatLargeWaterPoly(float fX, float fY, float fZ, RwRGBA co
 void
 CWaterLevel::RenderOneFlatHugeWaterPoly(float fX, float fY, float fZ, RwRGBA const &color)
 {
+	PS3_CRUMB("water: RenderOneFlatHugeWaterPoly (x+4000)*10000 + y+4000", ((int)fX + 4000)*10000 + (int)fY + 4000);
 	if ( TempBufferIndicesStored >= TEMPBUFFERINDEXSIZE-6 || TempBufferVerticesStored >= TEMPBUFFERVERTSIZE-4 )
 		RenderAndEmptyRenderBuffer();
 	
@@ -1646,6 +1650,7 @@ CWaterLevel::RenderOneFlatHugeWaterPoly(float fX, float fY, float fZ, RwRGBA con
 void
 CWaterLevel::RenderOneFlatExtraHugeWaterPoly(float fX, float fY, float fZ, RwRGBA const &color)
 {
+	PS3_CRUMB("water: RenderOneFlatExtraHugeWaterPoly (x+4000)*10000 + y+4000", ((int)fX + 4000)*10000 + (int)fY + 4000);
 	if ( TempBufferIndicesStored >= TEMPBUFFERINDEXSIZE-6 || TempBufferVerticesStored >= TEMPBUFFERVERTSIZE-4 )
 		RenderAndEmptyRenderBuffer();
 	
@@ -1695,6 +1700,7 @@ CWaterLevel::RenderOneFlatExtraHugeWaterPoly(float fX, float fY, float fZ, RwRGB
 void
 CWaterLevel::RenderOneWavySector(float fX, float fY, float fZ, RwRGBA const &color, bool bDontRender)
 {
+	PS3_CRUMB("water: RenderOneWavySector (x+4000)*10000 + y+4000", ((int)fX + 4000)*10000 + (int)fY + 4000);
 	CVector vecSectorPos(fX + (SMALL_SECTOR_SIZE/2), fY + (SMALL_SECTOR_SIZE/2), fZ + 2.0f);
 	if ( COcclusion::IsAABoxOccluded(vecSectorPos, SMALL_SECTOR_SIZE, SMALL_SECTOR_SIZE, 4.0f) )
 		return;
@@ -1845,6 +1851,7 @@ CWaterLevel::RenderWavyMask(float fX, float fY, float fZ,
 		int32 nCamDirX, int32 nCamDirY, RwRGBA const&color)
 #endif
 {
+	PS3_CRUMB("water: RenderWavyMask (x+4000)*10000 + y+4000", ((int)fX + 4000)*10000 + (int)fY + 4000);
 return;	// LCS
 #ifndef PC_WATER
 	bool bRender = true;
@@ -2549,6 +2556,7 @@ CWaterLevel::PreCalcWavyMask(float fX, float fY, float fZ,
 void
 CWaterLevel::RenderBoatWakes(void)
 {
+	PS3_CRUMB("water: RenderBoatWakes", 0);
 	RwRenderStateSet(rwRENDERSTATETEXTURERASTER, (void *)gpWaterWakeRaster);
 #ifndef PC_WATER
 	RwRenderStateSet(rwRENDERSTATEFOGENABLE, (void *)TRUE);
@@ -2767,6 +2775,7 @@ CWaterLevel::RenderWakeSegment(CVector2D &vecA, CVector2D &vecB, CVector2D &vecC
 void
 CWaterLevel::RenderOneSlopedUnderWaterPoly(float fX, float fY, float fZ, RwRGBA const&color)
 {
+	PS3_CRUMB("water: RenderOneSlopedUnderWaterPoly (x+4000)*10000 + y+4000", ((int)fX + 4000)*10000 + (int)fY + 4000);
 	CVector2D camPos(TheCamera.GetPosition().x, TheCamera.GetPosition().y);
 	
 	float fDistA = (CVector2D(fX, fY) - camPos).Magnitude()                                       + -140.0f;
@@ -2847,6 +2856,7 @@ CWaterLevel::RenderOneFlatSmallWaterPolyBlended(float fX, float fY, float fZ, fl
 		RwRGBA const &color, RwRGBA const &colorTrans,
 		float fDrawDist)
 {
+	PS3_CRUMB("water: RenderOneFlatSmallWaterPolyBlended (x+4000)*10000 + y+4000", ((int)fX + 4000)*10000 + (int)fY + 4000);
 	if ( TempBufferIndicesStored >= TEMPBUFFERINDEXSIZE-6 || TempBufferVerticesStored >= TEMPBUFFERVERTSIZE-4 )
 		RenderAndEmptyRenderBuffer();
 	
@@ -2952,6 +2962,7 @@ CWaterLevel::CalcDistanceToWater(float fX, float fY)
 void
 CWaterLevel::RenderAndEmptyRenderBuffer()
 {
+	PS3_CRUMB("water: RenderAndEmptyRenderBuffer, vertices", TempBufferVerticesStored);
 	if ( TempBufferVerticesStored )
 	{
 		LittleTest();
@@ -3039,6 +3050,7 @@ CWaterLevel::GetWaterDepth(CVector const &vecPosn, float *pfDepth, float *pfLeve
 void
 CWaterLevel::RenderSeaBirds()
 {
+	PS3_CRUMB("water: RenderSeaBirds", 0);
 	CVector cur_pos = TheCamera.GetPosition();
 	
 	if ( !CCullZones::CamNoRain()

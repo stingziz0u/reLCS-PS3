@@ -141,9 +141,18 @@ CRenderer::PreRender(void)
 	CShadows::RenderExtraPlayerShadows();
 }
 
+#ifdef __PS3__
+// patch 22: the entity being drawn, for the crash dump (Ped.cpp); nil out of RenderScene
+CEntity *PS3_renderEntity;
+#define PS3_RENDER_ENTITY(tag, e) (PS3_renderEntity = (e), PS3_CRUMB(tag, (e)->GetModelIndex() | (e)->GetType()<<16))
+#else
+#define PS3_RENDER_ENTITY(tag, e)
+#endif
+
 void
 CRenderer::RenderOneRoad(CEntity *e)
 {
+	PS3_RENDER_ENTITY("render road: model|type<<16", e);
 #ifndef MASTER
 	if(gbDontRenderBuildings)
 		return;
@@ -168,6 +177,7 @@ CRenderer::RenderOneNonRoad(CEntity *e)
 	int i;
 	bool resetLights;
 
+	PS3_RENDER_ENTITY("render: model|type<<16", e);
 #ifndef MASTER
 	if(gbShowCollisionPolys || gbShowCollisionPolysReflections || gbShowCollisionPolysNoShadows){
 		if(!e->IsVehicle()){
@@ -224,6 +234,7 @@ CRenderer::RenderOneNonRoad(CEntity *e)
 		int vehalpha = CVisibilityPlugins::GetObjectDistanceAlpha(veh->m_rwObject);
 #endif
 		if(veh->pDriver && veh->pDriver->m_nPedState == PED_DRIVING){
+			PS3_CRUMB("render vehicle: driver model", veh->pDriver->GetModelIndex());
 #ifdef VIS_DISTANCE_ALPHA
 			int alpha = CVisibilityPlugins::GetObjectDistanceAlpha(veh->pDriver->m_rwObject);
 			CVisibilityPlugins::SetObjectDistanceAlpha(veh->pDriver->m_rwObject, vehalpha);
@@ -235,6 +246,7 @@ CRenderer::RenderOneNonRoad(CEntity *e)
 		}
 		for(i = 0; i < 8; i++)
 			if(veh->pPassengers[i] && veh->pPassengers[i]->m_nPedState == PED_DRIVING){
+				PS3_CRUMB("render vehicle: passenger", i);
 #ifdef VIS_DISTANCE_ALPHA
 				int alpha = CVisibilityPlugins::GetObjectDistanceAlpha(veh->pPassengers[i]->m_rwObject);
 				CVisibilityPlugins::SetObjectDistanceAlpha(veh->pPassengers[i]->m_rwObject, vehalpha);
@@ -245,12 +257,14 @@ CRenderer::RenderOneNonRoad(CEntity *e)
 #endif
 			}
 		SetCullMode(rwCULLMODECULLNONE);
+		PS3_CRUMB("render vehicle: the vehicle", e->GetModelIndex());
 	}
 	e->Render();
 
 	if(e->IsVehicle()){
 		// TODO(LCS): LCS does not use bImBeingRendered, keeping it for safety
 		e->bImBeingRendered = true;
+		PS3_CRUMB("render vehicle: alpha atomics", e->GetModelIndex());
 		CVisibilityPlugins::RenderAlphaAtomics();
 		e->bImBeingRendered = false;
 		SetCullMode(rwCULLMODECULLBACK);
@@ -441,9 +455,12 @@ CRenderer::RenderVehicles(void)
 			RenderOneNonRoad(e);
 		}
 	}
+	PS3_CRUMB("render vehicles: the alpha entity list", 0);
 	CVisibilityPlugins::RenderFadingEntities();
 
+	PS3_CRUMB("render vehicles: CFerry::RenderAllRemaning", 0);
 	CFerry::RenderAllRemaning();
+	PS3_CRUMB("render vehicles: CPlane::RenderAllRemaning", 0);
 	CPlane::RenderAllRemaning();
 	// TODO(LCS): gpGlobalEnvironmentMap = nil;
 	// TODO(LCS): CMattRenderer::Get().ResetRenderStates();
