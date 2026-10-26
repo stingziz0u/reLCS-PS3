@@ -768,14 +768,31 @@ void CHud::Draw()
 						0.75f, 0.53125f, 0.875f, 0.53125f,
 						0.75f, 0.796875f, 0.875f, 0.796875f);
 #else
+#ifdef __PS3__
+					/* res-PS3 patch 26: 456 - 23*i at y 28 are Vice City's PS2
+					 * numbers (640 wide), but DrawTimeAndCashNumbers works in PSP
+					 * units (480 wide): the stars landed between the clock and the
+					 * health bar, spread over the weapon icon. LCS draws them in a
+					 * row under the money, the rightmost one ending where the money
+					 * ends (the same glyph width and advance as the digits). */
+					const float digitW = FrontEndMenuManager.m_PrefsUseWideScreen ? 9.0f : 11.0f;
+					const float moneyX = FrontEndMenuManager.m_PrefsUseWideScreen ? 386.0f : 373.0f;
+					const float moneyRight = moneyX + 8.0f * (digitW - 2.0f) + digitW;
+					const float starW = digitW + 3.0f;
+					const float starX = moneyRight - starW - (starW + 1.0f) * i;
+					const float starY = 53.0f + 10.0f + 3.0f;
+#else
+					const float starX = 456.0f - 23.0f * i;
+					const float starY = 28.0f;
+#endif
 					if (playerPed->m_pWanted->GetWantedLevel() > i
 						&& (CTimer::GetTimeInMilliseconds() > playerPed->m_pWanted->m_nLastWantedLevelChange
 							+ 2000 || FRAMECOUNTER & 4)) {
 
-						DrawTimeAndCashNumbers(wantedStar, 456.0f - 23.0f * i, 28.0f, false);
+						DrawTimeAndCashNumbers(wantedStar, starX, starY, false);
 
 					} else if (playerPed->m_pWanted->m_nMinWantedLevel > i && FRAMECOUNTER & 4) {
-						DrawTimeAndCashNumbers(wantedStar, 456.0f - 23.0f * i, 28.0f, true);
+						DrawTimeAndCashNumbers(wantedStar, starX, starY, true);
 					}
 #endif
 				}

@@ -36,6 +36,41 @@ uint32 RadioStaticTimer;
 static bool8 gGameStreamPausedForMenu3DS;
 #endif
 
+#ifdef __PS3__
+// The MP3 player ("custom songs") as a station of the car radio (res-PS3
+// patch 26). LCS has ten stations (0-9) and its RADIO_OFF (10) is the same
+// number as the MP3 stream (STREAMED_SOUND_RADIO_MP3_PLAYER), so the tuner
+// went 0..9 -> off and never reached it. The car keeps PS3_RADIO_MP3 for it
+// instead (out of the stream and ambience numbers), and the dial goes
+// stations 0-9 -> MP3 player (when USRDIR/mp3 has files) -> off, as in VC.
+#define PS3_RADIO_MP3 200
+static int
+PS3_RadioDial(uint8 station)	// station -> dial position: 0-9, 10 MP3, 11 off
+{
+	if (station < LCFR + 1) return station;
+	if (station == PS3_RADIO_MP3) return 10;
+	return 11;
+}
+static uint8
+PS3_RadioStep(uint8 station, int presses)	// the station after some presses of the button
+{
+	bool mp3 = DMAudio.IsMP3RadioChannelAvailable();
+	int pos = PS3_RadioDial(station);
+	int n = 12;
+	if (!mp3 && pos == 10) pos = 11;
+	while (presses > 0) { pos = (pos + 1) % n; if (pos == 10 && !mp3) pos = 11; presses--; }
+	while (presses < 0) { pos = (pos + n - 1) % n; if (pos == 10 && !mp3) pos = 9; presses++; }
+	return pos < 10 ? pos : pos == 10 ? PS3_RADIO_MP3 : RADIO_OFF;
+}
+static uint32
+PS3_RadioTrack(uint8 station)	// station -> the stream it plays
+{
+	if (station == PS3_RADIO_MP3)
+		return DMAudio.IsMP3RadioChannelAvailable() ? STREAMED_SOUND_RADIO_MP3_PLAYER : RADIO_OFF;
+	return station;
+}
+#endif
+
 CVector vecRiotPosition(300.7f, -322.0f, 12.0f);
 
 uint32 NewGameRadioTimers[10] =
@@ -628,9 +663,11 @@ cMusicManager::ServiceGameMode()
 						gNumRetunePresses--;
 						gRetuneCounter = 20;
 						RadioStaticCounter = 0;
+#ifndef __PS3__
 						int track = gNumRetunePresses + vehicle->m_nRadioStation;
 						while(track < 0) track += RADIO_OFF + 1;
 						while(track >= RADIO_OFF + 1) track -= RADIO_OFF + 1;
+#endif
 					}
 				}
 			}
@@ -724,11 +761,15 @@ cMusicManager::ServiceGameMode()
 #endif
 			if (gRetuneCounter)
 			{
+#ifdef __PS3__
+				int32 station = PS3_RadioStep(vehicle->m_nRadioStation, gNumRetunePresses);
+#else
 				int32 station = gNumRetunePresses + vehicle->m_nRadioStation;
 #ifdef RADIO_SCROLL_TO_PREV_STATION
 				while (station < 0) station += RADIO_OFF + 1;
 #endif
 				while (station >= RADIO_OFF + 1) station -= RADIO_OFF + 1;
+#endif
 
 				if (station == RADIO_OFF)
 				{
@@ -1031,6 +1072,10 @@ cMusicManager::ServiceTrack(CVehicle *veh, CPed *ped)
 #ifdef FIX_BUGS
 						if (m_nPlayingTrack >= STREAMED_SOUND_CITY_AMBIENT && m_nPlayingTrack <= STREAMED_SOUND_AMBSIL_AMBIENT)
 							veh->m_nRadioStation = RADIO_OFF;
+#ifdef __PS3__
+						else if (m_nPlayingTrack == STREAMED_SOUND_RADIO_MP3_PLAYER)
+							veh->m_nRadioStation = PS3_RADIO_MP3;
+#endif
 						else if (m_nPlayingTrack < STREAMED_SOUND_CITY_AMBIENT)
 							veh->m_nRadioStation = m_nPlayingTrack;
 #else
@@ -1217,7 +1262,9 @@ cMusicManager::GetNextCarTuning()
 	if (UsesPoliceRadio(veh)) return STREAMED_SOUND_RADIO_POLICE;
 	if (UsesTaxiRadio(veh)) return STREAMED_SOUND_RADIO_TAXI;
 	if (gNumRetunePresses != 0) {
-#ifdef RADIO_SCROLL_TO_PREV_STATION
+#ifdef __PS3__
+		veh->m_nRadioStation = PS3_RadioStep(veh->m_nRadioStation, gNumRetunePresses);
+#elif defined RADIO_SCROLL_TO_PREV_STATION
 		// m_nRadioStation is unsigned, so...
 		int station = veh->m_nRadioStation + gNumRetunePresses;
 		while(station < 0) station += RADIO_OFF + 1;
@@ -1233,7 +1280,11 @@ cMusicManager::GetNextCarTuning()
 	/* RADIO_OFF is a tuning/UI value.  Its numeric value happens to equal the
 	 * old MP3-player stream slot, so passing it to ServiceTrack starts that file
 	 * from the beginning instead of turning the radio off. */
+#ifdef __PS3__
+	return PS3_RadioTrack(veh->m_nRadioStation);
+#else
 	return veh->m_nRadioStation;
+#endif
 }
 
 uint32
@@ -1243,7 +1294,11 @@ cMusicManager::GetCarTuning()
 	if (veh == nil) return STREAMED_SOUND_CITY_AMBIENT;
 	if (UsesPoliceRadio(veh)) return STREAMED_SOUND_RADIO_POLICE;
 	if (UsesTaxiRadio(veh)) return STREAMED_SOUND_RADIO_TAXI;
+#ifdef __PS3__
+	return PS3_RadioTrack(veh->m_nRadioStation);
+#else
 	return veh->m_nRadioStation;
+#endif
 }
 
 float*
@@ -1378,6 +1433,18 @@ cMusicManager::DisplayRadioStationName()
 			gStreamedSound = vehicle->m_nRadioStation;
 			if (gStreamedSound >= STREAMED_SOUND_CITY_AMBIENT && gStreamedSound <= STREAMED_SOUND_AMBSIL_AMBIENT)
 				gStreamedSound = RADIO_OFF;
+#ifdef __PS3__
+			bool showMP3 = false;
+			if (gNumRetunePresses != 0) {
+				uint8 st = PS3_RadioStep(vehicle->m_nRadioStation, gNumRetunePresses);
+				showMP3 = st == PS3_RADIO_MP3;
+				track = st;
+			} else {
+				track = GetCarTuning();
+				showMP3 = vehicle->m_nRadioStation == PS3_RADIO_MP3 && track == STREAMED_SOUND_RADIO_MP3_PLAYER &&
+				          !UsesPoliceRadio(vehicle) && !UsesTaxiRadio(vehicle);
+			}
+#else
 			if (gNumRetunePresses != 0)
 			{
 				track = gNumRetunePresses + gStreamedSound;
@@ -1393,7 +1460,13 @@ cMusicManager::DisplayRadioStationName()
 #else
 				track = m_nFrontendTrack;
 #endif
+#endif
 			wchar* string = nil;
+#ifdef __PS3__
+			if (showMP3)
+				string = TheText.Get("FEA_MP3");
+			else
+#endif
 			switch (track) {
 			case WILDSTYLE: string = TheText.Get("FEA_FM0"); break;
 			case FLASH_FM: string = TheText.Get("FEA_FM1"); break;
