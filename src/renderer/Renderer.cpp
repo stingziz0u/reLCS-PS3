@@ -1,5 +1,8 @@
 #define WITHD3D
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"	// PS3_Logf
+#endif
 
 #include "main.h"
 #include "General.h"
@@ -141,6 +144,9 @@ CRenderer::PreRender(void)
 	CShadows::RenderExtraPlayerShadows();
 }
 
+#ifdef __PS3__
+void PS3_BigBuildingLogEntity(const char *what, CEntity *ent, int level, CPtrNode *node, unsigned where);	// World.cpp
+#endif
 #ifdef __PS3__
 // patch 22: the entity being drawn, for the crash dump (Ped.cpp); nil out of RenderScene
 CEntity *PS3_renderEntity;
@@ -1523,6 +1529,15 @@ CRenderer::InsertEntityIntoList(CEntity *ent)
 #ifdef FIX_BUGS
 	if (!ent->m_rwObject) return;
 #endif
+#ifdef __PS3__
+	// patch 24: the lists hold NUMVISIBLEENTITIES (2000) and nothing checked
+	if(ms_nNoOfVisibleVehicles >= NUMVISIBLEENTITIES || ms_nNoOfVisibleEntities >= NUMVISIBLEENTITIES){
+		static int logged;
+		if(logged++ < 4)
+			PS3_Logf("[render] visible list full (%d entities, %d vehicles and peds): an entity left out", ms_nNoOfVisibleEntities, ms_nNoOfVisibleVehicles);
+		return;
+	}
+#endif
 
 	if(ent->IsVehicle() || ent->bIsVehicle || ent->IsPed() || ent->bIsPed)
 		ms_aVisibleVehiclePtrs[ms_nNoOfVisibleVehicles++] = ent;
@@ -1543,6 +1558,14 @@ CRenderer::InsertEntityIntoList(CEntity *ent)
 void
 CRenderer::AddVisibleEntity(CEntity *ent)
 {
+#ifdef __PS3__
+	if(ms_nNoOfVisibleEntities >= NUMVISIBLEENTITIES){
+		static int logged;
+		if(logged++ < 4)
+			PS3_Logf("[render] visible list full (%d entities): a big building left out", ms_nNoOfVisibleEntities);
+		return;
+	}
+#endif
 #ifdef NEW_RENDERER
 	if(!gbPreviewCity && ent->IsBuilding())
 		ms_aVisibleBuildingPtrs[ms_nNoOfVisibleBuildings++] = ent;
@@ -1562,6 +1585,39 @@ CRenderer::ScanBigBuildingList(CPtrList &list)
 	int f = CTimer::GetFrameCounter() & 6;
 	for(node = list.first; node; node = node->next){
 		ent = (CEntity*)node->item;
+#ifdef __PS3__
+		// patch 24: a node whose neighbours don't point back was freed and
+		// used again in another list (the walk goes on in that list)
+		{
+			static int brokenLogged;
+			if(node->next && node->next->prev != node && brokenLogged < 8){
+				brokenLogged++;
+				PS3_Logf("[bigbld] big building list broken: node %p (item %p) -> next %p, whose prev is %p",
+				         node, node->item, node->next, node->next->prev);
+			}
+		}
+		// patch 24: only big buildings belong here (World.cpp: [bigbld]).
+		// Anything else is logged and not drawn: a vehicle found here was
+		// drawn with no model (crash in RenderScene).
+		if(ent == nil || !ent->bIsBIGBuilding || !(ent->IsBuilding() || ent->IsDummy() || ent->IsObject())){
+			int level = -1;
+			for(int l = 0; l < NUM_LEVELS; l++)
+				if(&CWorld::GetBigBuildingList((eLevelName)l) == &list)
+					level = l;
+			// once per entity (it is there every frame)
+			static CEntity *seen[32];
+			static int nSeen;
+			bool logged = false;
+			for(int k = 0; k < nSeen; k++)
+				if(seen[k] == ent) logged = true;
+			if(!logged){
+				seen[nSeen++ & 31] = ent;
+				if(nSeen > 32) nSeen = 32;
+				PS3_BigBuildingLogEntity("in a big building list but not a big building (not drawn)", ent, level, node, 0);
+			}
+			continue;
+		}
+#endif
 		if(ent->bOffscreen || (ent->m_randomSeed&6) != f){
 			ent->bOffscreen = true;
 			vis = SetupBigBuildingVisibility(ent);

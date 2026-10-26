@@ -105,11 +105,21 @@ CWorld::Initialise()
 	bIncludeBikers = false;
 }
 
+#ifdef __PS3__
+// patch 24 (below): who puts what in the big building lists
+void PS3_BigBuildingAdd(CEntity *ent, unsigned where);
+bool PS3_BigBuildingRemove(CEntity *ent, unsigned where);
+#endif
+
 void
 CWorld::Add(CEntity *ent)
 {
 	if(ent->IsVehicle() || ent->IsPed()) DMAudio.SetEntityStatus(((CPhysical *)ent)->m_audioEntityId, TRUE);
 
+#ifdef __PS3__
+	if(ent->bIsBIGBuilding)
+		PS3_BigBuildingAdd(ent, (unsigned)(uintptr_t)__builtin_return_address(0));
+#endif
 	if(ent->bIsBIGBuilding)
 		ms_bigBuildingsList[ent->m_level].InsertItem(ent);
 	else
@@ -125,6 +135,13 @@ CWorld::Remove(CEntity *ent)
 {
 	if(ent->IsVehicle() || ent->IsPed()) DMAudio.SetEntityStatus(((CPhysical *)ent)->m_audioEntityId, FALSE);
 
+#ifdef __PS3__
+	// patch 24: a big building not in the list of its level, or anything
+	// else still in a big building list (logged, taken out)
+	if(PS3_BigBuildingRemove(ent, (unsigned)(uintptr_t)__builtin_return_address(0)))
+		;
+	else
+#endif
 	if(ent->bIsBIGBuilding)
 		ms_bigBuildingsList[ent->m_level].RemoveItem(ent);
 	else
@@ -2700,5 +2717,91 @@ PS3_ColReport(unsigned int frames)
 	memset(ps3ColCalls, 0, sizeof(ps3ColCalls));
 	memset(ps3ColModelTicks, 0, sizeof(ps3ColModelTicks));
 	memset(ps3ColModelCalls, 0, sizeof(ps3ColModelCalls));
+}
+#endif
+
+#ifdef __PS3__
+// ---- patch 24: the big building lists ------------------------------------------
+// res-PS3 crashed drawing a police chopper (model 199, rwObject nil, 2 km
+// away): it was in CRenderer's entity list, where a vehicle only gets from
+// ScanBigBuildingList, i.e. from a big building list. An older crash log
+// had another vehicle (model 201) there too. These find out how: what is
+// added with bIsBIGBuilding, what is removed from the world while still in a
+// big building list, and (Renderer.cpp) what the scan finds there that
+// isn't a big building.
+void PS3_DescribeEntityPtr(const void *p, char *buf, int size);	// PedIK.cpp
+bool PS3_EntityLive(const void *p);
+
+static int ps3BigLogged;
+
+static bool
+PS3_BigLogOk(void)
+{
+	static int over;
+	if(ps3BigLogged < 48){ ps3BigLogged++; return true; }
+	return (++over & 1023) == 0;
+}
+
+void
+PS3_BigBuildingLogEntity(const char *what, CEntity *ent, int level, CPtrNode *node, unsigned where)
+{
+	char desc[48];
+	if(!PS3_BigLogOk())
+		return;
+	PS3_DescribeEntityPtr(ent, desc, sizeof(desc));
+	if(ent == nil || !PS3_AnyEntityLive(ent)){
+		PS3_Logf("[bigbld] %s: %p (%s), list %d, node %p @%08x", what, ent, desc, level, node, where);
+		return;
+	}
+	int inSectors = 0;
+	if(ent->IsVehicle() || ent->IsPed() || ent->IsObject()){
+		for(CEntryInfoNode *e = ((CPhysical*)ent)->m_entryInfoList.first; e && inSectors < 1000; e = e->next){
+			inSectors++;
+			if(node && e->listnode == node)
+				PS3_Logf("[bigbld]   the big building list's node %p is also its node in a sector list: a freed node used again", node);
+		}
+	}
+	PS3_Logf("[bigbld] %s: %p (%s), model %d (%s), type %d, status %d, bIsBIGBuilding %d, level %d, list %d, node %p, "
+	         "rwObject %p, pos %.1f %.1f %.1f, in %d sector lists, created by %d @%08x",
+	         what, ent, desc, ent->GetModelIndex(), CModelInfo::GetModelInfo(ent->GetModelIndex())->GetModelName(),
+	         ent->GetType(), ent->GetStatus(), ent->bIsBIGBuilding, ent->m_level, level, node, (void*)ent->m_rwObject,
+	         ent->GetPosition().x, ent->GetPosition().y, ent->GetPosition().z, inSectors,
+	         ent->IsVehicle() ? ((CVehicle*)ent)->VehicleCreatedBy : ent->IsObject() ? ((CObject*)ent)->ObjectCreatedBy : -1, where);
+}
+
+void
+PS3_BigBuildingAdd(CEntity *ent, unsigned where)
+{
+	PS3_Crumb("CWorld::Add a big building: model|type<<16", ent->GetModelIndex() | ent->GetType()<<16);
+	if(!(ent->IsBuilding() || ent->IsDummy() || ent->IsObject()))
+		PS3_BigBuildingLogEntity("added to a big building list but it isn't a building", ent, ent->m_level, nil, where);
+	else if(ent->m_level < 0 || ent->m_level >= NUM_LEVELS)
+		PS3_BigBuildingLogEntity("added to a big building list with a bad level", ent, ent->m_level, nil, where);
+}
+
+// true: done here (the entity was a big building and is out of its list)
+bool
+PS3_BigBuildingRemove(CEntity *ent, unsigned where)
+{
+	// cheap path: a big building in the list of its level
+	int found = -1;
+	CPtrNode *foundNode = nil;
+	for(int l = 0; l < NUM_LEVELS && found < 0; l++)
+		for(CPtrNode *n = CWorld::GetBigBuildingList((eLevelName)l).first; n; n = n->next)
+			if(n->item == ent){ found = l; foundNode = n; break; }
+	if(found < 0){
+		if(ent->bIsBIGBuilding)
+			PS3_BigBuildingLogEntity("removed from the world, a big building that is in no big building list", ent, ent->m_level, nil, where);
+		return false;	// the game's own path
+	}
+	if(!ent->bIsBIGBuilding){
+		PS3_BigBuildingLogEntity("removed from the world while still in a big building list (taken out of it)", ent, found, foundNode, where);
+		CWorld::GetBigBuildingList((eLevelName)found).RemoveItem(ent);
+		return false;	// and then out of the sectors, as the game does
+	}
+	if(found != ent->m_level)
+		PS3_BigBuildingLogEntity("removed from the world: a big building in the list of another level", ent, found, foundNode, where);
+	CWorld::GetBigBuildingList((eLevelName)found).RemoveItem(ent);
+	return true;
 }
 #endif
