@@ -963,7 +963,17 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 			request = false;
 		}
 	}else if(mi->GetModelType() == MITYPE_VEHICLE)
+#ifdef __PS3__
+		// The planes (CPlane: airtrain, the chopper and deaddodo of the flight
+		// paths) live in the big building list. Far away they swap their model
+		// for the LOD of the IDE, and LCS's chopper and deaddodo have none: no
+		// model at all, drawn anyway, and SetupVehicleVariables(nil) killed the
+		// game thread (patch 22-24 logs). As InsertEntityIntoList: no model,
+		// nothing to draw.
+		return ent->IsVisible() && ent->m_rwObject ? VIS_VISIBLE : VIS_INVISIBLE;
+#else
 		return ent->IsVisible() ? VIS_VISIBLE : VIS_INVISIBLE;
+#endif
 
 	float dist = (ms_vecCameraPosition-ent->GetPosition()).Magnitude();
 	CSimpleModelInfo *nonLOD = mi->GetRelatedModel();
@@ -1559,6 +1569,13 @@ void
 CRenderer::AddVisibleEntity(CEntity *ent)
 {
 #ifdef __PS3__
+	// ScanBigBuildingList takes an entity seen last time as visible without
+	// asking SetupBigBuildingVisibility again: a plane that went far (and
+	// lost its model, see there) in between got here with no model.
+	if(ent->m_rwObject == nil){
+		ent->bOffscreen = true;
+		return;
+	}
 	if(ms_nNoOfVisibleEntities >= NUMVISIBLEENTITIES){
 		static int logged;
 		if(logged++ < 4)
@@ -1596,10 +1613,10 @@ CRenderer::ScanBigBuildingList(CPtrList &list)
 				         node, node->item, node->next, node->next->prev);
 			}
 		}
-		// patch 24: only big buildings belong here (World.cpp: [bigbld]).
-		// Anything else is logged and not drawn: a vehicle found here was
-		// drawn with no model (crash in RenderScene).
-		if(ent == nil || !ent->bIsBIGBuilding || !(ent->IsBuilding() || ent->IsDummy() || ent->IsObject())){
+		// patch 24: only big buildings and the planes belong here (World.cpp:
+		// [bigbld]). Anything else is logged and not drawn.
+		if(ent == nil || !ent->bIsBIGBuilding ||
+		   !(ent->IsBuilding() || ent->IsDummy() || ent->IsObject() || ent->IsVehicle() && ((CVehicle*)ent)->IsPlane())){
 			int level = -1;
 			for(int l = 0; l < NUM_LEVELS; l++)
 				if(&CWorld::GetBigBuildingList((eLevelName)l) == &list)

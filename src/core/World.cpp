@@ -2722,13 +2722,13 @@ PS3_ColReport(unsigned int frames)
 
 #ifdef __PS3__
 // ---- patch 24: the big building lists ------------------------------------------
-// res-PS3 crashed drawing a police chopper (model 199, rwObject nil, 2 km
-// away): it was in CRenderer's entity list, where a vehicle only gets from
-// ScanBigBuildingList, i.e. from a big building list. An older crash log
-// had another vehicle (model 201) there too. These find out how: what is
-// added with bIsBIGBuilding, what is removed from the world while still in a
-// big building list, and (Renderer.cpp) what the scan finds there that
-// isn't a big building.
+// res-PS3 crashed drawing a chopper with no model 2 km away, from a big
+// building list: it was a CPlane (planes are big buildings on purpose) whose
+// far LOD doesn't exist in LCS (fixed in SetupBigBuildingVisibility, patch
+// 25). These stay as a check of the lists: what is added with
+// bIsBIGBuilding that isn't a building or a plane, what is removed from the
+// world while still in a big building list, and (Renderer.cpp) anything the
+// scan finds there that doesn't belong.
 void PS3_DescribeEntityPtr(const void *p, char *buf, int size);	// PedIK.cpp
 bool PS3_EntityLive(const void *p);
 
@@ -2773,7 +2773,8 @@ void
 PS3_BigBuildingAdd(CEntity *ent, unsigned where)
 {
 	PS3_Crumb("CWorld::Add a big building: model|type<<16", ent->GetModelIndex() | ent->GetType()<<16);
-	if(!(ent->IsBuilding() || ent->IsDummy() || ent->IsObject()))
+	// the planes (CPlane) are big buildings on purpose: drawn from far away
+	if(!(ent->IsBuilding() || ent->IsDummy() || ent->IsObject() || ent->IsVehicle() && ((CVehicle*)ent)->IsPlane()))
 		PS3_BigBuildingLogEntity("added to a big building list but it isn't a building", ent, ent->m_level, nil, where);
 	else if(ent->m_level < 0 || ent->m_level >= NUM_LEVELS)
 		PS3_BigBuildingLogEntity("added to a big building list with a bad level", ent, ent->m_level, nil, where);
