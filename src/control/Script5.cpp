@@ -40,6 +40,11 @@ uint32 CRunningScript::CollectLocateParameters(uint32* pIp, bool b3D)
 	return id;
 }
 
+#ifdef __PS3__
+bool PS3_IsUsjScript(const CRunningScript *s);	// Script2.cpp, patch 32
+void PS3_UsjLandingBox(int32 jump, float &X, float &Y, float &dX, float &dY);
+#endif
+
 void CRunningScript::LocatePlayerCommand(int32 command, uint32* pIp)
 {
 	bool b3D, result, debug, decided = false;
@@ -87,6 +92,10 @@ void CRunningScript::LocatePlayerCommand(int32 command, uint32* pIp)
 		dY = GET_FLOAT_PARAM(4);
 		debug = GET_INTEGER_PARAM(5);
 	}
+#ifdef __PS3__
+	if (command == COMMAND_LOCATE_PLAYER_IN_CAR_3D && PS3_IsUsjScript(this))
+		PS3_UsjLandingBox(m_anLocalVariables[5], X, Y, dX, dY);
+#endif
 	CVector pos = pPlayerInfo->GetPos();
 	if (!decided) {
 		result = false;

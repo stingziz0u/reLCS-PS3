@@ -822,13 +822,38 @@ int8 CRunningScript::ProcessCommands300To399(int32 command)
 // jump passes when the car is inside the landing box (centre $g818/844/870,
 // half sizes $g896/922/948) BEFORE anything touches it: wheels on the
 // ground or a hit on anything counts as touching down.
+bool
+PS3_IsUsjScript(const CRunningScript *s)
+{
+	const char *n = s->m_abScriptName;
+	return (n[0] | 0x20) == 'u' && (n[1] | 0x20) == 's' && (n[2] | 0x20) == 'j' && n[3] == '\0';
+}
+
+// patch 32: jumps whose landing box is made bigger (Ren: the Chinatown one,
+// under the Callahan Bridge, is absurdly hard: on the first try at 127 km/h
+// the PCJ cleared the train tracks and touched the ground 4 m before the
+// box, which starts 63 m from the ramp). The box only grows toward the
+// ramp; the script's globals (and so the saves) are not touched, the
+// LOCATE of the landing box is widened when it is asked (Script5.cpp).
+void
+PS3_UsjLandingBox(int32 jump, float &X, float &Y, float &dX, float &dY)
+{
+	if (jump == 5 && Abs(X - 798.6f) < 1.0f && Abs(Y - -798.9f) < 1.0f) {
+		// y -814.9..-782.9 -> -824.9..-782.9
+		float lo = Y - dY - 10.0f, hi = Y + dY;
+		Y = (lo + hi) * 0.5f;
+		dY = (hi - lo) * 0.5f;
+	}
+}
+
 static void
 PS3_UsjWatch(CRunningScript *s, CVehicle *veh)
 {
 	static int32 sActive, sFrame, sLastAir, sLastBox;
 	int32 active = *(int32*)&CTheScripts::ScriptSpace[4 * 1079];
 	int32 jump = s->m_anLocalVariables[5];
-	if (active != 1 || jump < 0 || jump > 25) {
+	// other scripts ask IS_CAR_IN_AIR_PROPER too: only the USJ one
+	if (!PS3_IsUsjScript(s) || active != 1 || jump < 0 || jump > 25) {
 		sActive = 0;
 		return;
 	}
@@ -836,8 +861,10 @@ PS3_UsjWatch(CRunningScript *s, CVehicle *veh)
 	CVector pos = CWorld::Players[CWorld::PlayerInFocus].GetPos();
 	float kmh = veh->GetMoveSpeed().Magnitude() * GAME_SPEED_TO_METERS_PER_SECOND * 3.6f;
 	// how far outside the landing box on each axis (negative = inside)
-	float ox = Abs(pos.x - USJ_F(818)) - USJ_F(896);
-	float oy = Abs(pos.y - USJ_F(844)) - USJ_F(922);
+	float bx = USJ_F(818), by = USJ_F(844), bdx = USJ_F(896), bdy = USJ_F(922);
+	PS3_UsjLandingBox(jump, bx, by, bdx, bdy);
+	float ox = Abs(pos.x - bx) - bdx;
+	float oy = Abs(pos.y - by) - bdy;
 	float oz = Abs(pos.z - USJ_F(870)) - USJ_F(948);
 	int32 air = veh->m_nCollisionRecords == 0;
 	int32 box = ox < 0.0f && oy < 0.0f && oz < 0.0f;
@@ -848,7 +875,7 @@ PS3_UsjWatch(CRunningScript *s, CVehicle *veh)
 		         "landing box %.1f..%.1f, %.1f..%.1f, %.1f..%.1f",
 		         jump, veh->GetModelIndex(), CModelInfo::GetModelInfo(veh->GetModelIndex())->GetModelName(),
 		         pos.x, pos.y, pos.z, kmh, jump == 1 || jump == 9 || jump == 12 ? 72 : 90,
-		         USJ_F(818) - USJ_F(896), USJ_F(818) + USJ_F(896), USJ_F(844) - USJ_F(922), USJ_F(844) + USJ_F(922),
+		         bx - bdx, bx + bdx, by - bdy, by + bdy,
 		         USJ_F(870) - USJ_F(948), USJ_F(870) + USJ_F(948));
 		sLastAir = -1;
 		sLastBox = -1;
