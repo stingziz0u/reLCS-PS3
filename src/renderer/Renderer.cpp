@@ -184,6 +184,29 @@ struct PS3VisibleHigh {
 	CEntity *ent[4];
 };
 static PS3VisibleHigh ps3VisHigh[MODELINFOSIZE];
+// patch 38: every detailed instance with a LOD model drawn this frame. A LOD
+// often stands for a whole block of detailed models while it names only one
+// (GetRelatedModel): with that one off screen and its neighbours drawn,
+// patch 28 kept the LOD over them (Harwood's road, Ren's video: the textures
+// fighting; gone with nolodpairs.txt). Now any of them drawn inside the
+// LOD's bounds lets it hide.
+static CEntity *ps3DrawnHigh[256];
+static int32 ps3NumDrawnHigh;
+static uint32 ps3DrawnHighFrame;
+
+// a detailed instance drawn this frame inside this LOD's bounds
+static bool
+PS3_HighDrawnInside(CEntity *lod)
+{
+	if(ps3DrawnHighFrame != ps3VisFrame)
+		return false;
+	CVector c = lod->GetBoundCentre();
+	float r = lod->GetBoundRadius();
+	for(int32 i = 0; i < ps3NumDrawnHigh; i++)
+		if((ps3DrawnHigh[i]->GetBoundCentre() - c).MagnitudeSqr() < r*r)
+			return true;
+	return false;
+}
 
 struct PS3ModelPtr { CBaseModelInfo *mi; int32 id; };
 static int
@@ -234,6 +257,12 @@ PS3_MarkHighDrawn(CEntity *ent)
 	int32 id = ent->GetModelIndex();
 	if(id < 0 || id >= MODELINFOSIZE || !ps3HasLod[id])
 		return;
+	if(ps3DrawnHighFrame != ps3VisFrame){
+		ps3DrawnHighFrame = ps3VisFrame;
+		ps3NumDrawnHigh = 0;
+	}
+	if(ps3NumDrawnHigh < 256)
+		ps3DrawnHigh[ps3NumDrawnHigh++] = ent;
 	PS3VisibleHigh &v = ps3VisHigh[id];
 	if(v.frame != ps3VisFrame){
 		v.frame = ps3VisFrame;
@@ -255,7 +284,7 @@ PS3_LodMayHide(CEntity *lod)
 		return true;	// not paired: the game's rule
 	PS3VisibleHigh &v = ps3VisHigh[ps3LodHigh[id]];
 	if(v.frame != ps3VisFrame || v.n == 0)
-		return false;
+		return PS3_HighDrawnInside(lod);
 	if(v.n > 4)
 		return true;	// many instances of the model: as the game
 	for(int32 i = 0; i < v.n; i++){
@@ -266,7 +295,7 @@ PS3_LodMayHide(CEntity *lod)
 		if(d.x*d.x + d.y*d.y < 4.0f || lod->GetIsTouching(e))
 			return true;
 	}
-	return false;
+	return PS3_HighDrawnInside(lod);
 }
 
 // What the LOD buildings did on the last frame, for "[lod]" every 10 s
@@ -311,6 +340,16 @@ PS3_OverlapReport(void)
 			         (ps3LodHigh[ma] == mb || ps3LodHigh[mb] == ma) && a->GetIsTouching(b)){
 				what = "LOD drawn with its detailed model";
 				lods++;
+			}else if(ps3LodPairsBuilt && ma >= 0 && mb >= 0 && ma < MODELINFOSIZE && mb < MODELINFOSIZE){
+				// patch 38: a LOD over another detailed model of its block
+				CEntity *lod = ps3LodHigh[ma] >= 0 ? a : ps3LodHigh[mb] >= 0 ? b : nil;
+				CEntity *hi = lod == a ? b : a;
+				int32 mh = hi->GetModelIndex();
+				if(lod && !hi->bIsBIGBuilding && ps3HasLod[mh] &&
+				   (hi->GetBoundCentre() - lod->GetBoundCentre()).MagnitudeSqr() < lod->GetBoundRadius()*lod->GetBoundRadius()){
+					what = "LOD drawn over a detailed model of its block";
+					lods++;
+				}
 			}
 			if(what && dups + lods <= 8)
 				PS3_Logf("[overlap] %s: %d %s (%s%s) at %.1f %.1f %.1f and %d %s (%s%s) at %.1f %.1f %.1f, %.0f m from the camera",
