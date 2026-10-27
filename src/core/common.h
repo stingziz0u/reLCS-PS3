@@ -110,6 +110,10 @@ static inline const char *PS3_SceneTag(const char *tag) { return tag ? tag : "sc
 // Im3D, Im2D): a crash in the drawing names the last one. Off elsewhere, so
 // the 2D and the effects don't push the useful crumbs out of the ring.
 extern "C" int PS3_crumbRender;	// ps3_log.cpp
+// Graphics > GAMMA (patch 27): 0.8 to 1.6 in steps of 0.1, 1.0 the game's own
+#define PS3_NUM_GAMMAS 9
+#define PS3_DEFAULT_GAMMA 2
+static inline float PS3_GammaValue(int i) { return 0.8f + 0.1f * i; }
 // the entity being drawn (Renderer.cpp), printed by the crash dump (Ped.cpp)
 class CEntity;
 extern CEntity *PS3_renderEntity;

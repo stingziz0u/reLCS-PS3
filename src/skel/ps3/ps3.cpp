@@ -183,6 +183,7 @@ psCameraBeginUpdate(RwCamera *camera)
 #if PS3_STAGE != 1
 // Graphics menu: MIPMAPS, TEXTURE FILTERING, ANTIALIASING (MenuScreensCustom.cpp)
 extern int8 gPS3Mipmaps, gPS3TexFilter, gPS3Antialias;
+extern int8 gPS3Ps2Lighting, gPS3ColourFilter, gPS3Gamma;	// patch 27
 
 static void
 PS3_ApplyTextureOptions(void)
@@ -204,8 +205,34 @@ PS3_ApplyTextureOptions(void)
 	if (rw::ps3::fxaaOn != !!gPS3Antialias)
 		PS3_Logf("[video] FXAA %s", gPS3Antialias ? "on" : "off");
 	rw::ps3::fxaaOn = !!gPS3Antialias;
+	// patch 27: PS2 LIGHTING (the Leeds world pipeline), the colour filter and gamma
+	if (gPS3Ps2Lighting < 0 || gPS3Ps2Lighting > 1)
+		gPS3Ps2Lighting = 1;
+	if (gPS3ColourFilter < 0 || gPS3ColourFilter > 1)
+		gPS3ColourFilter = 1;
+	if (gPS3Gamma < 0 || gPS3Gamma >= PS3_NUM_GAMMAS)
+		gPS3Gamma = PS3_DEFAULT_GAMMA;
+	static int8 logged[3] = { -1, -1, -1 };
+	if (logged[0] != gPS3Ps2Lighting || logged[1] != gPS3ColourFilter || logged[2] != gPS3Gamma) {
+		PS3_Logf("[video] PS2 lighting %s, colour filter %s, gamma %.1f", gPS3Ps2Lighting ? "on" : "off",
+		         gPS3ColourFilter ? "on" : "off", PS3_GammaValue(gPS3Gamma));
+		logged[0] = gPS3Ps2Lighting;
+		logged[1] = gPS3ColourFilter;
+		logged[2] = gPS3Gamma;
+	}
+	rw::ps3::leedsLighting = !!gPS3Ps2Lighting;
 }
 
+// the picture before the HUD to the power 1/gamma (Camera.cpp RenderMotionBlur)
+void
+PS3_ApplyGamma(RwCamera *cam)
+{
+	if (cam == nil || gPS3Gamma == PS3_DEFAULT_GAMMA)
+		return;
+	rw::ps3::applyGamma(RwCameraGetRaster(cam), 1.0f / PS3_GammaValue(gPS3Gamma));
+}
+#else
+void PS3_ApplyGamma(RwCamera *cam) { (void)cam; }
 #endif
 
 void

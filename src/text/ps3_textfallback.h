@@ -18,6 +18,18 @@ static const struct { const char *key; const char *text; } ps3TextFallback[] = {
 	{ "FEG_TF6", "ANISOTROPIC 16X" },	// reVC-PS3's own
 	{ "FEG_AAL", "ANTIALIASING" },	// reVC-PS3's own
 	{ "FEG_AAF", "FXAA" },	// reVC-PS3's own
+	{ "FEG_PLT", "PS2 LIGHTING" },	// res-PS3's own
+	{ "FEG_CFL", "COLOUR FILTER" },	// res-PS3's own
+	{ "FEG_GAM", "GAMMA" },	// res-PS3's own
+	{ "FEG_G08", "0.8" },	// res-PS3's own
+	{ "FEG_G09", "0.9" },	// res-PS3's own
+	{ "FEG_G10", "1.0" },	// res-PS3's own
+	{ "FEG_G11", "1.1" },	// res-PS3's own
+	{ "FEG_G12", "1.2" },	// res-PS3's own
+	{ "FEG_G13", "1.3" },	// res-PS3's own
+	{ "FEG_G14", "1.4" },	// res-PS3's own
+	{ "FEG_G15", "1.5" },	// res-PS3's own
+	{ "FEG_G16", "1.6" },	// res-PS3's own
 	{ "FEC_S3P", "3RD PERSON SENSITIVITY" },	// reVC-PS3's own
 	{ "FEC_S1P", "1ST PERSON SENSITIVITY" },	// reVC-PS3's own
 	{ "FEC_DZL", "LEFT STICK DEAD ZONE" },	// reVC-PS3's own

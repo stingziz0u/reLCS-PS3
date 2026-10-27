@@ -1,0 +1,17 @@
+// rw_post.vcg -- a full-picture pass (gamma): a quad over the picture in
+// pixel coordinates (as Im2D) and the pass's parameters for the fragment
+// program
+#include "common.cgh"
+
+uniform float4 u_post : C14;	// x: exponent (1/gamma)
+
+void main(float4 in_pos  : ATTR0,
+          float2 in_tex0 : ATTR8,
+          out float4 o_pos    : POSITION,
+          out float2 o_tex0   : TEXCOORD0,
+          out float4 o_params : TEXCOORD1)
+{
+	o_pos = float4(in_pos.xy * u_xform.xy + u_xform.zw, 0.0, 1.0);
+	o_tex0 = in_tex0;
+	o_params = u_post;
+}

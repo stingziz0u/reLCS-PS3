@@ -442,6 +442,28 @@ CMBlur::OverlayRender(RwCamera *cam, RwRaster *raster, RwRGBA color, int32 type,
 	RwRenderStateSet(rwRENDERSTATESRCBLEND, (void*)rwBLENDONE);
 	RwRenderStateSet(rwRENDERSTATEDESTBLEND, (void*)rwBLENDONE);
 
+#ifdef __PS3__
+	// res-PS3 patch 27: LCS's PS2 colour filter (reLCS colourfilterLCS.frag:
+	// dst += dst * blurcolour, the time cycle's "blur" colour /255). Drawn
+	// with blending instead of a copy of the picture: a quad of that colour,
+	// source * destination + destination. Without it (the PC fallback here
+	// draws nothing with no trails) the picture lacked the PS2's lift.
+	extern int8 gPS3ColourFilter;	// Graphics > COLOUR FILTER
+	if(!BlurOn && type == MOTION_BLUR_LIGHT_SCENE && gPS3ColourFilter){
+		RwIm2DVertex quad[4];
+		memcpy(quad, Vertex, sizeof(quad));
+		for(int i = 0; i < 4; i++)
+			RwIm2DVertexSetIntRGBA(&quad[i], color.red, color.green, color.blue, 255);
+		RwRenderStateSet(rwRENDERSTATETEXTURERASTER, nil);
+		RwRenderStateSet(rwRENDERSTATESRCBLEND, (void*)rwBLENDDESTCOLOR);
+		RwRenderStateSet(rwRENDERSTATEDESTBLEND, (void*)rwBLENDONE);
+		RwIm2DRenderIndexedPrimitive(rwPRIMTYPETRILIST, quad, 4, Index, 6);
+		RwRenderStateSet(rwRENDERSTATETEXTURERASTER, raster);
+		RwRenderStateSet(rwRENDERSTATESRCBLEND, (void*)rwBLENDONE);
+		RwRenderStateSet(rwRENDERSTATEDESTBLEND, (void*)rwBLENDONE);
+	}
+#endif
+
 	if(BlurOn){
 		if(type == MOTION_BLUR_SNIPER){
 			RwIm2DVertexSetIntRGBA(&Vertex2[0], r, g, b, 80);

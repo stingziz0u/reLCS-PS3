@@ -43,6 +43,10 @@ const char *fps30_60[] = { "FEG_F30", "FEG_F60" };
 int8 gPS3Mipmaps, gPS3TexFilter, gPS3Antialias;
 const char *texFilterNames[] = { "FEG_TF0", "FEG_TF1", "FEG_TF2", "FEG_TF3", "FEG_TF4", "FEG_TF5", "FEG_TF6" };
 const char *antialiasNames[] = { "FEM_OFF", "FEG_AAF" };
+// patch 27: PS2 LIGHTING (LCS's Leeds world pipeline on the RSX), COLOUR
+// FILTER (LCS's PS2 one) and GAMMA (0.8 to 1.6, on the picture before the HUD)
+int8 gPS3Ps2Lighting = 1, gPS3ColourFilter = 1, gPS3Gamma = PS3_DEFAULT_GAMMA;
+const char *gammaNames[PS3_NUM_GAMMAS] = { "FEG_G08", "FEG_G09", "FEG_G10", "FEG_G11", "FEG_G12", "FEG_G13", "FEG_G14", "FEG_G15", "FEG_G16" };
 // Gamepad settings: right stick sensitivity, third and first person (Cam.cpp)
 extern int8 gPS3Sens3rd, gPS3Sens1st;
 // Display: collectibles on the radar and the map (Radar.cpp)
@@ -266,6 +270,9 @@ void RestoreDefGraphics(int8 action) {
 		gPS3Mipmaps = 0;
 		gPS3TexFilter = 0;
 		gPS3Antialias = 0;
+		gPS3Ps2Lighting = 1;
+		gPS3ColourFilter = 1;
+		gPS3Gamma = PS3_DEFAULT_GAMMA;
 	#endif
 		CMBlur::BlurOn = false;
 		FrontEndMenuManager.SaveSettings();
@@ -939,6 +946,9 @@ CMenuScreenCustom aScreens[] = {
 		MENUACTION_CFO_SELECT, "FEG_MIP", { new CCFOSelect((int8*)&gPS3Mipmaps, "Graphics", "Mipmaps", off_on, 2, false) }, 0, 0, MENUALIGN_LEFT,
 		MENUACTION_CFO_SELECT, "FEG_TXF", { new CCFOSelect((int8*)&gPS3TexFilter, "Graphics", "TextureFiltering", texFilterNames, ARRAY_SIZE(texFilterNames), false) }, 0, 0, MENUALIGN_LEFT,
 		MENUACTION_CFO_SELECT, "FEG_AAL", { new CCFOSelect((int8*)&gPS3Antialias, "Graphics", "FXAA", antialiasNames, ARRAY_SIZE(antialiasNames), false) }, 0, 0, MENUALIGN_LEFT,
+		MENUACTION_CFO_SELECT, "FEG_PLT", { new CCFOSelect((int8*)&gPS3Ps2Lighting, "Graphics", "PS2Lighting", off_on, 2, false) }, 0, 0, MENUALIGN_LEFT,
+		MENUACTION_CFO_SELECT, "FEG_CFL", { new CCFOSelect((int8*)&gPS3ColourFilter, "Graphics", "ColourFilter", off_on, 2, false) }, 0, 0, MENUALIGN_LEFT,
+		MENUACTION_CFO_SELECT, "FEG_GAM", { new CCFOSelect((int8*)&gPS3Gamma, "Graphics", "Gamma", gammaNames, PS3_NUM_GAMMAS, false) }, 0, 0, MENUALIGN_LEFT,
 #else
 #ifdef LEGACY_MENU_OPTIONS
 		MENUACTION_FRAMESYNC,	"FEM_VSC", {nil, SAVESLOT_NONE, MENUPAGE_GRAPHICS_SETTINGS}, 0, 0, MENUALIGN_LEFT,

@@ -83,6 +83,8 @@ enum VertexProgramId
 	VP_IM2D,
 	VP_IM3D,
 	VP_FXAA,	// the FXAA pass (graphics menu ANTIALIASING)
+	VP_LEEDS,	// the Leeds world pipeline (LCS buildings: prelit * time cycle ambient)
+	VP_POST,	// a full-picture pass with parameters (gamma)
 	NUM_VP
 };
 enum FragmentProgramId
@@ -92,6 +94,8 @@ enum FragmentProgramId
 	FP_ADD,		// rw_simple for additive blending: kills fragments that add nothing
 	FP_ADDALPHA,	// same, SRCALPHA/ONE
 	FP_FXAA,
+	FP_LEEDS,	// texture * colour * colour scale (Leeds world pipeline)
+	FP_GAMMA,	// the picture to the power 1/gamma
 	NUM_FP
 };
 
@@ -115,6 +119,9 @@ inline void setMaterial(uint32 flags, const RGBA &color, const SurfaceProperties
 		setMaterial(white, surfaceprops, extraSurfProp);
 }
 void setEnvParams(Frame *envFrame, float coefficient, bool fbAlpha);
+// Leeds world pipeline (VP_LEEDS): the colour scale of the next draws (the
+// time cycle ambient comes from setWorldAmbient, once a frame)
+void setWorldColorScale(float scale);
 void setBones(const float *rows, int32 numBones);	// 3 float4 rows per bone
 
 void setTexture(int32 stage, Texture *tex);

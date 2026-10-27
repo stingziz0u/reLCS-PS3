@@ -1,0 +1,29 @@
+// rw_leeds.vcg -- the Leeds world pipeline (LCS buildings and map objects),
+// as reLCS's leedsBuilding.vert with its PS2 settings: the prelit colour
+// lit by the time cycle's ambient, plus the ambient light as emission,
+// alpha from the material (distance fading). rw_leeds.fcg scales the
+// textured result: PS2 vertex colours go to 128, not 255.
+#include "common.cgh"
+
+uniform float4 u_worldAmb : C15;	// time cycle ambient (rgb), colour scale (w)
+
+void main(float4 in_pos    : ATTR0,
+          float4 in_color  : ATTR3,
+          float2 in_tex0   : ATTR8,
+          out float4 o_pos   : POSITION,
+          out float4 o_color : COLOR0,
+          out float2 o_tex0  : TEXCOORD0,
+          out float4 o_scale : TEXCOORD1,
+          out float4 o_fog   : TEXCOORD2)
+{
+	float4 p = float4(in_pos.xyz, 1.0);
+	o_pos = Transform(p);
+	float4 c = in_color;
+	c.rgb = c.rgb * u_worldAmb.rgb + u_ambLight.rgb * u_surfProps.w;
+	c = saturate(c);
+	c.a *= u_matColor.a;
+	o_color = c;
+	o_tex0 = in_tex0;
+	o_scale = u_worldAmb.wwww;
+	o_fog = DoFog(o_pos.w);
+}

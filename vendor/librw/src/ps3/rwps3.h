@@ -176,6 +176,11 @@ extern uint32 loadHints;
 extern int32 texFilterMode;	// 3D textures: 0 the game's filter, 1 bilinear, 2 trilinear
 extern int32 texAniso;		// 3D textures: anisotropic filtering, 1 (off), 2, 4, 8, 16
 extern bool fxaaOn;		// FXAA on the camera's picture before it is shown
+// res-PS3 patch 27: LCS's lighting and gamma
+extern bool leedsLighting;	// the Leeds world pipeline draws as LCS (false: as the default pipeline)
+rw::ObjPipeline *leedsWorldPipeline(void);	// for the buildings' atomics (CSimpleModelInfo::SetAtomic)
+void setWorldAmbient(float32 r, float32 g, float32 b);	// the time cycle ambient, 0..1, once a frame
+void applyGamma(Raster *camRaster, float32 exponent);	// the picture to the power exponent (1/gamma)
 extern bool rsxTiling;		// camera buffers tiled + depth compressed + ZCULL (default on; set before the first camera)
 extern bool zcullOn;		// ZCULL in use (default on; the autotest compares)
 extern int32 blendAlphaRef;	// >0: alpha test ref for alpha blended draws without Z write (smoke...); 0 the game's

@@ -4352,18 +4352,25 @@ CCamera::GetScreenFadeStatus(void)
 void
 CCamera::RenderMotionBlur(void)
 {
+#ifdef __PS3__
+	// patch 27: after the colour filter (or none), Graphics > GAMMA on the
+	// picture, before the HUD
+	extern int32 gPS3FxOff;
+	extern void PS3_ApplyGamma(RwCamera *cam);	// ps3.cpp
+	if(m_BlurType != 0 && !(gPS3FxOff & 16))
+		CMBlur::MotionBlurRender(m_pRwCamera,
+			m_BlurRed, m_BlurGreen, m_BlurBlue,
+			m_motionBlur, m_BlurType, 32);	// hack hack
+	PS3_ApplyGamma(m_pRwCamera);
+#else
 	if(m_BlurType == 0)
 		return;
-#ifdef __PS3__
-	extern int32 gPS3FxOff;
-	if(gPS3FxOff & 16)
-		return;
-#endif
 
 	CMBlur::MotionBlurRender(m_pRwCamera,
 		m_BlurRed, m_BlurGreen, m_BlurBlue,
 //		m_motionBlur, m_BlurType, m_imotionBlurAddAlpha);
 		m_motionBlur, m_BlurType, 32);	// hack hack
+#endif
 }
 
 void

@@ -532,6 +532,57 @@ defaultRenderCB(Atomic *atomic, InstanceDataHeader *header)
 	}
 }
 
+// ---- Leeds world pipeline (res-PS3 patch 27) ------------------------------------------
+// LCS's buildings and map objects, as reLCS's leedsBuilding.vert /
+// leedsDefault.frag with their PS2 settings (custompipes_d3d9.cpp
+// worldRenderCB): prelit colour * time cycle ambient + the ambient light *
+// 0.5 as emission, clamped; textured meshes * 255/128, the PS2's vertex
+// colours going to 128. Through the default pipeline these were drawn at
+// half brightness and without the time of day: night roofs went black.
+// Models without prelight are lit by the lights, as before.
+
+static void
+leedsRenderCB(Atomic *atomic, InstanceDataHeader *header)
+{
+	if(!leedsLighting || !(atomic->geometry->flags & Geometry::PRELIT)){
+		defaultRenderCB(atomic, header);
+		return;
+	}
+	Material *m;
+
+	setWorldMatrix(atomic->getFrame()->getLTM());
+	lightingCB(atomic);	// the ambient light: the emissive part
+
+	bindAttribs(header);
+	setVertexProgram(VP_LEEDS);
+	setFragmentProgram(FP_LEEDS);
+
+	InstanceData *inst = header->inst;
+	int32 n = header->numMeshes;
+	while(n--){
+		m = inst->material;
+		// the material's alpha (distance fading); its colour isn't used
+		setMaterial(m->color, m->surfaceProps, 0.5f);
+		setWorldColorScale(m->texture ? 255.0f/128.0f : 1.0f);
+		setTexture(0, m->texture);
+		rw::SetRenderState(VERTEXALPHA, inst->vertexAlpha || m->color.alpha != 0xFF);
+		drawInst(header, inst);
+		inst++;
+	}
+}
+
+rw::ObjPipeline*
+leedsWorldPipeline(void)
+{
+	static ObjPipeline *pipe;
+	if(pipe == nil){
+		pipe = ObjPipeline::create();
+		pipe->instanceCB = defaultInstanceCB;
+		pipe->renderCB = leedsRenderCB;
+	}
+	return pipe;
+}
+
 // ---- skin -------------------------------------------------------------------------------
 
 static float skinRows[MAX_SKIN_BONES*12];

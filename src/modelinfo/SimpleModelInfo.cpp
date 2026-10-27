@@ -124,6 +124,10 @@ CSimpleModelInfo::SetAtomic(int n, RpAtomic *atomic)
 		CustomPipes::AttachGlossPipe(atomic);
 	else
 		CustomPipes::AttachWorldPipe(atomic);
+#elif defined(__PS3__) && defined(RW_PS3_RSX)
+	// LCS's Leeds world pipeline on the RSX (res-PS3 patch 27): the world
+	// lit as on the PS2 (prelight * time of day, PS2 colour range)
+	atomic->pipeline = rw::ps3::leedsWorldPipeline();
 #endif
 }
 

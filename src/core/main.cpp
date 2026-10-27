@@ -1708,6 +1708,10 @@ RenderScene(void)
 #ifdef __PS3__
 	PS3_crumbRender = 1;
 #endif
+#if defined(__PS3__) && defined(RW_PS3_RSX)
+	// the Leeds world pipeline lights the prelight with this (patch 27)
+	rw::ps3::setWorldAmbient(CTimeCycle::GetAmbientRed(), CTimeCycle::GetAmbientGreen(), CTimeCycle::GetAmbientBlue());
+#endif
 	PS3_SCENE_STEP("clouds, horizon");
 	CClouds::Render();
 	PS3_CRUMB("scene: horizon", 0);

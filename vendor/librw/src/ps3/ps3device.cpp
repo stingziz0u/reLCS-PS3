@@ -200,7 +200,8 @@ enum {
 	C_ENVROW = 10,
 	C_FXPARAMS = 12,
 	C_COLORCLAMP = 13,
-	C_FXAA = 14,	// rw_fxaa.vcg: 1/width, 1/height
+	C_FXAA = 14,	// rw_fxaa.vcg: 1/width, 1/height; rw_post.vcg: its parameters
+	C_WORLDAMB = 15,	// rw_leeds.vcg: time cycle ambient (rgb), colour scale (w)
 	C_LIGHTS = 16,
 	C_BONES = 32,
 	MAX_LIGHTS = 8
@@ -1291,7 +1292,7 @@ applyProgramsAndConstants(void)
 		drawStats.fpSwitches++;
 	}
 
-	bool usesLights = curVP == VP_DEFAULT || curVP == VP_SKIN || curVP == VP_ENV;
+	bool usesLights = curVP == VP_DEFAULT || curVP == VP_SKIN || curVP == VP_ENV || curVP == VP_LEEDS;
 	bool usesEnv = curVP == VP_ENV;
 	computeDerivedConstants(usesLights, usesEnv);
 
@@ -1304,10 +1305,12 @@ applyProgramsAndConstants(void)
 	uploadConsts(C_FOGDATA, 2);
 	if(curVP == VP_IM2D)
 		uploadConsts(C_XFORM, 1);
-	if(curVP == VP_FXAA){
+	if(curVP == VP_FXAA || curVP == VP_POST){
 		uploadConsts(C_XFORM, 1);
 		uploadConsts(C_FXAA, 1);
 	}
+	if(curVP == VP_LEEDS)
+		uploadConsts(C_WORLDAMB, 1);
 	if(usesEnv)
 		uploadConsts(C_ENVROW, 4);
 }
@@ -1362,6 +1365,8 @@ programsInit(void)
 	loadVP(VP_IM2D, rw_im2d_vpo, "im2d");
 	loadVP(VP_IM3D, rw_im3d_vpo, "im3d");
 	loadVP(VP_FXAA, rw_fxaa_vpo, "fxaa");
+	loadVP(VP_LEEDS, rw_leeds_vpo, "leeds");
+	loadVP(VP_POST, rw_post_vpo, "post");
 	if(!loadFP(FP_SIMPLE, rw_simple_fpo, "simple", 1))
 		return false;
 	if(!loadFP(FP_ENV, rw_env_fpo, "env", 2))
@@ -1371,6 +1376,10 @@ programsInit(void)
 	if(!loadFP(FP_ADDALPHA, rw_addalpha_fpo, "addalpha", 1))
 		return false;
 	if(!loadFP(FP_FXAA, rw_fxaa_fpo, "fxaa", 1))
+		return false;
+	if(!loadFP(FP_LEEDS, rw_leeds_fpo, "leeds", 1))
+		return false;
+	if(!loadFP(FP_GAMMA, rw_gamma_fpo, "gamma", 1))
 		return false;
 	return true;
 }
@@ -1709,6 +1718,129 @@ fxaaApply(Raster *pic)
 	setVertexProgram(VP_DEFAULT);
 	setFragmentProgram(FP_SIMPLE);
 	return fxaaColor;
+}
+
+// ---- Leeds world pipeline and gamma (res-PS3 patch 27) -----------------------
+
+// the time cycle ambient of this frame (the game sets it before the scene)
+static float32 worldAmb[3] = { 1.0f, 1.0f, 1.0f };
+bool leedsLighting = true;
+
+void
+setWorldAmbient(float32 r, float32 g, float32 b)
+{
+	worldAmb[0] = r;
+	worldAmb[1] = g;
+	worldAmb[2] = b;
+}
+
+void
+setWorldColorScale(float scale)
+{
+	float32 *w = constWant[C_WORLDAMB];
+	w[0] = worldAmb[0];
+	w[1] = worldAmb[1];
+	w[2] = worldAmb[2];
+	w[3] = scale;
+}
+
+// Gamma on the camera's picture, before the HUD (Graphics > GAMMA): the
+// picture is copied into a camera texture of its own (made the first time,
+// again when the size changes), then a quad over the picture writes it back
+// through rw_gamma.fcg. ~1 ms of RSX time at 720p; nothing at gamma 1.
+static Raster *gammaCopy;
+static bool gammaFailed;
+
+void
+applyGamma(Raster *pic, float32 exponent)
+{
+	if(pic == nil || rsxCtx == nil || pic->type != Raster::CAMERA)
+		return;
+	if(exponent > 0.995f && exponent < 1.005f)
+		return;
+	int32 w = pic->width, h = pic->height;
+	if(gammaCopy && (gammaCopy->width != w || gammaCopy->height != h)){
+		gammaCopy->destroy();
+		gammaCopy = nil;
+		gammaFailed = false;
+	}
+	if(gammaFailed)
+		return;
+	uint32 srcOff, srcPitch, dstOff, dstPitch;
+	if(gammaCopy == nil){
+		gammaCopy = Raster::create(w, h, 32, Raster::CAMERATEXTURE);
+		if(gammaCopy == nil || !rasterSurface(gammaCopy, &dstOff, &dstPitch)){
+			rsxLog("[rsx] WARNING: no VRAM for the gamma picture (%dx%d): gamma off", w, h);
+			if(gammaCopy) gammaCopy->destroy();
+			gammaCopy = nil;
+			gammaFailed = true;
+			return;
+		}
+		rsxLog("[rsx] gamma picture %dx%d made", w, h);
+	}
+	if(!rasterSurface(pic, &srcOff, &srcPitch) || !rasterSurface(gammaCopy, &dstOff, &dstPitch))
+		return;
+	if(!targetValid)
+		return;
+	rsxSetWaitForIdle(rsxCtx);
+	rsxSetTransferImage(rsxCtx, GCM_TRANSFER_LOCAL_TO_LOCAL, dstOff, dstPitch, 0, 0,
+	                    srcOff, srcPitch, pic->offsetX, pic->offsetY, w, h, 4);
+	rsxSetWaitForIdle(rsxCtx);
+	textureCacheTouched();
+
+	RwStateCache saved = rwStateCache;
+	RwStateCache &s = rwStateCache;
+	s.vertexAlpha = 0;
+	s.textureAlpha = 0;
+	s.blendEnable = 0;
+	s.alphaTestEnable = 0;
+	s.alphaFunc = ALPHAALWAYS;
+	s.zwrite = 0;
+	s.ztest = 0;
+	s.cullmode = CULLNONE;
+	s.stencilenable = 0;
+	s.fogEnable = 0;
+	s.gsalpha = 0;
+	s.texstage[0].raster = gammaCopy;
+	s.texstage[0].addressingU = Texture::CLAMP;
+	s.texstage[0].addressingV = Texture::CLAMP;
+	s.texstage[0].filter = Texture::NEAREST;
+	s.texstage[1].raster = nil;
+
+	Im2DVertex v[4];
+	memset(v, 0, sizeof(v));
+	float32 xy[4][2] = { { 0.0f, 0.0f }, { (float32)w, 0.0f }, { 0.0f, (float32)h }, { (float32)w, (float32)h } };
+	for(int32 i = 0; i < 4; i++){
+		v[i].x = xy[i][0];
+		v[i].y = xy[i][1];
+		v[i].w = 1.0f;
+		v[i].r = v[i].g = v[i].b = v[i].a = 255;
+		v[i].u = xy[i][0] / w;
+		v[i].v = xy[i][1] / h;
+	}
+	uint32 off = ringWrite(v, sizeof(v));
+	if(off != 0xFFFFFFFF){
+		bindImmediateAttribs(off, sizeof(Im2DVertex), 4, offsetof(Im2DVertex, r), offsetof(Im2DVertex, u));
+		setVertexProgram(VP_POST);
+		setFragmentProgram(FP_GAMMA);
+		float32 *x = constWant[C_XFORM];
+		x[0] = 2.0f/w;
+		x[1] = -2.0f/h;
+		x[2] = -1.0f;
+		x[3] = 1.0f;
+		float32 *f = constWant[C_FXAA];
+		f[0] = exponent;
+		f[1] = f[2] = f[3] = 0.0f;
+		if(flushCache()){
+			__asm__ volatile("sync" ::: "memory");
+			rsxDrawVertexArray(rsxCtx, GCM_TYPE_TRIANGLE_STRIP, 0, 4);
+			countDraw();
+			drawStats.verts += 4;
+		}
+	}
+	rwStateCache = saved;
+	setVertexProgram(VP_DEFAULT);
+	setFragmentProgram(FP_SIMPLE);
 }
 
 static void

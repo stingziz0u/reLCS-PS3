@@ -1,0 +1,12 @@
+// rw_gamma.fcg -- gamma on the picture (Graphics > GAMMA): each channel to
+// the power 1/gamma
+void main(float2 tex0   : TEXCOORD0,
+          float4 params : TEXCOORD1,
+          uniform sampler2D tex : TEXUNIT0,
+          out float4 o_color : COLOR)
+{
+	float4 c = tex2D(tex, tex0);
+	c.rgb = pow(max(c.rgb, 0.0), params.xxx);
+	c.a = 1.0;
+	o_color = c;
+}
