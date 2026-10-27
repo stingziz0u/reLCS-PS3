@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"	// PS3_Logf
+#endif
 
 #include "main.h"
 #include "Particle.h"
@@ -4245,6 +4248,15 @@ CPed::SetExitCar(CVehicle *veh, uint32 wantedDoorNode)
 				if (veh->pDriver->IsPlayer()) {
 					if (veh->pDriver != this) {
 						m_leaveCarTimer = CTimer::GetTimeInMilliseconds() + 5000;
+#ifdef __PS3__
+						// patch 41: why a taxi passenger is "held hostage"
+						extern uint32 gPS3SayWatchUntil;
+						if (!bHeldHostageInCar && CTimer::GetTimeInMilliseconds() < gPS3SayWatchUntil)
+							PS3_Logf("[sfx] ped %d can't get out yet (held hostage): vehicle speed %.4f (%.4f squared, limit 0.005), "
+							         "turn %.4f %.4f %.4f (limit 0.01), up %.2f", GetModelIndex(), veh->m_vecMoveSpeed.Magnitude(),
+							         veh->m_vecMoveSpeed.MagnitudeSqr(), veh->m_vecTurnSpeed.x, veh->m_vecTurnSpeed.y,
+							         veh->m_vecTurnSpeed.z, veh->GetUp().z);
+#endif
 						bHeldHostageInCar = true;
 					}
 				} else {
