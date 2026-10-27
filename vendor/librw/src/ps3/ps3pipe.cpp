@@ -559,10 +559,23 @@ leedsRenderCB(Atomic *atomic, InstanceDataHeader *header)
 
 	InstanceData *inst = header->inst;
 	int32 n = header->numMeshes;
+	leedsDraws++;
+	if(leedsWantSample){
+		// patch 33: what one Leeds model is drawn with (setWorldAmbient asks)
+		leedsWantSample = false;
+		Geometry *g = atomic->geometry;
+		RGBA *c = g->colors;
+		rsxLog("[leeds] sample: %d vertices, prelit %s (first %d %d %d %d), %d meshes, first textured %d, material alpha %d",
+		       g->numVertices, c ? "kept" : "freed", c ? c[0].red : -1, c ? c[0].green : -1, c ? c[0].blue : -1,
+		       c ? c[0].alpha : -1, n, header->inst->material->texture != nil, header->inst->material->color.alpha);
+	}
 	while(n--){
 		m = inst->material;
-		// the material's alpha (distance fading); its colour isn't used
-		setMaterial(m->color, m->surfaceProps, 0.5f);
+		// only the material's alpha (distance fading) is used: rw_leeds.vcg
+		// multiplies the colour by (1, 1, 1, alpha) as the default program
+		// multiplies by the material colour
+		RGBA white = { 255, 255, 255, m->color.alpha };
+		setMaterial(white, m->surfaceProps, 0.5f);
 		setWorldColorScale(m->texture ? 255.0f/128.0f : 1.0f);
 		setTexture(0, m->texture);
 		rw::SetRenderState(VERTEXALPHA, inst->vertexAlpha || m->color.alpha != 0xFF);

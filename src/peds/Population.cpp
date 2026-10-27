@@ -606,6 +606,14 @@ CPopulation::AddToPopulation(float minDist, float maxDist, float minDistOffScree
 	// reVC-PS3 does with the cars of a vehicle rampage.
 	int32 ps3FrenzyPeds[4], ps3NumFrenzyPeds = 0;
 	bool ps3PedFrenzy = CDarkel::PS3_PedFrenzy(ps3FrenzyPeds, &ps3NumFrenzyPeds);
+	// patch 33: the cap no longer depends on Display > PED DENSITY during
+	// a rampage (Ren: at the default 0.8 too few came; at half the slider,
+	// 1.7, more than enough): it is taken as at least 1.7.
+	if (CDarkel::FrenzyOnGoing()) {
+		float ps3Density = Max(CIniFile::PedNumberMultiplier, PS3_FRENZY_DENSITY);
+		selectedMaxPeds = (CGame::IsInInterior() ? DEFAULT_MAX_NUMBER_OF_PEDS_INTERIOR : DEFAULT_MAX_NUMBER_OF_PEDS) *
+			ps3Density * stereoPedScale;
+	}
 	if (ps3PedFrenzy)
 		selectedMaxPeds *= 1.5f;
 #endif

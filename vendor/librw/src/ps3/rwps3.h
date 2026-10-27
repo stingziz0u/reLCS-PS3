@@ -178,6 +178,8 @@ extern int32 texAniso;		// 3D textures: anisotropic filtering, 1 (off), 2, 4, 8,
 extern bool fxaaOn;		// FXAA on the camera's picture before it is shown
 // res-PS3 patch 27: LCS's lighting and gamma
 extern bool leedsLighting;	// the Leeds world pipeline draws as LCS (false: as the default pipeline)
+extern uint32 leedsDraws;	// patch 33: Leeds models drawn this frame (diagnostics)
+extern bool leedsWantSample;	// log the next one drawn
 rw::ObjPipeline *leedsWorldPipeline(void);	// for the buildings' atomics (CSimpleModelInfo::SetAtomic)
 void setWorldAmbient(float32 r, float32 g, float32 b);	// the time cycle ambient, 0..1, once a frame
 void applyGamma(Raster *camRaster, float32 exponent);	// the picture to the power exponent (1/gamma)

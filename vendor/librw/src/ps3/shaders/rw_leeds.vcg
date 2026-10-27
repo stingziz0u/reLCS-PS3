@@ -3,6 +3,12 @@
 // lit by the time cycle's ambient, plus the ambient light as emission,
 // alpha from the material (distance fading). rw_leeds.fcg scales the
 // textured result: PS2 vertex colours go to 128, not 255.
+//
+// patch 33: written as the default program does it (DoColor): saturate in
+// a temporary, then ONE full write of the colour output times u_matColor,
+// which leedsRenderCB sets to (1, 1, 1, material alpha). Patch 27's
+// version saturated straight into the output in two partial writes
+// (rgb, then alpha), and on the console every Leeds model came out black.
 #include "common.cgh"
 
 uniform float4 u_worldAmb : C15;	// time cycle ambient (rgb), colour scale (w)
@@ -20,9 +26,7 @@ void main(float4 in_pos    : ATTR0,
 	o_pos = Transform(p);
 	float4 c = in_color;
 	c.rgb = c.rgb * u_worldAmb.rgb + u_ambLight.rgb * u_surfProps.w;
-	c = saturate(c);
-	c.a *= u_matColor.a;
-	o_color = c;
+	o_color = saturate(c) * u_matColor;
 	o_tex0 = in_tex0;
 	o_scale = u_worldAmb.wwww;
 	o_fog = DoFog(o_pos.w);

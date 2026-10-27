@@ -1726,12 +1726,25 @@ fxaaApply(Raster *pic)
 static float32 worldAmb[3] = { 1.0f, 1.0f, 1.0f };
 bool leedsLighting = true;
 
+uint32 leedsDraws;
+bool leedsWantSample;
+
 void
 setWorldAmbient(float32 r, float32 g, float32 b)
 {
 	worldAmb[0] = r;
 	worldAmb[1] = g;
 	worldAmb[2] = b;
+	// patch 33: PS2 LIGHTING drew every Leeds model black. Every 30 s
+	// (once a frame here), what the Leeds program gets.
+	static uint32 frames;
+	if(frames++ % 1800 == 0){
+		rsxLog("[leeds] PS2 lighting %s: time cycle ambient %.2f %.2f %.2f, ambient light %.2f %.2f %.2f; "
+		       "Leeds models drawn last frame %u",
+		       leedsLighting ? "on" : "off", r, g, b, ambLight.red, ambLight.green, ambLight.blue, leedsDraws);
+		leedsWantSample = leedsLighting;
+	}
+	leedsDraws = 0;
 }
 
 void

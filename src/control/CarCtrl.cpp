@@ -219,7 +219,11 @@ CCarCtrl::GenerateOneRandomCar()
 		if (NumRandomCars >= pPlayer->m_nTrafficMultiplier * CarDensityMultiplier * stereoCarScale *
 		    (ps3CarFrenzy ? 2.0f : CDarkel::FrenzyOnGoing() ? 1.0f : CIniFile::CarNumberMultiplier))
 			return;
-		if (NumRandomCars >= MaxNumberOfCarsInUse * stereoCarScale * (ps3CarFrenzy ? 1.5f : 1.0f))
+		// patch 33: nor does the cap depend on Display > CAR DENSITY during
+		// a rampage: at least 1.7 (half the slider), as the peds'
+		float ps3MaxCars = CDarkel::FrenzyOnGoing() ?
+			DEFAULT_MAX_NUMBER_OF_CARS * Max(CIniFile::CarNumberMultiplier, PS3_FRENZY_DENSITY) : (float)MaxNumberOfCarsInUse;
+		if (NumRandomCars >= ps3MaxCars * stereoCarScale * (ps3CarFrenzy ? 1.5f : 1.0f))
 			return;
 #else
 		if (NumRandomCars >= pPlayer->m_nTrafficMultiplier * CarDensityMultiplier * CIniFile::CarNumberMultiplier * stereoCarScale)
