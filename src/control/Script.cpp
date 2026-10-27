@@ -1583,6 +1583,99 @@ void CRunningScript::Process()
 		CMessages::BriefMessages[0].m_nStartTime = 0;
 }
 
+#ifdef __PS3__
+// patch 39: the scripts were written for 30 fps (PS2/PSP): a "WAIT 0" loop
+// runs once a frame, and what it adds or takes every pass went twice as fast
+// at 60 fps (Ren: the taxi TIP bar, TAXIDR's 46@ -= 0.25 a frame). An
+// ADD/SUB of a constant that the same script line does on consecutive
+// frames (3 in a row) to a variable nothing else touched in between is such
+// a per-frame step: scaled by the frame time against 30 fps' (x0.5 at 60;
+// time scale left out, slow motion ran the scripts at the same pace). Ints
+// keep the remainder for the next frame. Once-only adds (a coordinate
+// offset, a score) and values reset every frame aren't touched.
+struct PS3ScriptStep {
+	const CRunningScript *script;
+	uint32 ip;
+	uint32 frame;
+	int32 value;	// the variable after our last step
+	int32 streak;
+	float frac;
+	bool logged;
+};
+static PS3ScriptStep ps3Steps[128];
+static int32 ps3StepsLogged;
+
+static float
+PS3_ScriptFrameScale(void)
+{
+	float ts = CTimer::GetTimeScale();
+	float f = CTimer::GetTimeStep() / (ts > 0.01f ? ts : 0.01f) / CTimer::GetDefaultTimeStep();
+	return f < 0.05f ? 0.05f : f > 1.0f ? 1.0f : f;
+}
+
+static PS3ScriptStep*
+PS3_ScriptStepSite(const CRunningScript *s, uint32 ip, const int32 *ptr)
+{
+	PS3ScriptStep &st = ps3Steps[(ip ^ ((uintptr)s >> 4)) & 127];
+	uint32 frame = CTimer::GetFrameCounter();
+	if(st.script != s || st.ip != ip){
+		st.script = s;
+		st.ip = ip;
+		st.streak = 0;
+		st.frac = 0.0f;
+		st.logged = false;
+	}else if(st.frame + 1 == frame && *ptr == st.value)
+		st.streak++;
+	else if(st.frame != frame || *ptr != st.value)
+		st.streak = 0;
+	st.frame = frame;
+	return &st;
+}
+
+static void
+PS3_ScriptStepLog(PS3ScriptStep *st, const CRunningScript *s, float c, float f)
+{
+	if(st->logged || ps3StepsLogged >= 40)
+		return;
+	st->logged = true;
+	ps3StepsLogged++;
+	PS3_Logf("[fps] script %s at %u: %g every frame, x%.2f (the scripts' 30 fps)", s->m_abScriptName, st->ip, c, f);
+}
+
+// the step to add this frame (c: what the line says)
+static float
+PS3_ScriptStepF(const CRunningScript *s, uint32 ip, int32 *ptr, float c)
+{
+	PS3ScriptStep *st = PS3_ScriptStepSite(s, ip, ptr);
+	float f = PS3_ScriptFrameScale();
+	if(st->streak >= 2 && f < 0.95f){
+		PS3_ScriptStepLog(st, s, c, f);
+		c *= f;
+	}
+	return c;
+}
+static void
+PS3_ScriptStepDoneF(const CRunningScript *s, uint32 ip, int32 *ptr)
+{
+	ps3Steps[(ip ^ ((uintptr)s >> 4)) & 127].value = *ptr;
+}
+static int32
+PS3_ScriptStepI(const CRunningScript *s, uint32 ip, int32 *ptr, int32 c)
+{
+	PS3ScriptStep *st = PS3_ScriptStepSite(s, ip, ptr);
+	float f = PS3_ScriptFrameScale();
+	if(st->streak >= 2 && f < 0.95f){
+		PS3_ScriptStepLog(st, s, (float)c, f);
+		st->frac += c * f;
+		int32 n = (int32)st->frac;
+		st->frac -= n;
+		return n;
+	}
+	return c;
+}
+#define PS3_STEP_IP (m_nIp - 2)
+#endif
+
 int8 CRunningScript::ProcessOneCommand()
 {
 	int8 retval = -1;
@@ -1723,58 +1816,122 @@ int8 CRunningScript::ProcessCommands0To99(int32 command)
 	}
 	case COMMAND_ADD_VAL_TO_INT_VAR:
 	{
+#ifdef __PS3__
+		uint32 ps3Ip = PS3_STEP_IP;
+#endif
 		int32* ptr = GetPointerToScriptVariable(&m_nIp, VAR_GLOBAL);
 		CollectParameters(&m_nIp, 1);
+#ifdef __PS3__
+		*ptr += PS3_ScriptStepI(this, ps3Ip, ptr, GET_INTEGER_PARAM(0));
+		PS3_ScriptStepDoneF(this, ps3Ip, ptr);
+#else
 		*ptr += GET_INTEGER_PARAM(0);
+#endif
 		return 0;
 	}
 	case COMMAND_ADD_VAL_TO_FLOAT_VAR:
 	{
+#ifdef __PS3__
+		uint32 ps3Ip = PS3_STEP_IP;
+#endif
 		int32* ptr = GetPointerToScriptVariable(&m_nIp, VAR_GLOBAL);
 		CollectParameters(&m_nIp, 1);
+#ifdef __PS3__
+		*(float*)ptr += PS3_ScriptStepF(this, ps3Ip, ptr, GET_FLOAT_PARAM(0));
+		PS3_ScriptStepDoneF(this, ps3Ip, ptr);
+#else
 		*(float*)ptr += GET_FLOAT_PARAM(0);
+#endif
 		return 0;
 	}
 	case COMMAND_ADD_VAL_TO_INT_LVAR:
 	{
+#ifdef __PS3__
+		uint32 ps3Ip = PS3_STEP_IP;
+#endif
 		int32* ptr = GetPointerToScriptVariable(&m_nIp, VAR_LOCAL);
 		CollectParameters(&m_nIp, 1);
+#ifdef __PS3__
+		*ptr += PS3_ScriptStepI(this, ps3Ip, ptr, GET_INTEGER_PARAM(0));
+		PS3_ScriptStepDoneF(this, ps3Ip, ptr);
+#else
 		*ptr += GET_INTEGER_PARAM(0);
+#endif
 		return 0;
 	}
 	case COMMAND_ADD_VAL_TO_FLOAT_LVAR:
 	{
+#ifdef __PS3__
+		uint32 ps3Ip = PS3_STEP_IP;
+#endif
 		int32* ptr = GetPointerToScriptVariable(&m_nIp, VAR_LOCAL);
 		CollectParameters(&m_nIp, 1);
+#ifdef __PS3__
+		*(float*)ptr += PS3_ScriptStepF(this, ps3Ip, ptr, GET_FLOAT_PARAM(0));
+		PS3_ScriptStepDoneF(this, ps3Ip, ptr);
+#else
 		*(float*)ptr += GET_FLOAT_PARAM(0);
+#endif
 		return 0;
 	}
 	case COMMAND_SUB_VAL_FROM_INT_VAR:
 	{
+#ifdef __PS3__
+		uint32 ps3Ip = PS3_STEP_IP;
+#endif
 		int32* ptr = GetPointerToScriptVariable(&m_nIp, VAR_GLOBAL);
 		CollectParameters(&m_nIp, 1);
+#ifdef __PS3__
+		*ptr -= PS3_ScriptStepI(this, ps3Ip, ptr, GET_INTEGER_PARAM(0));
+		PS3_ScriptStepDoneF(this, ps3Ip, ptr);
+#else
 		*ptr -= GET_INTEGER_PARAM(0);
+#endif
 		return 0;
 	}
 	case COMMAND_SUB_VAL_FROM_FLOAT_VAR:
 	{
+#ifdef __PS3__
+		uint32 ps3Ip = PS3_STEP_IP;
+#endif
 		int32* ptr = GetPointerToScriptVariable(&m_nIp, VAR_GLOBAL);
 		CollectParameters(&m_nIp, 1);
+#ifdef __PS3__
+		*(float*)ptr -= PS3_ScriptStepF(this, ps3Ip, ptr, GET_FLOAT_PARAM(0));
+		PS3_ScriptStepDoneF(this, ps3Ip, ptr);
+#else
 		*(float*)ptr -= GET_FLOAT_PARAM(0);
+#endif
 		return 0;
 	}
 	case COMMAND_SUB_VAL_FROM_INT_LVAR:
 	{
+#ifdef __PS3__
+		uint32 ps3Ip = PS3_STEP_IP;
+#endif
 		int32* ptr = GetPointerToScriptVariable(&m_nIp, VAR_LOCAL);
 		CollectParameters(&m_nIp, 1);
+#ifdef __PS3__
+		*ptr -= PS3_ScriptStepI(this, ps3Ip, ptr, GET_INTEGER_PARAM(0));
+		PS3_ScriptStepDoneF(this, ps3Ip, ptr);
+#else
 		*ptr -= GET_INTEGER_PARAM(0);
+#endif
 		return 0;
 	}
 	case COMMAND_SUB_VAL_FROM_FLOAT_LVAR:
 	{
+#ifdef __PS3__
+		uint32 ps3Ip = PS3_STEP_IP;
+#endif
 		int32* ptr = GetPointerToScriptVariable(&m_nIp, VAR_LOCAL);
 		CollectParameters(&m_nIp, 1);
+#ifdef __PS3__
+		*(float*)ptr -= PS3_ScriptStepF(this, ps3Ip, ptr, GET_FLOAT_PARAM(0));
+		PS3_ScriptStepDoneF(this, ps3Ip, ptr);
+#else
 		*(float*)ptr -= GET_FLOAT_PARAM(0);
+#endif
 		return 0;
 	}
 	case COMMAND_MULT_INT_VAR_BY_VAL:
