@@ -501,6 +501,14 @@ bool CEntity::IsEntityOccluded(void) {
 	CVector coors;
 	float width, height;
 
+#ifdef __PS3__
+	// patch 28: USRDIR/noocclusion.txt, to see whether the occluders hide
+	// what they shouldn't (Renderer.cpp, "[lod]")
+	extern bool gPS3NoOcclusion;
+	if (gPS3NoOcclusion)
+		return false;
+#endif
+
 	if (COcclusion::NumActiveOccluders == 0 || !CalcScreenCoors(GetBoundCentre(), &coors, &width, &height))
 		return false;
 

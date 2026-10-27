@@ -884,6 +884,23 @@ PS3_GameMain(void)
 		}
 		PS3_Logf("[5] texture thread: %s", rw::ps3::texAsync ? "on (notexthread.txt turns it off)" : "OFF (notexthread.txt)");
 	}
+	// patch 28: the LOD buildings' pairing with their detailed instances and
+	// the occluders, both switchable to compare the pop-in
+	{
+		extern bool gPS3LodPairs, gPS3NoOcclusion;	// Renderer.cpp
+		FILE *lp = fopen(PS3_USRDIR "/nolodpairs.txt", "rb");
+		if (lp) {
+			fclose(lp);
+			gPS3LodPairs = false;
+		}
+		FILE *oc = fopen(PS3_USRDIR "/noocclusion.txt", "rb");
+		if (oc) {
+			fclose(oc);
+			gPS3NoOcclusion = true;
+		}
+		PS3_Logf("[5] LOD pairs: %s; occluders: %s", gPS3LodPairs ? "on (nolodpairs.txt turns them off)" : "OFF (nolodpairs.txt)",
+		         gPS3NoOcclusion ? "OFF (noocclusion.txt)" : "on (noocclusion.txt turns them off)");
+	}
 #endif
 
 	openParams.width = PS3_SCREEN_WIDTH;

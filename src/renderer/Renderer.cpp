@@ -33,6 +33,10 @@
 #include "Ferry.h"
 #include "Plane.h"
 #include "WaterLevel.h"
+#ifdef __PS3__
+#include <stdlib.h>	// qsort, bsearch (patch 28)
+#include "Timecycle.h"
+#endif
 
 // maybe some day...
 //#define GTA_WORLDSTREAM
@@ -153,6 +157,152 @@ CEntity *PS3_renderEntity;
 #define PS3_RENDER_ENTITY(tag, e) (PS3_renderEntity = (e), PS3_CRUMB(tag, (e)->GetModelIndex() | (e)->GetType()<<16))
 #else
 #define PS3_RENDER_ENTITY(tag, e)
+#endif
+
+#ifdef __PS3__
+// ---- patch 28: LCS's LOD buildings (pop-in) -------------------------------------
+//
+// A LOD building (big building) hides itself near the camera when its
+// detailed model ("non-LOD", GetRelatedModel) is loaded and faded in. That
+// says nothing about this detailed instance: it can be outside the sector
+// scan (LCS draws some detailed buildings farther than LOD_DISTANCE), off
+// its own range, or not scanned yet, and then neither is drawn: a hole that
+// pops when the camera moves. Flying makes it worse (the LOD multiplier
+// grows with height). REGTA-3DSPort-Complete found the same and pairs each
+// LOD with the detailed instances the sector scan actually accepted this
+// frame; this is that idea without the 3DS's draw budgets: the LOD hides
+// only when a detailed instance of its model, at its place, was drawn.
+// USRDIR/nolodpairs.txt: the game's rule, to compare.
+bool gPS3LodPairs = true;
+static int16 ps3LodHigh[MODELINFOSIZE];	// LOD model -> its detailed model, -1
+static uint8 ps3HasLod[MODELINFOSIZE];	// detailed model with a LOD model
+static bool ps3LodPairsBuilt;
+static uint32 ps3VisFrame = 1;
+struct PS3VisibleHigh {
+	uint32 frame;
+	int32 n;
+	CEntity *ent[4];
+};
+static PS3VisibleHigh ps3VisHigh[MODELINFOSIZE];
+
+struct PS3ModelPtr { CBaseModelInfo *mi; int32 id; };
+static int
+PS3_CmpModelPtr(const void *a, const void *b)
+{
+	uintptr pa = (uintptr)((const PS3ModelPtr*)a)->mi, pb = (uintptr)((const PS3ModelPtr*)b)->mi;
+	return pa < pb ? -1 : pa > pb ? 1 : 0;
+}
+
+// once, after the IDEs (the first frame drawn): which LOD goes with which model
+static void
+PS3_BuildLodPairs(void)
+{
+	static PS3ModelPtr ptrs[MODELINFOSIZE];
+	int32 n = 0, pairs = 0;
+	ps3LodPairsBuilt = true;
+	for(int32 i = 0; i < MODELINFOSIZE; i++){
+		ps3LodHigh[i] = -1;
+		ps3HasLod[i] = 0;
+		CBaseModelInfo *mi = CModelInfo::GetModelInfo(i);
+		if(mi && mi->IsSimple()){
+			ptrs[n].mi = mi;
+			ptrs[n].id = i;
+			n++;
+		}
+	}
+	qsort(ptrs, n, sizeof(ptrs[0]), PS3_CmpModelPtr);
+	for(int32 i = 0; i < n; i++){
+		CSimpleModelInfo *low = (CSimpleModelInfo*)ptrs[i].mi;
+		if(!low->m_isBigBuilding || low->GetRelatedModel() == nil)
+			continue;
+		PS3ModelPtr key = { low->GetRelatedModel(), 0 };
+		PS3ModelPtr *high = (PS3ModelPtr*)bsearch(&key, ptrs, n, sizeof(ptrs[0]), PS3_CmpModelPtr);
+		if(high == nil || ((CSimpleModelInfo*)high->mi)->m_isBigBuilding)
+			continue;
+		ps3LodHigh[ptrs[i].id] = high->id;
+		ps3HasLod[high->id] = 1;
+		pairs++;
+	}
+	PS3_Logf("[lod] %d LOD models paired with their detailed model (%s)", pairs,
+	         gPS3LodPairs ? "a LOD hides only for a detailed instance drawn at its place" : "OFF: nolodpairs.txt");
+}
+
+// the sector scan accepted this detailed instance (faded in): it is drawn
+static void
+PS3_MarkHighDrawn(CEntity *ent)
+{
+	int32 id = ent->GetModelIndex();
+	if(id < 0 || id >= MODELINFOSIZE || !ps3HasLod[id])
+		return;
+	PS3VisibleHigh &v = ps3VisHigh[id];
+	if(v.frame != ps3VisFrame){
+		v.frame = ps3VisFrame;
+		v.n = 0;
+	}
+	if(v.n < 4)
+		v.ent[v.n] = ent;
+	v.n++;
+}
+
+// may this LOD hide? (its detailed model is loaded and faded in)
+static bool
+PS3_LodMayHide(CEntity *lod)
+{
+	if(!gPS3LodPairs || !ps3LodPairsBuilt)
+		return true;
+	int32 id = lod->GetModelIndex();
+	if(id < 0 || id >= MODELINFOSIZE || ps3LodHigh[id] < 0)
+		return true;	// not paired: the game's rule
+	PS3VisibleHigh &v = ps3VisHigh[ps3LodHigh[id]];
+	if(v.frame != ps3VisFrame || v.n == 0)
+		return false;
+	if(v.n > 4)
+		return true;	// many instances of the model: as the game
+	for(int32 i = 0; i < v.n; i++){
+		CEntity *e = v.ent[i];
+		// LOD and detailed instance often have different pivots: their
+		// bounds touch, or they stand within 2 m of each other
+		CVector d = e->GetPosition() - lod->GetPosition();
+		if(d.x*d.x + d.y*d.y < 4.0f || lod->GetIsTouching(e))
+			return true;
+	}
+	return false;
+}
+
+// What the LOD buildings did on the last frame, for "[lod]" every 10 s
+enum {
+	PS3BB_VISIBLE, PS3BB_FADING, PS3BB_DRAWLAST, PS3BB_HIGH_DRAWN, PS3BB_KEPT,
+	PS3BB_OFFSCREEN, PS3BB_OCCLUDED, PS3BB_HIDDEN, PS3BB_TOOFAR, PS3BB_STREAM,
+	PS3BB_TIME, PS3BB_AREA, PS3BB_PLANE,
+	PS3HI_VISIBLE, PS3HI_FADING, PS3HI_OFFSCREEN, PS3HI_OCCLUDED, PS3HI_NOTLOADED,
+	PS3BB_NUM
+};
+static int32 ps3BB[2][PS3BB_NUM];	// [0] this frame, [1] the last one
+#define PS3_BB(r) (ps3BB[0][r]++)
+bool gPS3NoOcclusion;	// USRDIR/noocclusion.txt (Occlusion.cpp)
+
+void
+PS3_LodReport(void)
+{
+	const int32 *c = ps3BB[1];
+	PS3_Logf("[lod] LOD buildings on the last frame: drawn %d, fading %d, draw last %d, hidden for their detailed model %d, "
+	         "kept (detailed one not drawn) %d, off screen %d, occluded %d, invisible %d, too far %d, streaming %d, "
+	         "time %d, area %d, planes %d",
+	         c[PS3BB_VISIBLE], c[PS3BB_FADING], c[PS3BB_DRAWLAST], c[PS3BB_HIGH_DRAWN], c[PS3BB_KEPT],
+	         c[PS3BB_OFFSCREEN], c[PS3BB_OCCLUDED], c[PS3BB_HIDDEN], c[PS3BB_TOOFAR], c[PS3BB_STREAM],
+	         c[PS3BB_TIME], c[PS3BB_AREA], c[PS3BB_PLANE]);
+	PS3_Logf("[lod]   detailed models with a LOD: drawn %d, fading %d, off screen %d, occluded %d, not loaded or out of range %d; "
+	         "far clip %.0f, fog from %.0f, LOD x%.2f (draw distance %.2f), camera at %.0f %.0f %.0f%s%s",
+	         c[PS3HI_VISIBLE], c[PS3HI_FADING], c[PS3HI_OFFSCREEN], c[PS3HI_OCCLUDED], c[PS3HI_NOTLOADED],
+	         TheCamera.m_pRwCamera ? RwCameraGetFarClipPlane(TheCamera.m_pRwCamera) : 0.0f, CTimeCycle::GetFogStart(),
+	         TheCamera.LODDistMultiplier, CRenderer::ms_lodDistScale,
+	         TheCamera.GetPosition().x, TheCamera.GetPosition().y, TheCamera.GetPosition().z,
+	         gPS3LodPairs ? "" : ", pairs OFF", gPS3NoOcclusion ? ", occlusion OFF" : "");
+}
+#define PS3_HI(r) do { if(ps3HasLod[ent->GetModelIndex()]) ps3BB[0][r]++; } while(0)
+#else
+#define PS3_BB(r)
+#define PS3_HI(r)
 #endif
 
 void
@@ -678,6 +828,13 @@ CRenderer::RenderWater(void)
 void
 CRenderer::ClearForFrame(void)
 {
+#ifdef __PS3__
+	if(!ps3LodPairsBuilt)
+		PS3_BuildLodPairs();
+	ps3VisFrame++;
+	memcpy(ps3BB[1], ps3BB[0], sizeof(ps3BB[0]));
+	memset(ps3BB[0], 0, sizeof(ps3BB[0]));
+#endif
 	ms_nNoOfVisibleEntities = 0;
 	ms_nNoOfVisibleVehicles = 0;
 	ms_nNoOfInVisibleEntities = 0;
@@ -873,7 +1030,12 @@ CRenderer::SetupEntityVisibility(CEntity *ent)
 		if(ent->m_rwObject == nil || !ent->bIsVisible)
 			return VIS_INVISIBLE;
 
+#ifdef __PS3__
 		if(!ent->GetIsOnScreen() || ent->IsEntityOccluded()){
+			PS3_HI(!ent->GetIsOnScreen() ? PS3HI_OFFSCREEN : PS3HI_OCCLUDED);
+#else
+		if(!ent->GetIsOnScreen() || ent->IsEntityOccluded()){
+#endif
 			mi->m_alpha = 255;
 			return VIS_OFFSCREEN;
 		}
@@ -881,8 +1043,14 @@ CRenderer::SetupEntityVisibility(CEntity *ent)
 		if(mi->m_alpha != 255){
 			CVisibilityPlugins::InsertEntityIntoSortedList(ent, dist);
 			ent->bDistanceFade = true;
+			PS3_HI(PS3HI_FADING);
 			return VIS_INVISIBLE;
 		}
+#ifdef __PS3__
+		// patch 28: drawn from here on (opaque, or in the sorted list)
+		PS3_HI(PS3HI_VISIBLE);
+		PS3_MarkHighDrawn(ent);
+#endif
 
 		if(mi->m_drawLast || ent->bDrawLast){
 			if(CVisibilityPlugins::InsertEntityIntoSortedList(ent, dist)){
@@ -892,6 +1060,9 @@ CRenderer::SetupEntityVisibility(CEntity *ent)
 		}
 		return VIS_VISIBLE;
 	}
+#ifdef __PS3__
+	PS3_HI(PS3HI_NOTLOADED);
+#endif
 
 	// Object is not loaded, figure out what to do
 
@@ -941,8 +1112,10 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 	CTimeModelInfo *ti;
 	int32 other;
 
-	if(!IsAreaVisible(ent->m_area))
+	if(!IsAreaVisible(ent->m_area)){
+		PS3_BB(PS3BB_AREA);
 		return VIS_INVISIBLE;
+	}
 
 	bool request = true;
 	if(mi->GetModelType() == MITYPE_TIME){
@@ -956,13 +1129,14 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 			// Hide if possible
 			if(CANTIMECULL){
 				ent->DeleteRwObject();
+				PS3_BB(PS3BB_TIME);
 				return VIS_INVISIBLE;
 			}
 			// can't cull, so we'll try to draw this one, but don't request
 			// it since what we really want is the other one.
 			request = false;
 		}
-	}else if(mi->GetModelType() == MITYPE_VEHICLE)
+	}else if(mi->GetModelType() == MITYPE_VEHICLE){
 #ifdef __PS3__
 		// The planes (CPlane: airtrain, the chopper and deaddodo of the flight
 		// paths) live in the big building list. Far away they swap their model
@@ -970,10 +1144,12 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 		// model at all, drawn anyway, and SetupVehicleVariables(nil) killed the
 		// game thread (patch 22-24 logs). As InsertEntityIntoList: no model,
 		// nothing to draw.
+		PS3_BB(PS3BB_PLANE);
 		return ent->IsVisible() && ent->m_rwObject ? VIS_VISIBLE : VIS_INVISIBLE;
 #else
 		return ent->IsVisible() ? VIS_VISIBLE : VIS_INVISIBLE;
 #endif
+	}
 
 	float dist = (ms_vecCameraPosition-ent->GetPosition()).Magnitude();
 	CSimpleModelInfo *nonLOD = mi->GetRelatedModel();
@@ -983,9 +1159,24 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 	// loaded or not completely faded in yet.
 	if(dist < mi->GetNearDistance() && dist < LOD_DISTANCE + STREAM_DISTANCE){
 		// No non-LOD or non-LOD is completely visible.
+#ifdef __PS3__
+		// patch 28: and the detailed instance at this place was drawn
+		if(nonLOD == nil){
+			PS3_BB(PS3BB_HIGH_DRAWN);
+			return VIS_INVISIBLE;
+		}
+		if(nonLOD->GetRwObject() && nonLOD->m_alpha == 255){
+			if(PS3_LodMayHide(ent)){
+				PS3_BB(PS3BB_HIGH_DRAWN);
+				return VIS_INVISIBLE;
+			}
+			PS3_BB(PS3BB_KEPT);
+		}
+#else
 		if(nonLOD == nil ||
 		   nonLOD->GetRwObject() && nonLOD->m_alpha == 255)
 			return VIS_INVISIBLE;
+#endif
 
 		// But if it is a time object, we'd rather draw the wrong
 		// non-LOD than the right LOD.
@@ -1009,7 +1200,12 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 		if(RpAtomicGetGeometry(a) != RpAtomicGetGeometry(rwobj))
 			RpAtomicSetGeometry(rwobj, RpAtomicGetGeometry(a), rpATOMICSAMEBOUNDINGSPHERE); // originally 5 (mistake?)
 		mi->IncreaseAlpha();
+#ifdef __PS3__
 		if(!ent->IsVisible() || !ent->GetIsOnScreenComplex() || ent->IsEntityOccluded()){
+			PS3_BB(!ent->IsVisible() ? PS3BB_HIDDEN : !ent->GetIsOnScreenComplex() ? PS3BB_OFFSCREEN : PS3BB_OCCLUDED);
+#else
+		if(!ent->IsVisible() || !ent->GetIsOnScreenComplex() || ent->IsEntityOccluded()){
+#endif
 			mi->m_alpha = 255;
 			return VIS_INVISIBLE;
 		}
@@ -1017,19 +1213,23 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 		if(mi->m_alpha != 255){
 			CVisibilityPlugins::InsertEntityIntoSortedList(ent, dist);
 			ent->bDistanceFade = true;
+			PS3_BB(PS3BB_FADING);
 			return VIS_INVISIBLE;
 		}
 
 		if(mi->m_drawLast){
 			CVisibilityPlugins::InsertEntityIntoSortedList(ent, dist);
 			ent->bDistanceFade = false;
+			PS3_BB(PS3BB_DRAWLAST);
 			return VIS_INVISIBLE;
 		}
+		PS3_BB(PS3BB_VISIBLE);
 		return VIS_VISIBLE;
 	}
 
 	if(mi->m_noFade){
 		ent->DeleteRwObject();
+		PS3_BB(PS3BB_TOOFAR);
 		return VIS_INVISIBLE;
 	}
 
@@ -1038,9 +1238,11 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 	a = mi->GetFirstAtomicFromDistance(dist - FADE_DISTANCE);
 	if(a == nil){
 		if(ent->bStreamBIGBuilding && dist-STREAM_DISTANCE-FADE_DISTANCE < mi->GetLodDistance(0) && request){
+			PS3_BB(PS3BB_STREAM);
 			return ent->GetIsOnScreen() ? VIS_STREAMME : VIS_INVISIBLE;
 		}else{
 			ent->DeleteRwObject();
+			PS3_BB(PS3BB_TOOFAR);
 			return VIS_INVISIBLE;
 		}
 	}
@@ -1055,10 +1257,12 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 	mi->IncreaseAlpha();
 	if(!ent->IsVisible() || !ent->GetIsOnScreenComplex() || ent->IsEntityOccluded()){
 		mi->m_alpha = 255;
+		PS3_BB(PS3BB_OFFSCREEN);
 		return VIS_INVISIBLE;
 	}
 	CVisibilityPlugins::InsertEntityIntoSortedList(ent, dist);
 	ent->bDistanceFade = true;
+	PS3_BB(PS3BB_FADING);
 	return VIS_INVISIBLE;
 }
 

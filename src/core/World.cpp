@@ -2660,9 +2660,12 @@ CWorld::CheckObjectsEffectedByFire(float x, float y, float z, float radius, CEnt
 // grows over hours (an audio entity never given back, an object pool that
 // fills) shows here long before it breaks anything (Cabmageddon, reVC-PS3
 // patch 57: a crash after 2.5 hours, not in a short session).
+void PS3_LodReport(void);	// Renderer.cpp (patch 28)
+
 void
 PS3_PoolsReport(void)
 {
+	PS3_LodReport();
 	int audio = 0;
 	for (int i = 0; i < NUM_AUDIOENTITIES; i++)
 		if (AudioManager.m_asAudioEntities[i].m_bIsUsed)
