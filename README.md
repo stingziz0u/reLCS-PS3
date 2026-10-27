@@ -93,11 +93,6 @@ else plays as the original):
   the density sliders (at least half of their range), the gang or the
   vehicles of the rampage are asked for and make up half of what appears,
   so there are enough targets.
-- **Unique jump in Chinatown** (under the Callahan Bridge): its landing
-  area starts 10 m earlier. Clearing the train tracks at full speed still
-  fell short of it.
-- **Taxi fares**: the passenger no longer screams in panic while the taxi
-  rolls to a stop at the destination.
 - **60 fps**: vehicle rotation damping and the scripts' per-frame steps are
   scaled to the frame time, so they behave as at 30 fps.
 
