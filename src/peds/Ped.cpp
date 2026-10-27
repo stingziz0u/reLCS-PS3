@@ -3117,6 +3117,18 @@ CPed::ProcessControl(void)
 
 			if (bHeldHostageInCar) {
 				if (m_pMyVehicle && m_pMyVehicle->pDriver && m_pMyVehicle->pDriver->IsPlayer()) {
+#ifdef __PS3__
+					// patch 42: a taxi fare gets out at its stop while the
+					// taxi still rolls (TAXIDR drops off on reaching the
+					// area, with no stop): it is "held" until the taxi is
+					// still and screamed in panic all along (Ren; [sfx]:
+					// 30 SOUND_PED_FLEE_SPRINT from 49 km/h to standstill).
+					// A mission char the script only told to get out isn't
+					// a hostage; one it made frightened
+					// (SET_CHAR_FRIGHTENED_IN_JACKED_CAR, b1A4_2: the fare
+					// bailing out of a wrecked taxi) still screams.
+					if (CharCreatedBy != MISSION_CHAR || b1A4_2)
+#endif
 					Say(SOUND_PED_FLEE_SPRINT);
 				}
 			}
