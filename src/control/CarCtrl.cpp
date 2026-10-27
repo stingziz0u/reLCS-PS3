@@ -194,6 +194,10 @@ CCarCtrl::GenerateOneRandomCar()
 	CZoneInfo zone;
 	CTheZones::GetZoneInfoForTimeOfDay(&vecTargetPos, &zone);
 	pPlayer->m_nTrafficMultiplier = pPlayer->m_fRoadDensity * zone.carDensity;
+#ifdef __PS3__
+	int32 ps3FrenzyModels[4], ps3NumFrenzyModels = 0;
+	bool ps3CarFrenzy = CDarkel::PS3_VehicleFrenzy(ps3FrenzyModels, &ps3NumFrenzyModels);
+#endif
 #ifdef GTA_NETWORK
 	if (gIsMultiplayerGame) {
 		// TODO (count number of players within 250 meters from spawn position
@@ -207,10 +211,22 @@ CCarCtrl::GenerateOneRandomCar()
 #endif
 	{
 		const float stereoCarScale = AmbientCarScale3DS();
+#ifdef __PS3__
+		// patch 29: reVC-PS3 patch 52 (its CarCtrl part didn't come with
+		// the merge): any rampage lifts the car density as it lifts the
+		// peds', and a rampage against vehicles doubles the traffic, takes
+		// the cap x1.5 and makes half of the cars of its models
+		if (NumRandomCars >= pPlayer->m_nTrafficMultiplier * CarDensityMultiplier * stereoCarScale *
+		    (ps3CarFrenzy ? 2.0f : CDarkel::FrenzyOnGoing() ? 1.0f : CIniFile::CarNumberMultiplier))
+			return;
+		if (NumRandomCars >= MaxNumberOfCarsInUse * stereoCarScale * (ps3CarFrenzy ? 1.5f : 1.0f))
+			return;
+#else
 		if (NumRandomCars >= pPlayer->m_nTrafficMultiplier * CarDensityMultiplier * CIniFile::CarNumberMultiplier * stereoCarScale)
 			return;
 		if (NumRandomCars >= MaxNumberOfCarsInUse * stereoCarScale)
 			return;
+#endif
 		if (CPools::GetVehiclePool()->GetSize() - CPools::GetVehiclePool()->GetNoOfUsedSpaces() <= 8)
 			return;
 	}
@@ -241,6 +257,17 @@ CCarCtrl::GenerateOneRandomCar()
 				carModel = ChooseModel(&zone, &carClass);
 				if (carModel == -1)
 					return;
+#ifdef __PS3__
+				if (ps3NumFrenzyModels > 0 && (CGeneral::GetRandomNumber() & 1)) {
+					int32 m = ps3FrenzyModels[CGeneral::GetRandomNumber() % ps3NumFrenzyModels];
+					CBaseModelInfo *mi = CModelInfo::GetModelInfo(m);
+					if (CStreaming::HasModelLoaded(m) && mi && mi->GetModelType() == MITYPE_VEHICLE &&
+					    ((CVehicleModelInfo*)mi)->m_vehicleType == VEHICLE_TYPE_CAR) {
+						carModel = m;
+						carClass = ((CVehicleModelInfo*)mi)->m_vehicleClass;
+					}
+				}
+#endif
 				if (!(carClass == COPS && pWanted->GetWantedLevel() >= 1))
 					/* All cop spawns with wanted level are handled by condition above. */
 					/* In particular it means that cop cars never spawn if player has wanted level of 1. */

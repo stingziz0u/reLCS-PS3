@@ -598,6 +598,17 @@ CPopulation::AddToPopulation(float minDist, float maxDist, float minDistOffScree
 		missionAndWeatherMult = 1.0f;
 	const float stereoPedScale = AmbientPedScale3DS();
 	float selectedMaxPeds = (CGame::IsInInterior() ? CPopulation::MaxNumberOfPedsInUseInterior : CPopulation::MaxNumberOfPedsInUse) * stereoPedScale;
+#ifdef __PS3__
+	// patch 29: rampages against peds (Ren: 7 of 30 Triads found in two
+	// minutes). The peds' cap is 25 x the ped density (20 at 0.8): x1.5
+	// while one runs, and when it names ped models half of the new peds
+	// are of them (below; requested when it starts), as patch 52 of
+	// reVC-PS3 does with the cars of a vehicle rampage.
+	int32 ps3FrenzyPeds[4], ps3NumFrenzyPeds = 0;
+	bool ps3PedFrenzy = CDarkel::PS3_PedFrenzy(ps3FrenzyPeds, &ps3NumFrenzyPeds);
+	if (ps3PedFrenzy)
+		selectedMaxPeds *= 1.5f;
+#endif
 
 	// Yeah, float
 	float maxPossiblePedsForArea = (zoneInfo.pedDensity + zoneInfo.carDensity) * playerInfo->m_fRoadDensity * PedDensityMultiplier
@@ -645,6 +656,25 @@ CPopulation::AddToPopulation(float minDist, float maxDist, float minDistOffScree
 				}
 			}
 		}
+#ifdef __PS3__
+		if (!addCop && ps3NumFrenzyPeds > 0 && (CGeneral::GetRandomNumber() & 1)) {
+			int32 m = ps3FrenzyPeds[CGeneral::GetRandomNumber() % ps3NumFrenzyPeds];
+			if (!CStreaming::HasModelLoaded(m))
+				CStreaming::RequestModel(m, STREAMFLAGS_DEPENDENCY);
+			else {
+				uint32 type = ((CPedModelInfo*)CModelInfo::GetModelInfo(m))->m_pedType;
+				pedTypeToAdd = type;
+				man = woman = -1;
+				if (type >= PEDTYPE_GANG1 && type <= PEDTYPE_GANG9 && !IsSecurityGuard((ePedType)type)) {
+					// a gang: placed as its gangs are (a group, its models)
+					isSecurityGuard = false;
+				} else {
+					modelToAdd = m;
+					isSecurityGuard = IsSecurityGuard((ePedType)type);
+				}
+			}
+		}
+#endif
 		if (!addCop && m_AllRandomPedsThisType > PEDTYPE_PLAYER1)
 			pedTypeToAdd = m_AllRandomPedsThisType;
 

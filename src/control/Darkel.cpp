@@ -317,6 +317,11 @@ CDarkel::StartFrenzy(eWeaponType weaponType, int32 time, uint16 kill, int32 mode
 		if (PS3_VehicleFrenzy(models, &n))
 			for (int i = 0; i < n; i++)
 				CStreaming::RequestModel(models[i], STREAMFLAGS_DEPENDENCY);
+		// patch 29: and the peds of a rampage against some ped models
+		// (Population.cpp makes half of the new peds of them)
+		if (PS3_PedFrenzy(models, &n))
+			for (int i = 0; i < n; i++)
+				CStreaming::RequestModel(models[i], STREAMFLAGS_DEPENDENCY);
 	}
 #endif
 
@@ -467,6 +472,25 @@ CDarkel::PS3_VehicleFrenzy(int32 *models, int32 *numModels)
 			continue;
 		CBaseModelInfo *mi = CModelInfo::GetModelInfo(m[i]);
 		if (mi && mi->GetModelType() == MITYPE_VEHICLE)
+			models[(*numModels)++] = m[i];
+	}
+	return *numModels > 0;
+}
+
+bool
+CDarkel::PS3_PedFrenzy(int32 *models, int32 *numModels)
+{
+	*numModels = 0;
+	if (!FrenzyOnGoing())
+		return false;
+	if (ModelToKill == FRENZY_ANY_PED)
+		return true;
+	int32 m[4] = { ModelToKill, ModelToKill2, ModelToKill3, ModelToKill4 };
+	for (int i = 0; i < 4; i++) {
+		if (m[i] < 0 || m[i] >= MODELINFOSIZE)
+			continue;
+		CBaseModelInfo *mi = CModelInfo::GetModelInfo(m[i]);
+		if (mi && mi->GetModelType() == MITYPE_PED)
 			models[(*numModels)++] = m[i];
 	}
 	return *numModels > 0;

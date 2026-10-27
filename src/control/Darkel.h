@@ -55,6 +55,9 @@ public:
 	// a frenzy against vehicles: true; its vehicle models in models[] (0
 	// of them: any car), returns how many
 	static bool PS3_VehicleFrenzy(int32 *models, int32 *numModels);
+	// a frenzy against peds: true; its ped models in models[] (0 of them:
+	// any ped), returns how many (res-PS3 patch 29)
+	static bool PS3_PedFrenzy(int32 *models, int32 *numModels);
 #endif
 
 };
