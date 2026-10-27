@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"	// PS3_Logf
+#endif
 
 #include "Script.h"
 #include "ScriptCommands.h"
@@ -2382,6 +2385,15 @@ int8 CRunningScript::ProcessCommands700To799(int32 command)
 		return 0;
 	case COMMAND_REGISTER_PASSENGER_DROPPED_OFF_TAXI:
 		++CStats::PassengersDroppedOffWithTaxi;
+#ifdef __PS3__
+		{
+			// patch 40: the sounds of the next 6 s ([sfx], sampman_ps3.cpp)
+			extern uint32 gPS3SfxWatchUntil;
+			extern uint32 gPS3SayWatchUntil;
+			gPS3SfxWatchUntil = gPS3SayWatchUntil = CTimer::GetTimeInMilliseconds() + 6000;
+			PS3_Logf("[sfx] taxi passenger dropped off: the sounds of the next 6 s");
+		}
+#endif
 		return 0;
 	case COMMAND_REGISTER_MONEY_MADE_TAXI:
 		CollectParameters(&m_nIp, 1);

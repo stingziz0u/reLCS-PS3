@@ -10188,9 +10188,19 @@ CPed::Dress(void)
 	RestoreHeadingRate();
 }
 
+#ifdef __PS3__
+uint32 gPS3SayWatchUntil;	// patch 40: [sfx] lines of ped speech until then (ms)
+#endif
+
 void
 CPed::Say(uint16 audio, int32 time)
 {
+#ifdef __PS3__
+	if (CTimer::GetTimeInMilliseconds() < gPS3SayWatchUntil)
+		PS3_Logf("[sfx] ped %d (%s, type %d, state %d, objective %d) says %d%s", GetModelIndex(),
+		         CModelInfo::GetModelInfo(GetModelIndex())->GetModelName(), m_nPedType, m_nPedState, m_objective,
+		         audio, m_delayedSoundID == -1 ? "" : " (ignored: still saying another)");
+#endif
 	if (m_delayedSoundID == -1) {
 		m_delayedSoundID = audio;
 		m_delayedSoundTimer = CTimer::GetTimeInMilliseconds() + time;
