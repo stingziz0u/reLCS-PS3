@@ -119,9 +119,9 @@ inline void setMaterial(uint32 flags, const RGBA &color, const SurfaceProperties
 		setMaterial(white, surfaceprops, extraSurfProp);
 }
 void setEnvParams(Frame *envFrame, float coefficient, bool fbAlpha);
-// Leeds world pipeline (VP_LEEDS): the colour scale of the next draws (the
-// time cycle ambient comes from setWorldAmbient, once a frame)
-void setWorldColorScale(float scale);
+// Leeds world pipeline (VP_LEEDS): the material of the next draws, the
+// time cycle ambient (setWorldAmbient, once a frame) in its colour
+void setLeedsMaterial(uint8 alpha, const SurfaceProperties &surfaceprops);
 void setBones(const float *rows, int32 numBones);	// 3 float4 rows per bone
 
 void setTexture(int32 stage, Texture *tex);

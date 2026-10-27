@@ -555,7 +555,6 @@ leedsRenderCB(Atomic *atomic, InstanceDataHeader *header)
 
 	bindAttribs(header);
 	setVertexProgram(VP_LEEDS);
-	setFragmentProgram(FP_LEEDS);
 
 	InstanceData *inst = header->inst;
 	int32 n = header->numMeshes;
@@ -571,12 +570,11 @@ leedsRenderCB(Atomic *atomic, InstanceDataHeader *header)
 	}
 	while(n--){
 		m = inst->material;
-		// only the material's alpha (distance fading) is used: rw_leeds.vcg
-		// multiplies the colour by (1, 1, 1, alpha) as the default program
-		// multiplies by the material colour
-		RGBA white = { 255, 255, 255, m->color.alpha };
-		setMaterial(white, m->surfaceProps, 0.5f);
-		setWorldColorScale(m->texture ? 255.0f/128.0f : 1.0f);
+		// only the material's alpha (distance fading) is used, the time
+		// cycle ambient goes in its place; textured meshes x255/128 in
+		// rw_leeds.fcg, untextured ones as they are (rw_simple.fcg)
+		setLeedsMaterial(m->color.alpha, m->surfaceProps);
+		setFragmentProgram(m->texture ? FP_LEEDS : FP_SIMPLE);
 		setTexture(0, m->texture);
 		rw::SetRenderState(VERTEXALPHA, inst->vertexAlpha || m->color.alpha != 0xFF);
 		drawInst(header, inst);

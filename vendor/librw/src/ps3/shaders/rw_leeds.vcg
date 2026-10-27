@@ -4,14 +4,13 @@
 // alpha from the material (distance fading). rw_leeds.fcg scales the
 // textured result: PS2 vertex colours go to 128, not 255.
 //
-// patch 33: written as the default program does it (DoColor): saturate in
-// a temporary, then ONE full write of the colour output times u_matColor,
-// which leedsRenderCB sets to (1, 1, 1, material alpha). Patch 27's
-// version saturated straight into the output in two partial writes
-// (rgb, then alpha), and on the console every Leeds model came out black.
+// patch 34: only the registers every other program uses. Patches 27 and 33
+// had the time cycle ambient and the colour scale in C15 and handed the
+// scale to the fragment program in TEXCOORD1: on the console every Leeds
+// model came out black, with the values right (the [leeds] log). Now the
+// ambient comes in u_matColor.rgb (leedsRenderCB puts it there, with the
+// material's alpha in .a) and the scale is a literal of rw_leeds.fcg.
 #include "common.cgh"
-
-uniform float4 u_worldAmb : C15;	// time cycle ambient (rgb), colour scale (w)
 
 void main(float4 in_pos    : ATTR0,
           float4 in_color  : ATTR3,
@@ -19,15 +18,14 @@ void main(float4 in_pos    : ATTR0,
           out float4 o_pos   : POSITION,
           out float4 o_color : COLOR0,
           out float2 o_tex0  : TEXCOORD0,
-          out float4 o_scale : TEXCOORD1,
           out float4 o_fog   : TEXCOORD2)
 {
 	float4 p = float4(in_pos.xyz, 1.0);
 	o_pos = Transform(p);
 	float4 c = in_color;
-	c.rgb = c.rgb * u_worldAmb.rgb + u_ambLight.rgb * u_surfProps.w;
-	o_color = saturate(c) * u_matColor;
+	c.rgb = c.rgb * u_matColor.rgb + u_ambLight.rgb * u_surfProps.w;
+	// as DoColor: saturate in a temporary, one full write of the output
+	o_color = saturate(c) * float4(1.0, 1.0, 1.0, u_matColor.a);
 	o_tex0 = in_tex0;
-	o_scale = u_worldAmb.wwww;
 	o_fog = DoFog(o_pos.w);
 }

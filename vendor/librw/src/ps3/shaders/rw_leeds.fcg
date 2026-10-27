@@ -1,15 +1,14 @@
-// rw_leeds.fcg -- the Leeds world pipeline (leedsDefault.frag): texture *
-// colour, times the colour scale (255/128 for the PS2's half-range vertex
-// colours, 1 untextured), clamped, then fog.
+// rw_leeds.fcg -- the Leeds world pipeline (leedsDefault.frag) for textured
+// meshes: texture * colour, times 255/128 (the PS2's vertex colours go to
+// 128), clamped, then fog. Untextured meshes (scale 1) use rw_simple.fcg.
 void main(float4 color : COLOR0,
           float2 tex0  : TEXCOORD0,
-          float4 scale : TEXCOORD1,
           float4 fog   : TEXCOORD2,
           uniform sampler2D tex : TEXUNIT0,
           out float4 o_color : COLOR)
 {
 	float4 c = color * tex2D(tex, tex0);
-	c.rgb = saturate(c.rgb * scale.x);
+	c.rgb = saturate(c.rgb * (255.0 / 128.0));
 	c.rgb = lerp(fog.rgb, c.rgb, fog.a);
 	o_color = c;
 }

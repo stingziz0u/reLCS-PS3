@@ -201,7 +201,6 @@ enum {
 	C_FXPARAMS = 12,
 	C_COLORCLAMP = 13,
 	C_FXAA = 14,	// rw_fxaa.vcg: 1/width, 1/height; rw_post.vcg: its parameters
-	C_WORLDAMB = 15,	// rw_leeds.vcg: time cycle ambient (rgb), colour scale (w)
 	C_LIGHTS = 16,
 	C_BONES = 32,
 	MAX_LIGHTS = 8
@@ -1309,8 +1308,6 @@ applyProgramsAndConstants(void)
 		uploadConsts(C_XFORM, 1);
 		uploadConsts(C_FXAA, 1);
 	}
-	if(curVP == VP_LEEDS)
-		uploadConsts(C_WORLDAMB, 1);
 	if(usesEnv)
 		uploadConsts(C_ENVROW, 4);
 }
@@ -1747,14 +1744,23 @@ setWorldAmbient(float32 r, float32 g, float32 b)
 	leedsDraws = 0;
 }
 
+// patch 34: the time cycle ambient as the material colour, the material's
+// alpha (distance fading) as its alpha; 0.5 of the ambient light as emission
+// (rw_leeds.vcg). C15 and TEXCOORD1 are no longer used: with them every
+// Leeds model came out black on the console.
 void
-setWorldColorScale(float scale)
+setLeedsMaterial(uint8 alpha, const SurfaceProperties &surfaceprops)
 {
-	float32 *w = constWant[C_WORLDAMB];
-	w[0] = worldAmb[0];
-	w[1] = worldAmb[1];
-	w[2] = worldAmb[2];
-	w[3] = scale;
+	float32 *c = constWant[C_MATCOLOR];
+	c[0] = worldAmb[0];
+	c[1] = worldAmb[1];
+	c[2] = worldAmb[2];
+	c[3] = alpha / 255.0f;
+	float32 *s = constWant[C_SURFPROPS];
+	s[0] = surfaceprops.ambient;
+	s[1] = surfaceprops.specular;
+	s[2] = surfaceprops.diffuse;
+	s[3] = 0.5f;
 }
 
 // Gamma on the camera's picture, before the HUD (Graphics > GAMMA): the
