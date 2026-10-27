@@ -1771,7 +1771,8 @@ setWorldAmbient(float32 r, float32 g, float32 b)
 		const float32 *h = constHave[C_C15TEST], *w = constWant[C_C15TEST];
 		rsxLog("[c15] mode %d (%s): last frame %u Leeds draws through C15, %u C15 uploads, %u loads of a program "
 		       "with a literal in C15 (fxaa/post); C15 tracked %s, last sent %.2f %.2f %.2f %.2f, wanted %.2f %.2f %.2f %.2f",
-		       leedsC15Test, leedsC15Test == 2 ? "uploaded before every draw" : "normal tracking",
+		       leedsC15Test, leedsC15Test == 2 ? "uploaded before every draw" :
+		       leedsC15Test == 3 ? "C15 vertex program, patch 34's fragment programs" : "normal tracking",
 		       c15Stats.draws, c15Stats.uploads, c15Stats.literalLoads,
 		       constValid & (1u << C_C15TEST) ? "valid" : "invalid",
 		       h[0], h[1], h[2], h[3], w[0], w[1], w[2], w[3]);

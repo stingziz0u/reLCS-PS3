@@ -181,7 +181,8 @@ extern bool leedsLighting;	// the Leeds world pipeline draws as LCS (false: as t
 extern uint32 leedsDraws;	// patch 33: Leeds models drawn this frame (diagnostics)
 extern bool leedsWantSample;	// log the next one drawn
 // patch 35 TEST ONLY (USRDIR/c15test.txt): 0 off; 1 Leeds models through
-// patch 33's programs (C15); 2 the same with C15 uploaded before every draw
+// patch 33's programs (C15); 2 the same with C15 uploaded before every draw;
+// 3 (patch 36) patch 33's vertex program with patch 34's fragment programs
 extern int32 leedsC15Test;
 rw::ObjPipeline *leedsWorldPipeline(void);	// for the buildings' atomics (CSimpleModelInfo::SetAtomic)
 void setWorldAmbient(float32 r, float32 g, float32 b);	// the time cycle ambient, 0..1, once a frame

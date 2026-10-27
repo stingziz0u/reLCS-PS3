@@ -909,9 +909,10 @@ PS3_GameMain(void)
 		if (ct) {
 			int c = fgetc(ct);
 			fclose(ct);
-			rw::ps3::leedsC15Test = c == '2' ? 2 : 1;
+			rw::ps3::leedsC15Test = c == '2' ? 2 : c == '3' ? 3 : 1;
 			PS3_Logf("[5] C15 test ON, mode %d (c15test.txt): Leeds models through patch 33's programs%s",
-			         rw::ps3::leedsC15Test, rw::ps3::leedsC15Test == 2 ? ", C15 uploaded before every draw" : "");
+			         rw::ps3::leedsC15Test, rw::ps3::leedsC15Test == 2 ? ", C15 uploaded before every draw" :
+			         rw::ps3::leedsC15Test == 3 ? " (vertex program only; patch 34's fragment programs)" : "");
 		}
 	}
 #endif

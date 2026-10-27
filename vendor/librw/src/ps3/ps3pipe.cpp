@@ -578,7 +578,14 @@ leedsRenderCB(Atomic *atomic, InstanceDataHeader *header)
 			RGBA white = { 255, 255, 255, m->color.alpha };
 			setMaterial(white, m->surfaceProps, 0.5f);
 			setLeedsC15(m->texture ? 255.0f/128.0f : 1.0f);
-			setFragmentProgram(FP_LEEDSC15);
+			// patch 36: mode 3 keeps the C15 vertex program but leaves
+			// TEXCOORD1 alone (patch 34's fragment programs): right
+			// picture = C15 fine, the scale's way to the fragment program
+			// broken; flat grey = C15 is 0; green = C15 is fxaa/post's literal
+			if(leedsC15Test == 3)
+				setFragmentProgram(m->texture ? FP_LEEDS : FP_SIMPLE);
+			else
+				setFragmentProgram(FP_LEEDSC15);
 		}else{
 			setLeedsMaterial(m->color.alpha, m->surfaceProps);
 			setFragmentProgram(m->texture ? FP_LEEDS : FP_SIMPLE);
