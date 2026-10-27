@@ -27,8 +27,8 @@ command -v "$CGC" >/dev/null 2>&1 || { echo "cgc not found (sudo apt install nvi
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-VPS="rw_default rw_skin rw_env rw_im2d rw_im3d rw_fxaa rw_leeds rw_post rw_leedsc15"
-FPS="rw_simple rw_env rw_add rw_addalpha rw_fxaa rw_leeds rw_gamma rw_leedsc15"
+VPS="rw_default rw_skin rw_env rw_im2d rw_im3d rw_fxaa rw_leeds rw_post"
+FPS="rw_simple rw_env rw_add rw_addalpha rw_fxaa rw_leeds rw_gamma"
 
 for p in $VPS; do
 	"$CGC" -quiet -profile vp40 -o "$TMP/$p.vpa" $p.vcg

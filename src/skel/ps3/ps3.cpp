@@ -901,21 +901,6 @@ PS3_GameMain(void)
 		PS3_Logf("[5] LOD pairs: %s; occluders: %s", gPS3LodPairs ? "on (nolodpairs.txt turns them off)" : "OFF (nolodpairs.txt)",
 		         gPS3NoOcclusion ? "OFF (noocclusion.txt)" : "on (noocclusion.txt turns them off)");
 	}
-#ifdef RW_PS3_RSX
-	// patch 35 TEST ONLY: USRDIR/c15test.txt with "1" or "2" draws the Leeds
-	// models (PS2 LIGHTING) as patch 33 did, through C15 ("[c15]" lines)
-	{
-		FILE *ct = fopen(PS3_USRDIR "/c15test.txt", "rb");
-		if (ct) {
-			int c = fgetc(ct);
-			fclose(ct);
-			rw::ps3::leedsC15Test = c == '2' ? 2 : c == '3' ? 3 : 1;
-			PS3_Logf("[5] C15 test ON, mode %d (c15test.txt): Leeds models through patch 33's programs%s",
-			         rw::ps3::leedsC15Test, rw::ps3::leedsC15Test == 2 ? ", C15 uploaded before every draw" :
-			         rw::ps3::leedsC15Test == 3 ? " (vertex program only; patch 34's fragment programs)" : "");
-		}
-	}
-#endif
 #endif
 
 	openParams.width = PS3_SCREEN_WIDTH;

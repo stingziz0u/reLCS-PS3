@@ -188,10 +188,6 @@ static int32 zcullHave = -1;		// what the RSX was told (-1: nothing yet)
 static float32 constWant[NUM_CONSTS][4];
 static float32 constHave[NUM_CONSTS][4];
 static uint32 constValid;	// bit n: constHave[n] is what the RSX has
-// patch 35 test (c15test.txt): per frame, Leeds draws through the C15
-// program, C15 uploads for them, and loads of a program with a literal in C15
-static struct { uint32 draws, uploads, literalLoads; } c15Stats;
-int32 leedsC15Test;
 
 enum {
 	C_MVP = 0,
@@ -205,11 +201,15 @@ enum {
 	C_FXPARAMS = 12,
 	C_COLORCLAMP = 13,
 	C_FXAA = 14,	// rw_fxaa.vcg: 1/width, 1/height; rw_post.vcg: its parameters
-	// 15: NOT USABLE for our constants (patch 34): rw_fxaa and rw_post keep
-	// a literal there, and the Leeds program that read the time cycle
-	// ambient and the colour scale from it drew black. Only the patch 35
-	// test (c15test.txt) uses it, to find out why.
-	C_C15TEST = 15,
+	// 15: NOT USABLE for constants we upload (patches 27-36). A Leeds program
+	// reading the time cycle ambient and the colour scale from C15 drew every
+	// model black. The test of patches 35/36 (c15test.txt): C15 was sent with
+	// the right values (0.67 0.63 0.55 1.99), even right before every draw,
+	// and with FXAA off, yet the program read it as 0 (with the scale from
+	// elsewhere the picture lost the prelight: rgb 0 too). Program literals
+	// there do work (rw_fxaa's and rw_post's: the gamma quad's w = 1 comes
+	// from it). Why our uploads don't land is not visible from here; the
+	// Leeds program now gets the ambient in u_matColor (patch 34).
 	C_LIGHTS = 16,
 	C_BONES = 32,
 	MAX_LIGHTS = 8
@@ -1290,8 +1290,6 @@ applyProgramsAndConstants(void)
 		rsxLoadVertexProgram(ctx, p->vp, p->ucode);
 		// the program's own constants (literals) overwrote these
 		constValid &= ~p->internalMask;
-		if(p->internalMask & (1u << C_C15TEST))
-			c15Stats.literalLoads++;
 		curVP = wantVP;
 		drawStats.vpSwitches++;
 	}
@@ -1302,8 +1300,7 @@ applyProgramsAndConstants(void)
 		drawStats.fpSwitches++;
 	}
 
-	bool usesLights = curVP == VP_DEFAULT || curVP == VP_SKIN || curVP == VP_ENV || curVP == VP_LEEDS ||
-	                  curVP == VP_LEEDSC15;
+	bool usesLights = curVP == VP_DEFAULT || curVP == VP_SKIN || curVP == VP_ENV || curVP == VP_LEEDS;
 	bool usesEnv = curVP == VP_ENV;
 	computeDerivedConstants(usesLights, usesEnv);
 
@@ -1322,16 +1319,6 @@ applyProgramsAndConstants(void)
 	}
 	if(usesEnv)
 		uploadConsts(C_ENVROW, 4);
-	if(curVP == VP_LEEDSC15){
-		// patch 35 test: what the tracking does with C15
-		c15Stats.draws++;
-		if(leedsC15Test == 2)
-			constValid &= ~(1u << C_C15TEST);
-		uint32 before = drawStats.constUploads;
-		uploadConsts(C_C15TEST, 1);
-		if(drawStats.constUploads != before)
-			c15Stats.uploads++;
-	}
 }
 
 // The RSX keeps the vertex (and index) data it fetched in a cache, and
@@ -1386,7 +1373,6 @@ programsInit(void)
 	loadVP(VP_FXAA, rw_fxaa_vpo, "fxaa");
 	loadVP(VP_LEEDS, rw_leeds_vpo, "leeds");
 	loadVP(VP_POST, rw_post_vpo, "post");
-	loadVP(VP_LEEDSC15, rw_leedsc15_vpo, "leedsc15 (test)");
 	if(!loadFP(FP_SIMPLE, rw_simple_fpo, "simple", 1))
 		return false;
 	if(!loadFP(FP_ENV, rw_env_fpo, "env", 2))
@@ -1400,8 +1386,6 @@ programsInit(void)
 	if(!loadFP(FP_LEEDS, rw_leeds_fpo, "leeds", 1))
 		return false;
 	if(!loadFP(FP_GAMMA, rw_gamma_fpo, "gamma", 1))
-		return false;
-	if(!loadFP(FP_LEEDSC15, rw_leedsc15_fpo, "leedsc15 (test)", 1))
 		return false;
 	return true;
 }
@@ -1766,30 +1750,7 @@ setWorldAmbient(float32 r, float32 g, float32 b)
 		       leedsLighting ? "on" : "off", r, g, b, ambLight.red, ambLight.green, ambLight.blue, leedsDraws);
 		leedsWantSample = leedsLighting;
 	}
-	// patch 35 test: every 2 s while it runs
-	if(leedsC15Test && leedsLighting && frames % 120 == 1){
-		const float32 *h = constHave[C_C15TEST], *w = constWant[C_C15TEST];
-		rsxLog("[c15] mode %d (%s): last frame %u Leeds draws through C15, %u C15 uploads, %u loads of a program "
-		       "with a literal in C15 (fxaa/post); C15 tracked %s, last sent %.2f %.2f %.2f %.2f, wanted %.2f %.2f %.2f %.2f",
-		       leedsC15Test, leedsC15Test == 2 ? "uploaded before every draw" :
-		       leedsC15Test == 3 ? "C15 vertex program, patch 34's fragment programs" : "normal tracking",
-		       c15Stats.draws, c15Stats.uploads, c15Stats.literalLoads,
-		       constValid & (1u << C_C15TEST) ? "valid" : "invalid",
-		       h[0], h[1], h[2], h[3], w[0], w[1], w[2], w[3]);
-	}
-	c15Stats.draws = c15Stats.uploads = c15Stats.literalLoads = 0;
 	leedsDraws = 0;
-}
-
-// patch 35 test: patch 33's C15 (time cycle ambient, colour scale)
-void
-setLeedsC15(float scale)
-{
-	float32 *w = constWant[C_C15TEST];
-	w[0] = worldAmb[0];
-	w[1] = worldAmb[1];
-	w[2] = worldAmb[2];
-	w[3] = scale;
 }
 
 // patch 34: the time cycle ambient as the material colour, the material's
