@@ -38,6 +38,9 @@ class CPtrList;
 
 class CRenderer
 {
+#ifdef __PS3__
+	friend void PS3_OverlapReport(void);	// Renderer.cpp, patch 35
+#endif
 	static int32 ms_nNoOfVisibleEntities;
 	static CEntity *ms_aVisibleEntityPtrs[NUMVISIBLEENTITIES];
 	static int32 ms_nNoOfInVisibleEntities;

@@ -85,6 +85,7 @@ enum VertexProgramId
 	VP_FXAA,	// the FXAA pass (graphics menu ANTIALIASING)
 	VP_LEEDS,	// the Leeds world pipeline (LCS buildings: prelit * time cycle ambient)
 	VP_POST,	// a full-picture pass with parameters (gamma)
+	VP_LEEDSC15,	// patch 35 TEST ONLY: patch 33's Leeds program (C15), USRDIR/c15test.txt
 	NUM_VP
 };
 enum FragmentProgramId
@@ -96,6 +97,7 @@ enum FragmentProgramId
 	FP_FXAA,
 	FP_LEEDS,	// texture * colour * colour scale (Leeds world pipeline)
 	FP_GAMMA,	// the picture to the power 1/gamma
+	FP_LEEDSC15,	// patch 35 TEST ONLY: patch 33's (scale from TEXCOORD1)
 	NUM_FP
 };
 
@@ -122,6 +124,7 @@ void setEnvParams(Frame *envFrame, float coefficient, bool fbAlpha);
 // Leeds world pipeline (VP_LEEDS): the material of the next draws, the
 // time cycle ambient (setWorldAmbient, once a frame) in its colour
 void setLeedsMaterial(uint8 alpha, const SurfaceProperties &surfaceprops);
+void setLeedsC15(float scale);	// patch 35 test: C15 = time cycle ambient, scale
 void setBones(const float *rows, int32 numBones);	// 3 float4 rows per bone
 
 void setTexture(int32 stage, Texture *tex);

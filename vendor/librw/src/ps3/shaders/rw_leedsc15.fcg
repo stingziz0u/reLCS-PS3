@@ -1,0 +1,18 @@
+// rw_leedsc15.fcg -- patch 35 TEST ONLY: patch 33's rw_leeds.fcg (the colour
+// scale from TEXCOORD1).
+//
+// rw_leeds.fcg -- the Leeds world pipeline (leedsDefault.frag): texture *
+// colour, times the colour scale (255/128 for the PS2's half-range vertex
+// colours, 1 untextured), clamped, then fog.
+void main(float4 color : COLOR0,
+          float2 tex0  : TEXCOORD0,
+          float4 scale : TEXCOORD1,
+          float4 fog   : TEXCOORD2,
+          uniform sampler2D tex : TEXUNIT0,
+          out float4 o_color : COLOR)
+{
+	float4 c = color * tex2D(tex, tex0);
+	c.rgb = saturate(c.rgb * scale.x);
+	c.rgb = lerp(fog.rgb, c.rgb, fog.a);
+	o_color = c;
+}

@@ -1,0 +1,37 @@
+// rw_leedsc15.vcg -- patch 35 TEST ONLY (USRDIR/c15test.txt): patch 33's
+// rw_leeds.vcg as it was, with the time cycle ambient and the colour scale
+// in C15, to find out why that drew every Leeds model black.
+//
+// rw_leeds.vcg -- the Leeds world pipeline (LCS buildings and map objects),
+// as reLCS's leedsBuilding.vert with its PS2 settings: the prelit colour
+// lit by the time cycle's ambient, plus the ambient light as emission,
+// alpha from the material (distance fading). rw_leeds.fcg scales the
+// textured result: PS2 vertex colours go to 128, not 255.
+//
+// patch 33: written as the default program does it (DoColor): saturate in
+// a temporary, then ONE full write of the colour output times u_matColor,
+// which leedsRenderCB sets to (1, 1, 1, material alpha). Patch 27's
+// version saturated straight into the output in two partial writes
+// (rgb, then alpha), and on the console every Leeds model came out black.
+#include "common.cgh"
+
+uniform float4 u_worldAmb : C15;	// time cycle ambient (rgb), colour scale (w)
+
+void main(float4 in_pos    : ATTR0,
+          float4 in_color  : ATTR3,
+          float2 in_tex0   : ATTR8,
+          out float4 o_pos   : POSITION,
+          out float4 o_color : COLOR0,
+          out float2 o_tex0  : TEXCOORD0,
+          out float4 o_scale : TEXCOORD1,
+          out float4 o_fog   : TEXCOORD2)
+{
+	float4 p = float4(in_pos.xyz, 1.0);
+	o_pos = Transform(p);
+	float4 c = in_color;
+	c.rgb = c.rgb * u_worldAmb.rgb + u_ambLight.rgb * u_surfProps.w;
+	o_color = saturate(c) * u_matColor;
+	o_tex0 = in_tex0;
+	o_scale = u_worldAmb.wwww;
+	o_fog = DoFog(o_pos.w);
+}
