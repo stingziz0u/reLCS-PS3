@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"	// PS3_Logf
+#endif
 
 #include "Script.h"
 #include "AnimBlendAssociation.h"
@@ -809,6 +812,68 @@ int8 CRunningScript::ProcessCommands300To399(int32 command)
 	}
 	return -1;
 }
+
+
+#ifdef __PS3__
+// patch 31: why a unique jump fails (Ren: three landings on the train tracks
+// and "USJ_FAL" every time). Only the USJ script asks IS_CAR_IN_AIR_PROPER
+// while $g1079 (jump running) is 1; its 5@ is the jump, 1@ = has been in the
+// landing box while in the air, 7@ = touched down (-1 = still flying). The
+// jump passes when the car is inside the landing box (centre $g818/844/870,
+// half sizes $g896/922/948) BEFORE anything touches it: wheels on the
+// ground or a hit on anything counts as touching down.
+static void
+PS3_UsjWatch(CRunningScript *s, CVehicle *veh)
+{
+	static int32 sActive, sFrame, sLastAir, sLastBox;
+	int32 active = *(int32*)&CTheScripts::ScriptSpace[4 * 1079];
+	int32 jump = s->m_anLocalVariables[5];
+	if (active != 1 || jump < 0 || jump > 25) {
+		sActive = 0;
+		return;
+	}
+#define USJ_F(n) (*(float*)&CTheScripts::ScriptSpace[4 * ((n) + jump)])
+	CVector pos = CWorld::Players[CWorld::PlayerInFocus].GetPos();
+	float kmh = veh->GetMoveSpeed().Magnitude() * GAME_SPEED_TO_METERS_PER_SECOND * 3.6f;
+	// how far outside the landing box on each axis (negative = inside)
+	float ox = Abs(pos.x - USJ_F(818)) - USJ_F(896);
+	float oy = Abs(pos.y - USJ_F(844)) - USJ_F(922);
+	float oz = Abs(pos.z - USJ_F(870)) - USJ_F(948);
+	int32 air = veh->m_nCollisionRecords == 0;
+	int32 box = ox < 0.0f && oy < 0.0f && oz < 0.0f;
+	if (!sActive) {
+		sActive = 1;
+		sFrame = 0;
+		PS3_Logf("[usj] jump %d (model %d %s): take-off at %.1f %.1f %.1f, %.0f km/h (more than %d needed); "
+		         "landing box %.1f..%.1f, %.1f..%.1f, %.1f..%.1f",
+		         jump, veh->GetModelIndex(), CModelInfo::GetModelInfo(veh->GetModelIndex())->GetModelName(),
+		         pos.x, pos.y, pos.z, kmh, jump == 1 || jump == 9 || jump == 12 ? 72 : 90,
+		         USJ_F(818) - USJ_F(896), USJ_F(818) + USJ_F(896), USJ_F(844) - USJ_F(922), USJ_F(844) + USJ_F(922),
+		         USJ_F(870) - USJ_F(948), USJ_F(870) + USJ_F(948));
+		sLastAir = -1;
+		sLastBox = -1;
+	}
+	sFrame++;
+	if (air != sLastAir || box != sLastBox || sFrame % 8 == 0) {
+		PS3_Logf("[usj] frame %d: at %.1f %.1f %.1f, %.0f km/h, in the air %d, in the landing box %d "
+		         "(outside by x %.1f y %.1f z %.1f), was in the box %d, landed %d",
+		         sFrame, pos.x, pos.y, pos.z, kmh, air, box, ox, oy, oz,
+		         s->m_anLocalVariables[1], s->m_anLocalVariables[7] != -1);
+		if (!air)
+			for (int i = 0; i < veh->m_nCollisionRecords && i < PHYSICAL_MAX_COLLISIONRECORDS; i++) {
+				CEntity *e = veh->m_aCollisionRecords[i];
+				if (e)
+					PS3_Logf("[usj]   touching %s model %d (%s) at %.1f %.1f %.1f",
+					         e->IsBuilding() ? "building" : e->IsVehicle() ? "vehicle" : e->IsObject() ? "object" : e->IsPed() ? "ped" : "entity",
+					         e->GetModelIndex(), CModelInfo::GetModelInfo(e->GetModelIndex())->GetModelName(),
+					         e->GetPosition().x, e->GetPosition().y, e->GetPosition().z);
+			}
+	}
+	sLastAir = air;
+	sLastBox = box;
+#undef USJ_F
+}
+#endif
 
 int8 CRunningScript::ProcessCommands400To499(int32 command)
 {
@@ -1653,6 +1718,9 @@ int8 CRunningScript::ProcessCommands400To499(int32 command)
 		CollectParameters(&m_nIp, 1);
 		CVehicle* pVehicle = CPools::GetVehiclePool()->GetAt(GET_INTEGER_PARAM(0));
 		script_assert(pVehicle);
+#ifdef __PS3__
+		PS3_UsjWatch(this, pVehicle);
+#endif
 		UpdateCompareFlag(pVehicle->m_nCollisionRecords == 0);
 		return 0;
 	}
