@@ -2117,6 +2117,53 @@ PS3_PlayerWatch(void)
 			lastAnims[i] = anims[i];
 	}
 
+	// patch 30: how fast each vehicle the player drives gets, against what
+	// its handling allows (Ren: the PCJ-600 feels slow, unique jumps can't
+	// be done). One "[speed]" line when he gets out, and every 30 s.
+	{
+		static CVehicle *spVeh;
+		static int32 spModel;
+		static float spTop, spMax, spCruise, spAccel;
+		static uint32 spStart, spLog, spT80, spOnGas, spGasLow;
+		uint32 fps = CTimer::GetTimeStep() < 1.2f ? 60 : 30;
+		bool driving = veh && veh->pDriver == player;
+		if ((CVehicle*)(driving ? veh : nil) != spVeh || (spVeh && now - spLog > 30000)) {
+			if (spVeh && spOnGas > 30) {
+				extern int8 gPS3PadPressure;
+				PS3_Logf("[speed] model %d (%s): top speed %.0f km/h; handling: max %.0f, cruise %.0f km/h, engine %.2f; "
+				         "80%% of max after %.1f s%s; accelerating with less than full gas %d%% of the time (pressure %s); %u fps",
+				         spModel, CModelInfo::GetModelInfo(spModel)->GetModelName(), spTop, spMax, spCruise, spAccel,
+				         spT80 ? spT80 / 1000.0f : 0.0f, spT80 ? "" : " (never)", spGasLow * 100 / spOnGas,
+				         gPS3PadPressure ? "on" : "off", fps);
+			}
+			spLog = now;
+			if ((CVehicle*)(driving ? veh : nil) != spVeh) {
+				spVeh = driving ? veh : nil;
+				spTop = 0.0f;
+				spT80 = spOnGas = spGasLow = 0;
+				spStart = now;
+				if (spVeh) {
+					spModel = spVeh->GetModelIndex();
+					spMax = spVeh->pHandling->Transmission.fMaxVelocity * 180.0f;
+					spCruise = spVeh->pHandling->Transmission.fMaxCruiseVelocity * 180.0f;
+					spAccel = spVeh->pHandling->Transmission.fEngineAcceleration * 2500.0f;
+				}
+			}
+		}
+		if (driving) {
+			float kmh = veh->m_vecMoveSpeed.Magnitude() * 180.0f;
+			if (kmh > spTop)
+				spTop = kmh;
+			if (!spT80 && spMax > 0.0f && kmh >= 0.8f * spMax)
+				spT80 = Max(now - spStart, 1u);
+			if (CPad::GetPad(0)->GetAccelerate() > 0) {
+				spOnGas++;
+				if (veh->m_fGasPedal < 0.95f)
+					spGasLow++;
+			}
+		}
+	}
+
 	// a car on the throttle that doesn't move for 1.5 s (Ren: after VIC1 cars
 	// can be entered but don't move, the engine revs; dying fixes it)
 	static uint32 stuckSince, stuckLogMs;

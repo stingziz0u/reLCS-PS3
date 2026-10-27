@@ -19,6 +19,7 @@ static const struct { const char *key; const char *text; } ps3TextFallback[] = {
 	{ "FEG_AAL", "ANTIALIASING" },	// reVC-PS3's own
 	{ "FEG_AAF", "FXAA" },	// reVC-PS3's own
 	{ "FEG_PLT", "PS2 LIGHTING" },	// res-PS3's own
+	{ "FEC_PRS", "PRESSURE SENSITIVE" },	// res-PS3's own
 	{ "FEG_CFL", "COLOUR FILTER" },	// res-PS3's own
 	{ "FEG_GAM", "GAMMA" },	// res-PS3's own
 	{ "FEG_G08", "0.8" },	// res-PS3's own

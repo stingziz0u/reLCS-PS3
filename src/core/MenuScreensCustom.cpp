@@ -43,6 +43,8 @@ const char *fps30_60[] = { "FEG_F30", "FEG_F60" };
 int8 gPS3Mipmaps, gPS3TexFilter, gPS3Antialias;
 const char *texFilterNames[] = { "FEG_TF0", "FEG_TF1", "FEG_TF2", "FEG_TF3", "FEG_TF4", "FEG_TF5", "FEG_TF6" };
 const char *antialiasNames[] = { "FEM_OFF", "FEG_AAF" };
+// patch 30: Gamepad settings > PRESSURE SENSITIVE (accelerator and brake, patch 23)
+int8 gPS3PadPressure = 1;
 // patch 27: PS2 LIGHTING (LCS's Leeds world pipeline on the RSX), COLOUR
 // FILTER (LCS's PS2 one) and GAMMA (0.8 to 1.6, on the picture before the HUD)
 int8 gPS3Ps2Lighting = 1, gPS3ColourFilter = 1, gPS3Gamma = PS3_DEFAULT_GAMMA;
@@ -871,6 +873,7 @@ CMenuScreenCustom aScreens[] = {
 #ifdef __PS3__	// the camera is the pad's
 		FREE_CAM_TOGGLE
 		MENUACTION_CHANGEMENU,		"FEC_STK", { nil, SAVESLOT_NONE, MENUPAGE_STICK_SETTINGS }, 0, 0, MENUALIGN_LEFT,
+		MENUACTION_CFO_SELECT, "FEC_PRS", { new CCFOSelect((int8*)&gPS3PadPressure, "Controller", "PressureSensitive", off_on, 2, false) }, 0, 0, MENUALIGN_LEFT,
 #endif
 		MENUACTION_CTRLVIBRATION,	"FEC_VIB", { nil, SAVESLOT_NONE, MENUPAGE_CONTROLLER_SETTINGS }, 0, 0, MENUALIGN_LEFT,
 		SELECT_CONTROLLER_TYPE

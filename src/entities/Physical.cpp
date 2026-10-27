@@ -708,7 +708,15 @@ CPhysical::ApplyAirResistance(void)
 	}else{
 		float f = Pow(1.0f - m_fAirResistance*m_vecMoveSpeed.Magnitude(), CTimer::GetTimeStep());
 		m_vecMoveSpeed *= f;
+#ifdef __PS3__
+		// patch 30: 0.99 a frame was made for 30 fps (the PS2's); at 60 the
+		// turn of every vehicle was damped twice as much a second (0.55
+		// instead of 0.74): steering and bikes' leaning felt heavy. The same
+		// per second at any frame rate (0.99 exactly at 30 fps).
+		m_vecTurnSpeed *= Pow(0.99f, CTimer::GetTimeStepFix());
+#else
 		m_vecTurnSpeed *= 0.99f;
+#endif
 	}
 }
 
