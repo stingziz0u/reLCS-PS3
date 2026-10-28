@@ -1,8 +1,4 @@
 #include "common.h"
-#ifdef __PS3__
-#include "ps3_platform.h"	// PS3_Logf
-#include "Vehicle.h"
-#endif
 #include "Camera.h"
 #include "DMAudio.h"
 #include "General.h"
@@ -104,26 +100,9 @@ CPed::ServiceTalking(void)
 	}
 }
 
-#ifdef __PS3__
-extern uint32 gPS3SayWatchUntil;	// Ped.cpp (patch 40)
-#endif
-
 void
 CPed::Say(uint16 audio)
 {
-#ifdef __PS3__
-	// patch 41: patch 40 only watched Say(sound, delay); the taxi passenger's
-	// scream (SFX_MALE_PANIC_*: SOUND_PED_FLEE_SPRINT) comes through here
-	if (CTimer::GetTimeInMilliseconds() < gPS3SayWatchUntil && !IsPlayer()) {
-		CVehicle *v = m_pMyVehicle;
-		PS3_Logf("[sfx] ped %d (%s, created by %d) says %d: state %d, objective %d, in a vehicle %d, held hostage %d, "
-		         "flee after exiting %d, flee scream %d, flee when standing %d; vehicle speed %.4f turn %.4f %.4f %.4f",
-		         GetModelIndex(), CModelInfo::GetModelInfo(GetModelIndex())->GetModelName(), CharCreatedBy, audio,
-		         m_nPedState, m_objective, bInVehicle, bHeldHostageInCar, bFleeAfterExitingCar, bMakeFleeScream,
-		         bFleeWhenStanding, v ? v->m_vecMoveSpeed.Magnitude() : -1.0f, v ? v->m_vecTurnSpeed.x : 0.0f,
-		         v ? v->m_vecTurnSpeed.y : 0.0f, v ? v->m_vecTurnSpeed.z : 0.0f);
-	}
-#endif
 	if (3.0f + TheCamera.GetPosition().z < GetPosition().z)
 		return;
 

@@ -4279,6 +4279,10 @@ CPed::PedSetOutCarCB(CAnimBlendAssociation *animAssoc, void *arg)
 	}
 
 	ped->bInVehicle = false;
+#ifdef __PS3__
+	CVector ps3Before = ped->GetPosition();
+	bool ps3Moved = false;
+#endif
 	if (veh && (veh->IsCar() || veh->IsBike())) {
 		CWorld::pIgnoreEntity = veh;
 		if (CWorld::TestSphereAgainstWorld(ped->GetPosition() - CVector(0.f, 0.f, 0.2f),
@@ -4288,9 +4292,33 @@ CPed::PedSetOutCarCB(CAnimBlendAssociation *animAssoc, void *arg)
 			|| !CWorld::GetIsLineOfSightClear(veh->GetPosition(), ped->GetPosition(), true, false, false, true, false, false, false)) {
 			CWorld::pIgnoreEntity = nil;
 			ped->PositionPedOutOfCollision();
+#ifdef __PS3__
+			ps3Moved = true;
+#endif
 		}
 		CWorld::pIgnoreEntity = nil;
 	}
+#ifdef __PS3__
+	// patch 44: firefighter: peds that get out of the burning car end up
+	// under the street. Where a ped is put when it gets out, when that is
+	// under the ground ("[exit]" lines)
+	if (!ped->IsPlayer() && veh) {
+		static int exitLines;
+		CVector p = ped->GetPosition();
+		bool found = false;
+		float ground = CWorld::FindGroundZFor3DCoord(p.x, p.y, p.z + 2.0f, &found);
+		if (exitLines < 40 && (found && p.z < ground - 0.8f || ps3Moved && Abs(p.z - ps3Before.z) > 1.0f)) {
+			exitLines++;
+			PS3_Logf("[exit] ped %d (%s, created by %d) out of vehicle %d at %.1f %.1f %.1f (ground %s %.1f)%s from %.1f %.1f %.1f; "
+			         "vehicle at %.1f %.1f %.1f, speed %.3f, up %.2f, on fire %d, state %d",
+			         ped->GetModelIndex(), CModelInfo::GetModelInfo(ped->GetModelIndex())->GetModelName(), ped->CharCreatedBy,
+			         veh->GetModelIndex(), p.x, p.y, p.z, found ? "at" : "not found,", ground,
+			         ps3Moved ? ", moved out of collision" : "", ps3Before.x, ps3Before.y, ps3Before.z,
+			         veh->GetPosition().x, veh->GetPosition().y, veh->GetPosition().z, veh->GetMoveSpeed().Magnitude(),
+			         veh->GetUp().z, veh->m_pCarFire != nil, ped->m_nPedState);
+		}
+	}
+#endif
 
 	if (ped->m_nPedState == PED_EXIT_CAR) {
 		if (ped->m_nPedType == PEDTYPE_COP) {
@@ -10202,19 +10230,9 @@ CPed::Dress(void)
 	RestoreHeadingRate();
 }
 
-#ifdef __PS3__
-uint32 gPS3SayWatchUntil;	// patch 40: [sfx] lines of ped speech until then (ms)
-#endif
-
 void
 CPed::Say(uint16 audio, int32 time)
 {
-#ifdef __PS3__
-	if (CTimer::GetTimeInMilliseconds() < gPS3SayWatchUntil)
-		PS3_Logf("[sfx] ped %d (%s, type %d, state %d, objective %d) says %d%s", GetModelIndex(),
-		         CModelInfo::GetModelInfo(GetModelIndex())->GetModelName(), m_nPedType, m_nPedState, m_objective,
-		         audio, m_delayedSoundID == -1 ? "" : " (ignored: still saying another)");
-#endif
 	if (m_delayedSoundID == -1) {
 		m_delayedSoundID = audio;
 		m_delayedSoundTimer = CTimer::GetTimeInMilliseconds() + time;

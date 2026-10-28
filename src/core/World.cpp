@@ -2074,7 +2074,7 @@ PS3_SweepMovingList(void)
 // player are like when that happens: [drive] / [air] lines.
 // patch 43: Ren, firefighter: the peds set on fire end up under the world
 // instead of running around. Every 0.5 s, any ped near the player that is
-// more than 1.5 m below the ground under it: one "[under]" line each (its
+// more than 0.8 m below the ground under it: one "[under]" line each (its
 // state, animations, fire, collision), and the line again if it comes back.
 static void
 PS3_PedUnderWorldWatch(void)
@@ -2098,13 +2098,30 @@ PS3_PedUnderWorldWatch(void)
 		CVector p = ped->GetPosition();
 		if ((p - pp).MagnitudeSqr2D() > 80.0f*80.0f)
 			continue;
+		// patch 44: from 2 m above the ped's feet, not 30 (that found the
+		// elevated train and the bridges over peds walking in the street)
 		bool found = false;
-		float ground = CWorld::FindGroundZFor3DCoord(p.x, p.y, p.z + 30.0f, &found);
+		float ground = CWorld::FindGroundZFor3DCoord(p.x, p.y, p.z + 2.0f, &found);
+		// a ped on fire: where it is, every second ([fire] lines)
+		if (ped->m_pFire) {
+			static uint32 fireNext;
+			static int fireLines;
+			if (now >= fireNext && fireLines < 60) {
+				fireNext = now + 1000;
+				fireLines++;
+				PS3_Logf("[fire] ped %d (%s) on fire at %.1f %.1f %.1f, ground %s %.1f: state %d, objective %d, move %d, "
+				         "anim group %d, standing %d, in the air %d, uses col %d, speed z %.3f",
+				         ped->GetModelIndex(), CModelInfo::GetModelInfo(ped->GetModelIndex())->GetModelName(),
+				         p.x, p.y, p.z, found ? "at" : "not found, last", ground, ped->m_nPedState, ped->m_objective,
+				         ped->m_nMoveState, ped->m_animGroup, ped->bIsStanding, ped->bIsInTheAir, ped->bUsesCollision,
+				         ped->GetMoveSpeed().z);
+			}
+		}
 		bool seen = false;
 		int k;
 		for (k = 0; k < nLogged; k++)
 			if (logged[k] == ped) { seen = true; break; }
-		if (!found || p.z > ground - 1.5f) {
+		if (!found || p.z > ground - 0.8f) {
 			if (seen)	// back above the ground: may be logged again
 				logged[k] = logged[--nLogged];
 			continue;

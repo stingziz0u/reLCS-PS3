@@ -18,8 +18,6 @@
 //    long station (a position in it = a file + a position in the file).
 
 #include "common.h"
-#include "Timer.h"
-uint32 gPS3SfxWatchUntil;	// patch 40: [sfx] lines until then (ms)
 
 #ifdef AUDIO_PS3
 
@@ -1816,14 +1814,6 @@ cSampleManager::InitialiseChannel(uint32 nChannel, uint32 nSfx, uint8 nBank)
 	uint32 maxSize = 0;	// the slot's size (ped comments, mission audio)
 	if(nChannel >= NUM_CHANNELS || nSfx >= TOTAL_AUDIO_SAMPLES)
 		return false;
-	// patch 40: what is heard when a taxi passenger gets out (Ren: a scream
-	// as if burning, even from an old lady); window opened by the taxi
-	// script (Script3.cpp), every sound started in it
-	if(CTimer::GetTimeInMilliseconds() < gPS3SfxWatchUntil)
-		PS3_Logf("[sfx] channel %u: sound %u (%s), %u samples at %u Hz", nChannel, nSfx,
-		         nSfx < SAMPLEBANK_MAX ? "sound bank" :
-		         nSfx >= PLAYER_COMMENTS_START && nSfx <= PLAYER_COMMENTS_END ? "player comment" : "ped comment or mission audio",
-		         m_aSamples[nSfx].nSize / 2, m_aSamples[nSfx].nFrequency);
 	if(nSfx < SAMPLEBANK_MAX){
 		if(nBank >= MAX_SFX_BANKS || !IsSampleBankLoaded(nBank)){
 			static int logged;
