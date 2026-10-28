@@ -1591,7 +1591,7 @@ void CRunningScript::Process()
 // frames (3 in a row) to a variable nothing else touched in between is such
 // a per-frame step: scaled by the frame time against 30 fps' (x0.5 at 60;
 // time scale left out, slow motion ran the scripts at the same pace). Ints
-// keep the remainder for the next frame. Once-only adds (a coordinate
+// take their whole step on some frames and none on others. Once-only adds (a coordinate
 // offset, a score) and values reset every frame aren't touched.
 struct PS3ScriptStep {
 	const CRunningScript *script;
@@ -1666,10 +1666,15 @@ PS3_ScriptStepI(const CRunningScript *s, uint32 ip, int32 *ptr, int32 c)
 	float f = PS3_ScriptFrameScale();
 	if(st->streak >= 2 && f < 0.95f){
 		PS3_ScriptStepLog(st, s, (float)c, f);
-		st->frac += c * f;
-		int32 n = (int32)st->frac;
-		st->frac -= n;
-		return n;
+		// patch 43: the whole step on some frames, none on the others (x0.5:
+		// every other frame), so a counter stepping by 5 stays on
+		// multiples of 5 (a seat or array index loop just repeats a pass)
+		st->frac += f;
+		if (st->frac >= 1.0f) {
+			st->frac -= 1.0f;
+			return c;
+		}
+		return 0;
 	}
 	return c;
 }

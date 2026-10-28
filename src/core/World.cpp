@@ -2072,6 +2072,64 @@ PS3_SweepMovingList(void)
 // engine revved) but didn't move, and Toni stayed in the air after the
 // "Slacker" cutscene until he jumped. What the player's car and the
 // player are like when that happens: [drive] / [air] lines.
+// patch 43: Ren, firefighter: the peds set on fire end up under the world
+// instead of running around. Every 0.5 s, any ped near the player that is
+// more than 1.5 m below the ground under it: one "[under]" line each (its
+// state, animations, fire, collision), and the line again if it comes back.
+static void
+PS3_PedUnderWorldWatch(void)
+{
+	static uint32 next;
+	static CPed *logged[32];
+	static int nLogged, total;
+	uint32 now = CTimer::GetTimeInMilliseconds();
+	if (now < next || total >= 60)
+		return;
+	next = now + 500;
+	CPlayerPed *player = FindPlayerPed();
+	if (player == nil)
+		return;
+	CVector pp = player->GetPosition();
+	CPedPool *pool = CPools::GetPedPool();
+	for (int i = 0; i < pool->GetSize(); i++) {
+		CPed *ped = pool->GetSlot(i);
+		if (ped == nil || ped == player || ped->InVehicle() || ped->m_nPedState == PED_DEAD)
+			continue;
+		CVector p = ped->GetPosition();
+		if ((p - pp).MagnitudeSqr2D() > 80.0f*80.0f)
+			continue;
+		bool found = false;
+		float ground = CWorld::FindGroundZFor3DCoord(p.x, p.y, p.z + 30.0f, &found);
+		bool seen = false;
+		int k;
+		for (k = 0; k < nLogged; k++)
+			if (logged[k] == ped) { seen = true; break; }
+		if (!found || p.z > ground - 1.5f) {
+			if (seen)	// back above the ground: may be logged again
+				logged[k] = logged[--nLogged];
+			continue;
+		}
+		if (seen)
+			continue;
+		if (nLogged < 32)
+			logged[nLogged++] = ped;
+		total++;
+		int anims[3] = { -1, -1, -1 };
+		int n = 0;
+		if (ped->GetClump())
+			for (CAnimBlendAssociation *a = RpAnimBlendClumpGetFirstAssociation(ped->GetClump()); a && n < 3; a = RpAnimBlendGetNextAssociation(a))
+				anims[n++] = a->animId;
+		PS3_Logf("[under] ped %d (%s, created by %d, type %d) at %.1f %.1f %.1f, %.1f m under the ground (%.1f): state %d, "
+		         "objective %d, move %d, anim group %d, anims %d %d %d, on fire %d, standing %d, in the air %d, uses col %d, "
+		         "static %d, speed z %.3f, health %.0f",
+		         ped->GetModelIndex(), CModelInfo::GetModelInfo(ped->GetModelIndex())->GetModelName(), ped->CharCreatedBy,
+		         ped->m_nPedType, p.x, p.y, p.z, ground - p.z, ground, ped->m_nPedState, ped->m_objective,
+		         ped->m_nMoveState, ped->m_animGroup, anims[0], anims[1], anims[2], ped->m_pFire != nil,
+		         ped->bIsStanding, ped->bIsInTheAir, ped->bUsesCollision, ped->bIsStatic, ped->GetMoveSpeed().z,
+		         ped->m_fHealth);
+	}
+}
+
 static void
 PS3_PlayerWatch(void)
 {
@@ -2439,6 +2497,7 @@ CWorld::Process(void)
 		Players[PlayerInFocus].Process();
 #ifdef __PS3__
 		PS3_PlayerWatch();
+		PS3_PedUnderWorldWatch();
 #endif
 		CRecordDataForChase::SaveOrRetrieveCarPositions();
 		if((CTimer::GetFrameCounter() & 7) == 1) {

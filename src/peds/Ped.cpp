@@ -3124,10 +3124,12 @@ CPed::ProcessControl(void)
 					// still and screamed in panic all along (Ren; [sfx]:
 					// 30 SOUND_PED_FLEE_SPRINT from 49 km/h to standstill).
 					// A mission char the script only told to get out isn't
-					// a hostage; one it made frightened
-					// (SET_CHAR_FRIGHTENED_IN_JACKED_CAR, b1A4_2: the fare
-					// bailing out of a wrecked taxi) still screams.
-					if (CharCreatedBy != MISSION_CHAR || b1A4_2)
+					// a hostage; one told to flee (the fare bailing out of
+					// a wrecked taxi: SET_CHAR_OBJ_FLEE_ON_FOOT_TILL_SAFE
+					// gets out with bFleeAfterExitingCar) still screams.
+					// (patch 43: patch 42 asked b1A4_2, which every ped
+					// has set from its constructor: nothing changed.)
+					if (CharCreatedBy != MISSION_CHAR || bFleeAfterExitingCar)
 #endif
 					Say(SOUND_PED_FLEE_SPRINT);
 				}
