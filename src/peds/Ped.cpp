@@ -3114,6 +3114,37 @@ CPed::ProcessControl(void)
 			ServiceTalking();
 			if (bInVehicle && !m_pMyVehicle)
 				bInVehicle = false;
+#ifdef __PS3__
+			// patch 45: firefighter: every ped of the burning car, set on
+			// fire after it got out, stood still in the car's sitting pose
+			// (half under the street, the fire on the road) with
+			// SPRINT_TO_AREA ([fire]: state PED_DRIVING, out of the car).
+			// A ped out of its vehicle can't be driving: on foot as
+			// PedSetOutCarCB leaves it. "[state]" says how it got there.
+			// (not while a vehicle animation runs: a passenger shuffling to
+			// the driver's seat is out of it for that animation)
+			if (!bInVehicle && (m_nPedState == PED_DRIVING || m_nPedState == PED_PASSENGER) && !m_attachedTo &&
+			    !m_pVehicleAnim) {
+				static int stateLogs;
+				if (stateLogs++ < 20) {
+					CVehicle *v = m_pMyVehicle;
+					PS3_Logf("[state] ped %d (%s, created by %d) out of its vehicle but in state %d (last %d), objective %d, "
+					         "on fire %d, at %.1f %.1f %.1f; vehicle %d %s, driver %d, health %.0f, fire %d, status %d, at %.1f %.1f %.1f",
+					         GetModelIndex(), CModelInfo::GetModelInfo(GetModelIndex())->GetModelName(), CharCreatedBy,
+					         m_nPedState, m_nLastPedState, m_objective, m_pFire != nil,
+					         GetPosition().x, GetPosition().y, GetPosition().z,
+					         v ? v->GetModelIndex() : -1, v ? (v->pDriver == this ? "(its driver)" : v->IsPassenger(this) ? "(a passenger)" : "(not in it)") : "none",
+					         v && v->pDriver ? v->pDriver->GetModelIndex() : -1, v ? v->m_fHealth : 0.0f,
+					         v ? v->m_pCarFire != nil : 0, v ? v->GetStatus() : -1,
+					         v ? v->GetPosition().x : 0.0f, v ? v->GetPosition().y : 0.0f, v ? v->GetPosition().z : 0.0f);
+				}
+				m_nPedState = PED_IDLE;
+				m_nLastPedState = PED_NONE;
+				CAnimManager::BlendAnimation(GetClump(), ASSOCGRP_STD, ANIM_STD_IDLE, 1000.0f);
+				RestartNonPartialAnims();
+				bUsesCollision = true;
+			}
+#endif
 
 			if (bHeldHostageInCar) {
 				if (m_pMyVehicle && m_pMyVehicle->pDriver && m_pMyVehicle->pDriver->IsPlayer()) {
