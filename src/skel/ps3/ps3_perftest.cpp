@@ -5,8 +5,10 @@
 // mission) and leave the pad alone: the test starts 10 s after that and takes
 // about two minutes. It stands Toni where he is and, in Portland, at three
 // busy places, turns the camera around him and measures every frame with
-// the optimizations off and on (A B A B, so drift averages out). "[perf]"
-// lines, a summary at the end; perf.txt is renamed to perf.done.txt.
+// the optimizations off and on (A B A B, so drift averages out), then
+// (patch 48) heavier: in the rain, with explosions all around him, and
+// both (A B each). "[perf]" lines, a summary per scenario at the end;
+// perf.txt is renamed to perf.done.txt. About 6 minutes in Portland.
 //
 // What is measured, per frame:
 //   frame time (average, 95% of frames under, worst, frames over 17.5 ms:
@@ -45,6 +47,10 @@
 #include "Game.h"
 #include "Wanted.h"
 #include "CutsceneMgr.h"
+#include "Weather.h"
+#include "Explosion.h"
+#include "Fire.h"
+#include "General.h"
 
 #include "src/ps3/rwps3.h"
 extern bool gPS3SortOpaque;			// Renderer.cpp
@@ -79,9 +85,21 @@ static const Spot portlandSpots[] = {
 	{ "Portland Harbor", 1064.4f, -814.3f, 15.0f },
 };
 
+// patch 48: the runs at each place: configuration (0 original, 1 optimized)
+// and scenario
+enum { SCEN_CLEAR, SCEN_RAIN, SCEN_EXPLOSIONS, SCEN_BOTH, NUM_SCENS };
+static const char *const scenNames[NUM_SCENS] = { "clear", "rain", "explosions", "rain + explosions" };
+static const int runCfg[] = { 0, 1, 0, 1, 0, 1, 0, 1, 0, 1 };
+static const int runScen[] = { SCEN_CLEAR, SCEN_CLEAR, SCEN_CLEAR, SCEN_CLEAR, SCEN_RAIN, SCEN_RAIN,
+	SCEN_EXPLOSIONS, SCEN_EXPLOSIONS, SCEN_BOTH, SCEN_BOTH };
+#define NUM_RUNS (int)(sizeof(runCfg) / sizeof(runCfg[0]))
+static int curScen = -1;	// the scenario in force
+static uint64 nextBoomUs;
+static int boomCount;
+
 struct Result
 {
-	int spot, cfg;
+	int spot, cfg, scen;
 	float fps, avgMs, p95Ms, worstMs, missedPct;
 	float cpuMs, waitMs, renderMs, flushMs;
 	float timerMs[NUM_TIMERS];
@@ -102,7 +120,7 @@ static bool prevSort, prevNoLights;
 static Snapshot snapStart;
 static float samples[MAX_SAMPLES];
 static int numSamples;
-static Result results[8 * 4];
+static Result results[8 * NUM_RUNS];
 static int numResults;
 
 static uint64 nowUs(void) { return sysGetSystemTime(); }
@@ -171,7 +189,8 @@ finishRun(void)
 	takeSnapshot(&e);
 	Result &r = results[numResults < (int)ARRAY_SIZE(results) ? numResults++ : numResults - 1];
 	r.spot = curSpot;
-	r.cfg = curRun & 1;
+	r.cfg = runCfg[curRun];
+	r.scen = runScen[curRun];
 	double frames = (double)(e.pc.frames - snapStart.pc.frames);
 	if (frames < 1.0)
 		frames = 1.0;
@@ -205,11 +224,12 @@ finishRun(void)
 	r.mixerMs = (e.mixerUs - snapStart.mixerUs) / 1000.0 / frames;
 	r.streamMs = (e.streamUs - snapStart.streamUs) / 1000.0 / frames;
 	r.texMs = (e.pc.texThreadUs - snapStart.pc.texThreadUs) / 1000.0 / frames;
-	PS3_Logf("[perf] %s, %s (run %d): %.1f fps, frame %.2f ms (95%% under %.2f, worst %.1f, over 17.5 ms %.1f%%); "
+	PS3_Logf("[perf] %s, %s, %s (run %d%s): %.1f fps, frame %.2f ms (95%% under %.2f, worst %.1f, over 17.5 ms %.1f%%); "
 	         "CPU %.2f ms, RSX wait %.2f; backend %.2f ms (flushCache %.2f); game %.2f, render list %.2f, PreRender %.2f, "
 	         "scene %.2f, effects %.2f, 2D %.2f; %.0f draws, %.0f texture binds, VP %.1f FP %.1f, %.0f consts; "
 	         "other threads per frame: mixer %.2f ms, streams %.2f ms, textures %.2f ms",
-	         spotNames[curSpot], r.cfg ? "optimized" : "original", curRun + 1, r.fps, r.avgMs, r.p95Ms, r.worstMs,
+	         spotNames[curSpot], scenNames[r.scen], r.cfg ? "optimized" : "original", curRun + 1,
+	         r.scen >= SCEN_EXPLOSIONS ? (boomCount ? "" : ", no explosion took") : "", r.fps, r.avgMs, r.p95Ms, r.worstMs,
 	         r.missedPct, r.cpuMs, r.waitMs, r.renderMs, r.flushMs, r.timerMs[0], r.timerMs[1], r.timerMs[2],
 	         r.timerMs[3], r.timerMs[4], r.timerMs[5], r.draws, r.texBinds, r.vpSw, r.fpSw, r.consts,
 	         r.mixerMs, r.streamMs, r.texMs);
@@ -218,12 +238,13 @@ finishRun(void)
 static void
 logSummary(void)
 {
-	for (int cfg = 0; cfg < 2; cfg++) {
+	for (int sc = 0; sc < NUM_SCENS * 2; sc++) {
+		int cfg = sc & 1, scen = sc >> 1;
 		Result s;
 		memset(&s, 0, sizeof(s));
 		int n = 0;
 		for (int i = 0; i < numResults; i++) {
-			if (results[i].cfg != cfg)
+			if (results[i].cfg != cfg || results[i].scen != scen)
 				continue;
 			const Result &r = results[i];
 			s.avgMs += r.avgMs; s.p95Ms += r.p95Ms; s.missedPct += r.missedPct;
@@ -239,19 +260,65 @@ logSummary(void)
 		if (n == 0)
 			continue;
 		float k = 1.0f / n;
-		PS3_Logf("[perf] SUMMARY %s (%d runs): frame %.2f ms (95%% under %.2f, worst %.1f, over 17.5 ms %.1f%%); CPU %.2f ms "
+		PS3_Logf("[perf] SUMMARY %s, %s (%d runs): frame %.2f ms (95%% under %.2f, worst %.1f, over 17.5 ms %.1f%%); CPU %.2f ms "
 		         "(backend %.2f, flushCache %.2f; game %.2f, render list %.2f, PreRender %.2f, scene %.2f, effects %.2f, 2D %.2f), "
 		         "RSX wait %.2f; %.0f draws, %.0f texture binds, %.0f consts; mixer %.2f ms, streams %.2f ms, textures %.2f ms per frame",
-		         cfg ? "optimized" : "original", n, s.avgMs * k, s.p95Ms * k, s.worstMs, s.missedPct * k, s.cpuMs * k,
+		         scenNames[scen], cfg ? "optimized" : "original", n, s.avgMs * k, s.p95Ms * k, s.worstMs, s.missedPct * k, s.cpuMs * k,
 		         s.renderMs * k, s.flushMs * k, s.timerMs[0] * k, s.timerMs[1] * k, s.timerMs[2] * k, s.timerMs[3] * k,
 		         s.timerMs[4] * k, s.timerMs[5] * k, s.waitMs * k, s.draws * k, s.texBinds * k, s.consts * k,
 		         s.mixerMs * k, s.streamMs * k, s.texMs * k);
 	}
 }
 
+// the scenario's weather (rain at full strength at once) and, when it ends,
+// the explosions' fires put out
+static void
+setScenario(CPlayerPed *p, int scen)
+{
+	if (scen == curScen)
+		return;
+	if (curScen == SCEN_EXPLOSIONS || curScen == SCEN_BOTH) {
+		CExplosion::ClearAllExplosions();
+		if (p)
+			gFireManager.ExtinguishPoint(p->GetPosition(), 80.0f);
+	}
+	if (scen == SCEN_RAIN || scen == SCEN_BOTH)
+		CWeather::ForceWeatherNow(WEATHER_RAINY);
+	else
+		CWeather::ReleaseWeather();
+	curScen = scen;
+	boomCount = 0;
+	nextBoomUs = 0;
+}
+
+static void
+keepScenario(CPlayerPed *p, uint64 now)
+{
+	if (curScen == SCEN_RAIN || curScen == SCEN_BOTH) {
+		CWeather::Rain = 1.0f;
+		CWeather::WetRoads = 1.0f;
+	}
+	if ((curScen == SCEN_EXPLOSIONS || curScen == SCEN_BOTH) && now >= nextBoomUs) {
+		// one every 0.6 s, 8 to 20 m around him, on the ground: cars,
+		// grenades and molotovs (fire) in turn
+		nextBoomUs = now + 600000;
+		float a = CGeneral::GetRandomNumberInRange(0.0f, TWOPI);
+		float d = CGeneral::GetRandomNumberInRange(8.0f, 20.0f);
+		CVector pos = p->GetPosition() + CVector(Cos(a) * d, Sin(a) * d, 0.0f);
+		bool found = false;
+		float gz = CWorld::FindGroundZFor3DCoord(pos.x, pos.y, pos.z + 3.0f, &found);
+		if (found)
+			pos.z = gz + 0.3f;
+		static const eExplosionType types[3] = { EXPLOSION_CAR, EXPLOSION_GRENADE, EXPLOSION_MOLOTOV };
+		if (CExplosion::AddExplosion(nil, nil, types[boomCount % 3], pos, 0))
+			boomCount++;
+	}
+}
+
 static void
 finishTest(CPlayerPed *p, const char *why)
 {
+	setScenario(p, SCEN_CLEAR);
 	if (p) {
 		placePlayer(p, startPos);
 		p->m_fRotationCur = p->m_fRotationDest = startHeading;
@@ -331,8 +398,10 @@ PS3_PerfTestFrame(void)
 				spotNames[numSpots] = portlandSpots[i].name;
 				spotPos[numSpots++] = CVector(portlandSpots[i].x, portlandSpots[i].y, portlandSpots[i].z);
 			}
-		PS3_Logf("[perf] start at %.1f %.1f %.1f: %d places x 4 runs (original, optimized, original, optimized) of %d s",
-		         startPos.x, startPos.y, startPos.z, numSpots, secsPerRun);
+		PS3_Logf("[perf] start at %.1f %.1f %.1f: %d places x %d runs of %d s: clear (original, optimized, original, "
+		         "optimized), rain, explosions, rain + explosions (original, optimized each)",
+		         startPos.x, startPos.y, startPos.z, numSpots, NUM_RUNS, secsPerRun);
+		curScen = -1;
 		curSpot = 0;
 		curRun = 0;
 		phase = 0;
@@ -354,6 +423,8 @@ PS3_PerfTestFrame(void)
 		return;
 	}
 	keepSafe(p, true);
+	if (p->m_pFire)
+		p->m_pFire->Extinguish();	// the molotovs
 	float secs = (now - phaseStart) / 1000000.0f;
 
 	if (phase == 0) {
@@ -371,12 +442,20 @@ PS3_PerfTestFrame(void)
 		return;
 	}
 	if (phase == 1) {
-		// streaming settles, and the first run's configuration
+		// streaming settles (a new scenario: the rain comes, the first
+		// explosions go off), and the run's configuration
+		if (runScen[curRun] != curScen) {
+			setScenario(p, runScen[curRun]);
+			phaseStart = now;
+			return;
+		}
+		keepScenario(p, now);
 		if (secs < 4.0f)
 			return;
-		setConfig(curRun & 1);
+		setConfig(runCfg[curRun]);
 		char a[96];
-		snprintf(a, sizeof(a), "PERF %s: %s (%d/4)", spotNames[curSpot], (curRun & 1) ? "OPTIMIZED" : "ORIGINAL", curRun + 1);
+		snprintf(a, sizeof(a), "PERF %s, %s: %s (%d/%d)", spotNames[curSpot], scenNames[curScen],
+		         runCfg[curRun] ? "OPTIMIZED" : "ORIGINAL", curRun + 1, NUM_RUNS);
 		showText(a);
 		numSamples = 0;
 		takeSnapshot(&snapStart);
@@ -390,18 +469,20 @@ PS3_PerfTestFrame(void)
 	cam.Beta += DEGTORAD(45.0f) * Min(frameMs, 100.0f) / 1000.0f;
 	if (cam.Beta > PI)
 		cam.Beta -= TWOPI;
+	keepScenario(p, now);
 	if (numSamples < MAX_SAMPLES && frameMs > 0.0f)
 		samples[numSamples++] = frameMs;
 	if (secs < secsPerRun)
 		return;
 	finishRun();
-	if (++curRun < 4) {
+	if (++curRun < NUM_RUNS) {
 		// next configuration at the same place: settle 1 s first
 		phase = 1;
 		phaseStart = now - 3000000;
 		return;
 	}
 	curRun = 0;
+	setScenario(p, SCEN_CLEAR);	// fires out before he goes
 	if (++curSpot >= numSpots) {
 		finishTest(p, "all places run");
 		return;
