@@ -23,6 +23,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <malloc.h>
 #include <string.h>
 #include <unistd.h>
 #include <dirent.h>
@@ -31,6 +32,7 @@
 #include <sys/thread.h>
 #include <sys/mutex.h>
 #include <sys/event_queue.h>
+#include <sys/spu.h>
 #include <audio/audio.h>
 
 #include "sampman.h"
@@ -45,6 +47,7 @@
 #define MINIMP3_IMPLEMENTATION
 #define MINIMP3_NO_SIMD
 #include "minimp3.h"
+#include "../../ps3/spu/spumix.h"	// patch 49: the SPU mixer job
 
 cSampleManager SampleManager;
 bool _bSampmanInitialised = false;
@@ -55,6 +58,12 @@ int defaultProvider = 0;
 
 // patch 46: the audio threads' busy time (perf.txt), microseconds, never reset
 uint64 gPS3MixerBusyUs, gPS3StreamBusyUs;
+// patch 49: the mixer on an SPU (SpuMix* below). gPS3SpuAudio: perf.txt
+// switches it between runs; nospuaudio.txt in USRDIR turns it off. The PPU
+// mixer stays as the fallback. gPS3SpuWaitUs: the mixer thread's wait for the
+// SPU (inside gPS3MixerBusyUs, but the PPU is free meanwhile)
+bool gPS3SpuAudio = true;
+uint64 gPS3SpuWaitUs;
 static char SampleBankDescFilename[] = "audio/sfx.SDT";
 static char SampleBankDataFilename[] = "audio/sfx.RAW";
 
@@ -841,7 +850,7 @@ StreamCreate(Decoder *d, const char *name)
 	s->dec = d;
 	s->rate = d->GetRate();
 	s->lengthMs = d->GetLengthMS();
-	s->ring = new int16[RING_FRAMES*2];
+	s->ring = (int16*)memalign(128, RING_FRAMES*2*sizeof(int16));	// patch 49: the SPU reads it by DMA
 	s->volume = 0;
 	s->pan = 63;
 	s->loopsLeft = 1;
@@ -865,7 +874,7 @@ StreamDestroy(Stream *s)
 {
 	if(s == nil) return;
 	delete s->dec;
-	delete[] s->ring;
+	free(s->ring);
 	delete s;
 }
 
@@ -983,13 +992,14 @@ static uint32 s_badFreq;
 static double s_badPos;
 static int32 s_badLen;
 
-static void
-MixChannel(Channel &c)
+// the gains of a channel and its step; false: not mixed this block (stopped
+// when its frequency or position went wild)
+static bool
+ChannelSetup(Channel &c, float &gl, float &gr, double &step)
 {
 	if(c.data == nil || c.length == 0 || c.freq == 0)
-		return;
+		return false;
 	// gains
-	float gl, gr;
 	float vol = c.volume / 127.0f;
 	if(c.is3D){
 		float d = sqrtf(c.x*c.x + c.y*c.y + c.z*c.z);
@@ -1015,11 +1025,9 @@ MixChannel(Channel &c)
 	gl *= vol * (1.0f/32768.0f);
 	gr *= vol * (1.0f/32768.0f);
 
-	double step = (double)c.freq / OUT_RATE;
+	step = (double)c.freq / OUT_RATE;
 	double pos = c.pos;
-	const int16 *data = c.data;
 	int32 len = c.length;
-	float *out = mixBuf;
 	if(!(step > 0.0 && step < 16.0) || !(pos >= 0.0 && pos < 1.0e9)){
 		// a frequency or position gone wild (a NaN of the game's maths):
 		// the channel stops instead of reading outside its sample (logged
@@ -1032,10 +1040,24 @@ MixChannel(Channel &c)
 			s_badChannelLog = 1;
 		}
 		c.playing = false;
-		return;
+		return false;
 	}
 	if(!(gl == gl) || !(gr == gr))
 		gl = gr = 0.0f;	// NaN position or volume: silent, not noise
+	return true;
+}
+
+static void
+MixChannel(Channel &c)
+{
+	float gl, gr;
+	double step;
+	if(!ChannelSetup(c, gl, gr, step))
+		return;
+	double pos = c.pos;
+	const int16 *data = c.data;
+	int32 len = c.length;
+	float *out = mixBuf;
 	for(int i = 0; i < AUDIO_BLOCK_SAMPLES; i++){
 		int32 end = (c.loopEnd < 0 || c.loopEnd > len) ? len : c.loopEnd;
 		bool looping = c.loopCount == 0 || c.timesPlayed + 1 < c.loopCount;
@@ -1066,17 +1088,27 @@ MixChannel(Channel &c)
 	c.pos = pos;
 }
 
+static bool
+StreamSetup(Stream &s, float &gl, float &gr, double &step)
+{
+	if(!s.playing || s.paused || s.ring == nil)
+		return false;
+	float vol = s.volume / 127.0f * (1.0f/32768.0f);
+	gl = s.pan <= 63 ? 1.0f : (127 - s.pan) / 64.0f;
+	gr = s.pan >= 63 ? 1.0f : s.pan / 63.0f;
+	gl *= vol;
+	gr *= vol;
+	step = (double)s.rate / OUT_RATE;
+	return true;
+}
+
 static void
 MixStream(Stream &s)
 {
-	if(!s.playing || s.paused || s.ring == nil)
+	float gl, gr;
+	double step;
+	if(!StreamSetup(s, gl, gr, step))
 		return;
-	float vol = s.volume / 127.0f * (1.0f/32768.0f);
-	float gl = s.pan <= 63 ? 1.0f : (127 - s.pan) / 64.0f;
-	float gr = s.pan >= 63 ? 1.0f : s.pan / 63.0f;
-	gl *= vol;
-	gr *= vol;
-	double step = (double)s.rate / OUT_RATE;
 	float *out = mixBuf;
 	for(int i = 0; i < AUDIO_BLOCK_SAMPLES; i++){
 		uint32 avail = s.head - s.tail;
@@ -1105,19 +1137,274 @@ AudioBlock(u32 index)
 		(u64)index * AUDIO_BLOCK_SAMPLES * audioCfg.channelCount;
 }
 
+// ============================================================================
+// patch 49: the mixer on an SPU (ps3/spu/spumix.c)
+// ============================================================================
+// The mixer thread fills a job with every channel and stream to mix (gains
+// and validity worked out here, as MixChannel/MixStream do), writes its
+// address to the SPU's signal 1 and sleeps on the event queue until the SPU
+// has mixed it: the PPU is free for the game meanwhile. The mixer lock is held
+// the whole time, as when the PPU mixed. A channel or stream the SPU can't
+// read (a sample at an odd address, a ring not 16-byte aligned) is mixed
+// here while the SPU works. If the SPU doesn't answer in 100 ms the PPU mixes
+// from then on.
+
+extern "C" const u8 spumix_elf[];	// the SPU program (Makefile: obj/.../spumix.elf, .incbin)
+
+static SpuMixJob spuJob __attribute__((aligned(128)));
+static float spuOut[AUDIO_BLOCK_SAMPLES*OUT_CHANNELS] __attribute__((aligned(128)));
+static int16 spuChanOf[SPUMIX_MAX_CHANNELS];	// job channel -> channels[]
+static int8 spuStreamOf[SPUMIX_MAX_STREAMS];
+static bool spuReady;
+static sysSpuImage spuImage;
+static sys_spu_group_t spuGroup;
+static sys_spu_thread_t spuThread;
+static sys_event_queue_t spuQueue;
+static uint32 spuBlocks, spuPpuLeftovers;
+
+static_assert(sizeof(SpuMixChannel) == 64, "SpuMixChannel layout");
+static_assert(sizeof(SpuMixStream) == 48, "SpuMixStream layout");
+static_assert(sizeof(SpuMixJob) % 128 == 0 && sizeof(SpuMixJob) <= 16384, "SpuMixJob: one DMA");
+static_assert(NUM_CHANNELS <= SPUMIX_MAX_CHANNELS && MAX_STREAMS <= SPUMIX_MAX_STREAMS, "SPU job size");
+static_assert(AUDIO_BLOCK_SAMPLES == SPUMIX_BLOCK, "SPU block size");
+
+// the names of the SPU attributes are 32-bit pointers (ATTRIBUTE_PRXPTR)
+static void
+SetPrxPtr(void *field, size_t size, const char *p)
+{
+	u32 ea = (u32)(uintptr_t)p;
+	if(size == 4)
+		memcpy(field, &ea, 4);
+	else{
+		u64 ea64 = (uintptr_t)p;
+		memcpy(field, &ea64, 8);
+	}
+}
+
+static void
+SpuMixInit(void)
+{
+	FILE *f = fopen(PS3_USRDIR "/nospuaudio.txt", "rb");
+	if(f){
+		fclose(f);
+		gPS3SpuAudio = false;
+		PS3_Log("[spu] nospuaudio.txt: the audio mixer stays on the PPU");
+		return;
+	}
+	s32 r = sysSpuInitialize(6, 0);
+	if(r != 0)
+		PS3_Logf("[spu] sysSpuInitialize: %08x (already done: going on)", (unsigned)r);
+	r = sysSpuImageImport(&spuImage, spumix_elf, 0);
+	if(r != 0){
+		PS3_Logf("[spu] sysSpuImageImport failed (%08x): the audio mixer stays on the PPU", (unsigned)r);
+		return;
+	}
+	sys_event_queue_attr_t qattr;
+	memset(&qattr, 0, sizeof(qattr));
+	qattr.attr_protocol = SYS_EVENT_QUEUE_FIFO;
+	qattr.type = SYS_EVENT_QUEUE_PPU;
+	strncpy(qattr.name, "resmix", sizeof(qattr.name));
+	r = sysEventQueueCreate(&spuQueue, &qattr, SYS_EVENT_QUEUE_KEY_LOCAL, 8);
+	if(r != 0){
+		PS3_Logf("[spu] sysEventQueueCreate failed (%08x): the audio mixer stays on the PPU", (unsigned)r);
+		sysSpuImageClose(&spuImage);
+		return;
+	}
+	static const char groupName[] = "resmixg";
+	static const char threadName[] = "resmixt";
+	sysSpuThreadGroupAttribute gattr;
+	memset(&gattr, 0, sizeof(gattr));
+	gattr.nsize = sizeof(groupName);
+	SetPrxPtr(&gattr.name, sizeof(gattr.name), groupName);
+	gattr.type = 0;
+	r = sysSpuThreadGroupCreate(&spuGroup, 1, 100, &gattr);
+	if(r != 0){
+		PS3_Logf("[spu] sysSpuThreadGroupCreate failed (%08x): the audio mixer stays on the PPU", (unsigned)r);
+		sysEventQueueDestroy(spuQueue, 0);
+		sysSpuImageClose(&spuImage);
+		return;
+	}
+	sysSpuThreadAttribute tattr;
+	memset(&tattr, 0, sizeof(tattr));
+	SetPrxPtr(&tattr.name, sizeof(tattr.name), threadName);
+	tattr.nsize = sizeof(threadName);
+	tattr.option = SPU_THREAD_ATTR_NONE;
+	sysSpuThreadArgument targ;
+	memset(&targ, 0, sizeof(targ));
+	r = sysSpuThreadInitialize(&spuThread, spuGroup, 0, &spuImage, &tattr, &targ);
+	if(r == 0)
+		r = sysSpuThreadSetConfiguration(spuThread, SPU_SIGNAL1_OVERWRITE | SPU_SIGNAL2_OVERWRITE);
+	if(r == 0)
+		r = sysSpuThreadConnectEvent(spuThread, spuQueue, SPU_THREAD_EVENT_USER, SPUMIX_SPUP);
+	if(r == 0)
+		r = sysSpuThreadGroupStart(spuGroup);
+	if(r != 0){
+		PS3_Logf("[spu] SPU thread setup failed (%08x): the audio mixer stays on the PPU", (unsigned)r);
+		sysSpuThreadGroupDestroy(spuGroup);
+		sysEventQueueDestroy(spuQueue, 0);
+		sysSpuImageClose(&spuImage);
+		return;
+	}
+	spuReady = true;
+	PS3_Logf("[spu] audio mixer on SPU thread %08x (job %u bytes at %p)", (unsigned)spuThread,
+	         (unsigned)sizeof(spuJob), &spuJob);
+}
+
+static void
+SpuMixShutdown(void)
+{
+	if(!spuReady)
+		return;
+	spuReady = false;
+	u32 cause, status;
+	sysSpuThreadWriteSignal(spuThread, 0, SPUMIX_QUIT);
+	sysSpuThreadGroupJoin(spuGroup, &cause, &status);
+	sysSpuThreadDisconnectEvent(spuThread, SPU_THREAD_EVENT_USER, SPUMIX_SPUP);
+	sysSpuThreadGroupDestroy(spuGroup);
+	sysEventQueueDestroy(spuQueue, 0);
+	sysSpuImageClose(&spuImage);
+	PS3_Logf("[spu] audio mixer stopped after %u blocks", spuBlocks);
+}
+
+static void
+ToFixed(double v, int32 &i, uint32 &f)
+{
+	i = (int32)v;
+	f = (uint32)((v - i) * 4294967296.0);
+}
+
+// inside the mixer lock: mixes this block on the SPU into spuOut (and what
+// the SPU can't take into mixBuf). false: the SPU didn't answer, nothing was
+// mixed and the positions are as they were (the PPU mixes this block)
+static bool
+SpuMixBlock(void)
+{
+	SpuMixJob &j = spuJob;
+	int nc = 0, ns = 0;
+	for(int i = 0; i < NUM_CHANNELS; i++){
+		Channel &c = channels[i];
+		if(!c.playing)
+			continue;
+		float gl, gr;
+		double step;
+		if(!ChannelSetup(c, gl, gr, step))
+			continue;
+		if(((uintptr_t)c.data & 1) != 0)
+			continue;	// the PPU mixes it below
+		SpuMixChannel &m = j.ch[nc];
+		m.ea = (uint64_t)(uintptr_t)c.data;
+		m.len = c.length;
+		ToFixed(c.pos, m.ipos, m.fpos);
+		int32 is;
+		ToFixed(step, is, m.fstep);
+		m.istep = is;
+		m.loopStart = c.loopStart;
+		m.loopEnd = c.loopEnd;
+		m.loopCount = c.loopCount;
+		m.timesPlayed = c.timesPlayed;
+		m.gl = gl;
+		m.gr = gr;
+		m.flags = SPUMIX_ACTIVE;
+		spuChanOf[nc++] = i;
+	}
+	for(int i = 0; i < MAX_STREAMS; i++){
+		Stream *s = streams[i];
+		if(s == nil)
+			continue;
+		float gl, gr;
+		double step;
+		if(!StreamSetup(*s, gl, gr, step))
+			continue;
+		if(((uintptr_t)s->ring & 15) != 0)
+			continue;	// the PPU mixes it below
+		SpuMixStream &m = j.st[ns];
+		m.ringEa = (uint64_t)(uintptr_t)s->ring;
+		m.ringFrames = RING_FRAMES;
+		m.head = s->head;
+		m.tail = s->tail;
+		m.ffrac = (uint32)(s->frac * 4294967296.0);
+		int32 is;
+		ToFixed(step, is, m.fstep);
+		m.istep = is;
+		m.gl = gl;
+		m.gr = gr;
+		m.flags = SPUMIX_ACTIVE;
+		spuStreamOf[ns++] = i;
+	}
+	j.outEa = (uint64_t)(uintptr_t)spuOut;
+	j.numChannels = nc;
+	j.numStreams = ns;
+	j.mono = monoMode;
+	j.seq = spuBlocks & 0xFFFFFF;
+
+	sysEventQueueDrain(spuQueue);
+	__asm__ volatile("sync" ::: "memory");
+	if(sysSpuThreadWriteSignal(spuThread, 0, (u32)(uintptr_t)&spuJob) != 0)
+		return false;
+
+	// meanwhile: what the SPU can't read (normally nothing)
+	for(int i = 0; i < NUM_CHANNELS; i++){
+		Channel &c = channels[i];
+		if(c.playing && ((uintptr_t)c.data & 1) != 0){
+			MixChannel(c);
+			spuPpuLeftovers++;
+		}
+	}
+	for(int i = 0; i < MAX_STREAMS; i++)
+		if(streams[i] && ((uintptr_t)streams[i]->ring & 15) != 0){
+			MixStream(*streams[i]);
+			spuPpuLeftovers++;
+		}
+
+	u64 t0 = sysGetSystemTime();
+	sys_event_t ev;
+	s32 r = sysEventQueueReceive(spuQueue, &ev, 100 * 1000);
+	gPS3SpuWaitUs += sysGetSystemTime() - t0;
+	if(r != 0 || (ev.data_2 & 0xFFFFFF) != j.seq){
+		spuReady = false;	// not joined: it may still be running
+		PS3_Logf("[spu] the SPU mixer didn't answer block %u (%08x, event %llx): the PPU mixes from now on",
+		         spuBlocks, (unsigned)r, r == 0 ? (unsigned long long)ev.data_2 : 0ULL);
+		return false;
+	}
+	__asm__ volatile("sync" ::: "memory");
+
+	// the new positions
+	for(int k = 0; k < nc; k++){
+		const SpuMixChannel &m = j.ch[k];
+		Channel &c = channels[spuChanOf[k]];
+		c.pos = m.ipos + m.fpos * (1.0 / 4294967296.0);
+		c.timesPlayed = m.timesPlayed;
+		if(m.flags & SPUMIX_STOPPED)
+			c.playing = false;
+	}
+	for(int k = 0; k < ns; k++){
+		const SpuMixStream &m = j.st[k];
+		Stream &s = *streams[spuStreamOf[k]];
+		s.frac = m.ffrac * (1.0 / 4294967296.0);
+		s.tail = m.tail;
+	}
+	spuBlocks++;
+	return true;
+}
+
 static void
 AudioFill(float *dst)
 {
 	memset(mixBuf, 0, sizeof(mixBuf));
+	bool spu = false;
 	{
 		MixLock lock;
 		s_mixing = 1;
-		for(int i = 0; i < NUM_CHANNELS; i++)
-			if(channels[i].playing)
-				MixChannel(channels[i]);
-		for(int i = 0; i < MAX_STREAMS; i++)
-			if(streams[i])
-				MixStream(*streams[i]);
+		if(spuReady && gPS3SpuAudio)
+			spu = SpuMixBlock();
+		if(!spu){
+			for(int i = 0; i < NUM_CHANNELS; i++)
+				if(channels[i].playing)
+					MixChannel(channels[i]);
+			for(int i = 0; i < MAX_STREAMS; i++)
+				if(streams[i])
+					MixStream(*streams[i]);
+		}
 		s_mixing = 0;
 	}
 	s_mixBlocks++;
@@ -1128,11 +1415,26 @@ AudioFill(float *dst)
 		}
 		s_badChannelLog = 0;
 	}
-	for(int i = 0; i < AUDIO_BLOCK_SAMPLES*OUT_CHANNELS; i++){
-		float v = mixBuf[i];
-		if(v > 1.0f) v = 1.0f;
-		if(v < -1.0f) v = -1.0f;
-		dst[i] = v;
+	static int leftoversLogged;
+	if(spuPpuLeftovers && leftoversLogged < 4){
+		leftoversLogged++;
+		PS3_Logf("[spu] %u channel/stream blocks the SPU couldn't read were mixed on the PPU", spuPpuLeftovers);
+		spuPpuLeftovers = 0;
+	}
+	if(spu){
+		for(int i = 0; i < AUDIO_BLOCK_SAMPLES*OUT_CHANNELS; i++){
+			float v = mixBuf[i] + spuOut[i];
+			if(v > 1.0f) v = 1.0f;
+			if(v < -1.0f) v = -1.0f;
+			dst[i] = v;
+		}
+	}else{
+		for(int i = 0; i < AUDIO_BLOCK_SAMPLES*OUT_CHANNELS; i++){
+			float v = mixBuf[i];
+			if(v > 1.0f) v = 1.0f;
+			if(v < -1.0f) v = -1.0f;
+			dst[i] = v;
+		}
 	}
 }
 
@@ -1293,6 +1595,7 @@ AudioPortInit(void)
 
 	s_audioQuit = false;
 	audioLate = 0;
+	SpuMixInit();	// patch 49
 	audioPortStart(audioPort);
 
 	if(sysThreadCreate(&audioTid, AudioThread, NULL, 200, 64*1024, THREAD_JOINABLE, (char*)"resaudio") != 0){
@@ -1322,6 +1625,7 @@ AudioPortShutdown(void)
 	s_audioQuit = true;
 	sysThreadJoin(audioTid, &rv);
 	sysThreadJoin(streamTid, &rv);
+	SpuMixShutdown();	// patch 49
 	audioPortStop(audioPort);
 	audioRemoveNotifyEventQueue(audioKey);
 	audioPortClose(audioPort);
