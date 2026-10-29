@@ -462,6 +462,9 @@ public:
 	uint32 GetGenericMaleTalkSfx(CPed *ped, uint16 sound);   // inlined in vc
 	uint32 GetGenericFemaleTalkSfx(CPed *ped, uint16 sound); // inlined in vc
 	uint32 GetDefaultTalkSfx(CPed *ped, uint16 sound);
+#ifdef __PS3__
+	uint32 PS3_GetLcsCivilianTalkSfx(CPed *ped, uint16 sound);	// patch 47: every LCS civilian's own voice
+#endif
 	uint32 GetCopTalkSfx(CPed *ped, uint16 sound);
 	uint32 GetSwatTalkSfx(CPed *ped, uint16 sound);
 	uint32 GetFBITalkSfx(CPed *ped, uint16 sound);
