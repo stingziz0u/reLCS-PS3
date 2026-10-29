@@ -601,6 +601,23 @@ videoPresent(Raster *raster, bool vsync)
 	waitFlips();
 	u64 t1 = sysGetSystemTime();
 	statWaitUs += t1 - t0;
+	// patch 46: the perf test's counters (they never reset)
+	{
+		static DrawStats snap;
+		perfCounters.frames++;
+		if(frameStartUs)
+			perfCounters.cpuUs += t0 - frameStartUs;
+		perfCounters.waitUs += t1 - t0;
+		DrawStats &d = drawStats;
+		if(d.draws < snap.draws)	// logStats reset them
+			memset(&snap, 0, sizeof(snap));
+		perfCounters.draws += d.draws - snap.draws;
+		perfCounters.texBinds += d.texBinds - snap.texBinds;
+		perfCounters.vpSwitches += d.vpSwitches - snap.vpSwitches;
+		perfCounters.fpSwitches += d.fpSwitches - snap.fpSwitches;
+		perfCounters.consts += d.constUploads - snap.constUploads;
+		snap = d;
+	}
 
 	// keep the picture's aspect, inside the screen fit area, centered
 	availW = (int)dispW * settings.screenFit / 100;

@@ -180,6 +180,17 @@ extern bool fxaaOn;		// FXAA on the camera's picture before it is shown
 extern bool leedsLighting;	// the Leeds world pipeline draws as LCS (false: as the default pipeline)
 extern uint32 leedsDraws;	// patch 33: Leeds models drawn this frame (diagnostics)
 extern bool leedsWantSample;	// log the next one drawn
+// patch 46: monotonic counters for the performance test (perf.txt):
+// read twice, the difference is what happened in between
+struct PerfCounters
+{
+	uint64 frames, cpuUs, waitUs;	// presents; CPU time and RSX wait per frame (ps3video)
+	uint64 renderTb, flushTb;	// timebase ticks in the atomic pipelines (render) and in flushCache
+	uint64 draws, texBinds, vpSwitches, fpSwitches, consts;
+	uint64 texThreadUs;	// the texture thread's busy time (ps3raster)
+};
+extern PerfCounters perfCounters;
+extern bool optLeedsNoDirLights;	// patch 46: the Leeds program gets no directional lights (it reads none)
 rw::ObjPipeline *leedsWorldPipeline(void);	// for the buildings' atomics (CSimpleModelInfo::SetAtomic)
 void setWorldAmbient(float32 r, float32 g, float32 b);	// the time cycle ambient, 0..1, once a frame
 void applyGamma(Raster *camRaster, float32 exponent);	// the picture to the power exponent (1/gamma)

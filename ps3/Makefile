@@ -96,7 +96,8 @@ GAME_SRCS := $(filter-out \
   $(SRC)/extras/custompipes_d3d9.cpp $(SRC)/extras/custompipes_gl.cpp, $(GAME_SRCS))
 
 PS3_SRCS := $(addprefix $(SRC)/skel/ps3/, \
-  ps3.cpp ps3_log.cpp ps3_fs.cpp ps3_pad.cpp ps3_cdstream.cpp ps3_prof.cpp ps3_autotest.cpp ps3_carspawn.cpp ps3_mods.cpp)
+  ps3.cpp ps3_log.cpp ps3_fs.cpp ps3_pad.cpp ps3_cdstream.cpp ps3_prof.cpp ps3_autotest.cpp ps3_carspawn.cpp ps3_mods.cpp \
+  ps3_perftest.cpp)
 
 GAME_INCS := $(foreach d,$(GAME_DIRS),-I$(SRC)/$(d)) -I$(SRC)/skel/ps3 -I$(SRC)/audio/eax
 
@@ -138,6 +139,12 @@ ifeq ($(DEBUG),1)
 else
   COMMON_FLAGS += -DNDEBUG
 endif
+# patch 46: -O3 on the files where the game thread's time goes (collision,
+# physics, entities, animation, the world and the render list, librw's RSX
+# pipelines). HOT_O3=0 builds them at -O2 as before, to compare with
+# perf.txt (the log says which build it is).
+HOT_O3 ?= 1
+COMMON_FLAGS += -DPS3_HOT_O3=$(HOT_O3)
 COMMON_FLAGS += $(EXTRA_CFLAGS)
 
 LIBRW_FLAGS := $(COMMON_FLAGS) -I$(RW) -I$(ROOT)/vendor/librw
@@ -274,7 +281,7 @@ $(OBJDIR)/flags.mode: FORCE
 $(OBJDIR)/vendor/%.o: $(ROOT)/vendor/%.cpp $(OBJDIR)/flags.mode
 	@mkdir -p $(dir $@)
 	@echo "CXX $(patsubst $(ROOT)/%,%,$<)"
-	@$(CXX) $(LIBRW_FLAGS) $(VMX_FLAGS) -c $< -o $@
+	@$(CXX) $(LIBRW_FLAGS) $(VMX_FLAGS) $(HOT_FLAGS) -c $< -o $@
 
 # AltiVec (VMX): only the files that use it (the hardware probe's test)
 $(OBJDIR)/vendor/librw/src/ps3/ps3vmx.o: VMX_FLAGS := -maltivec
@@ -282,7 +289,18 @@ $(OBJDIR)/vendor/librw/src/ps3/ps3vmx.o: VMX_FLAGS := -maltivec
 $(OBJDIR)/src/%.o: $(SRC)/%.cpp $(OBJDIR)/flags.mode
 	@mkdir -p $(dir $@)
 	@echo "CXX $(patsubst $(ROOT)/%,%,$<)"
-	@$(CXX) $(GAME_FLAGS) $(OBJ_FLAGS) -c $< -o $@
+	@$(CXX) $(GAME_FLAGS) $(OBJ_FLAGS) $(HOT_FLAGS) -c $< -o $@
+
+# patch 46: the hot files (HOT_O3)
+HOT_SRCS := $(wildcard $(SRC)/collision/*.cpp $(SRC)/entities/*.cpp $(SRC)/animation/*.cpp $(SRC)/math/*.cpp) \
+  $(SRC)/core/World.cpp $(SRC)/core/Placeable.cpp $(SRC)/renderer/Renderer.cpp $(SRC)/renderer/VisibilityPlugins.cpp \
+  $(SRC)/peds/Ped.cpp $(SRC)/peds/PedAI.cpp $(SRC)/vehicles/Automobile.cpp $(SRC)/vehicles/Vehicle.cpp \
+  $(SRC)/vehicles/Bike.cpp $(SRC)/vehicles/Transmission.cpp
+HOT_RW := $(addprefix $(RW)/, base.cpp frame.cpp hanim.cpp anim.cpp ps3/ps3device.cpp ps3/ps3pipe.cpp)
+HOT_OBJS := $(patsubst $(ROOT)/%.cpp,$(OBJDIR)/%.o,$(HOT_SRCS) $(HOT_RW))
+ifeq ($(HOT_O3),1)
+$(HOT_OBJS): HOT_FLAGS := -O3
+endif
 
 # Which patch level the tree and the built PKG are at
 verify:

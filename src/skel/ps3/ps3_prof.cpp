@@ -47,6 +47,7 @@ struct ProfTimer
 	const char *name;
 	u64 start;
 	u64 total;
+	u64 ever;	// patch 46: never reset (perf.txt reads it twice)
 };
 
 void PS3_FxReport(unsigned int frames);	// Particle.cpp
@@ -69,6 +70,7 @@ FindTimer(const char *name)
 	timers[numTimers].name = name;
 	timers[numTimers].start = 0;
 	timers[numTimers].total = 0;
+	timers[numTimers].ever = 0;
 	return &timers[numTimers++];
 }
 
@@ -91,9 +93,21 @@ PS3_ProfEnd(const char *name)
 	if (t)
 		GPU_MARK(2 * (int)(t - timers) + 1);
 	if (t && t->start) {
-		t->total += profNow() - t->start;
+		u64 d = profNow() - t->start;
+		t->total += d;
+		t->ever += d;
 		t->start = 0;
 	}
+}
+
+// patch 46: microseconds a timer has run since the start (0: no such timer)
+unsigned long long
+PS3_ProfEverUs(const char *name)
+{
+	for (int i = 0; i < numTimers; i++)
+		if (strcmp(timers[i].name, name) == 0)
+			return timers[i].ever;
+	return 0;
 }
 
 // ---- steps inside CGame::Process / CWorld::Process (common.h) ----------------

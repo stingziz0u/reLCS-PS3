@@ -1209,7 +1209,7 @@ setBones(const float *rows, int32 numBones)
 }
 
 static void
-computeDerivedConstants(bool usesLights, bool usesEnv)
+computeDerivedConstants(bool usesLights, bool usesEnv, bool usesDirLights)
 {
 	if(viewProjDirty){
 		matMul(viewProjMat, projMat, viewMat);
@@ -1227,6 +1227,11 @@ computeDerivedConstants(bool usesLights, bool usesEnv)
 	if(usesLights && lightsDirty){
 		float32 *a = constWant[C_AMBLIGHT];
 		a[0] = ambLight.red; a[1] = ambLight.green; a[2] = ambLight.blue; a[3] = ambLight.alpha;
+	}
+	// patch 46: the Leeds program reads only the ambient: the directional
+	// lights are left for the next program that reads them (lightsDirty
+	// stays set)
+	if(usesLights && usesDirLights && lightsDirty){
 		for(int i = 0; i < MAX_LIGHTS; i++){
 			float32 *d = constWant[C_LIGHTS + 2*i];
 			float32 *c = constWant[C_LIGHTS + 2*i + 1];
@@ -1301,15 +1306,16 @@ applyProgramsAndConstants(void)
 	}
 
 	bool usesLights = curVP == VP_DEFAULT || curVP == VP_SKIN || curVP == VP_ENV || curVP == VP_LEEDS;
+	bool usesDirLights = usesLights && !(curVP == VP_LEEDS && optLeedsNoDirLights);
 	bool usesEnv = curVP == VP_ENV;
-	computeDerivedConstants(usesLights, usesEnv);
+	computeDerivedConstants(usesLights, usesEnv, usesDirLights);
 
 	if(curVP != VP_IM2D)
 		uploadConsts(C_MVP, 4);
-	if(usesLights){
+	if(usesLights)
 		uploadConsts(C_MATCOLOR, 3);	// matColor, surfProps, ambient
+	if(usesDirLights)
 		uploadConsts(C_LIGHTS, 16);
-	}
 	uploadConsts(C_FOGDATA, 2);
 	if(curVP == VP_IM2D)
 		uploadConsts(C_XFORM, 1);
@@ -1330,8 +1336,24 @@ applyProgramsAndConstants(void)
 static bool vtxCacheDirty = true;
 void vertexCacheTouched(void) { vtxCacheDirty = true; }
 
+// patch 46: the CPU time of the backend (perf.txt): timebase ticks
+static inline uint64 tbNow(void) { uint64 tb; __asm__ volatile("mftb %0" : "=r"(tb)); return tb; }
+PerfCounters perfCounters;
+bool optLeedsNoDirLights = true;
+
+static bool flushCacheImpl(void);
+
 bool
 flushCache(void)
+{
+	uint64 t0 = tbNow();
+	bool r = flushCacheImpl();
+	perfCounters.flushTb += tbNow() - t0;
+	return r;
+}
+
+static bool
+flushCacheImpl(void)
 {
 	if(!targetValid){
 		drawStats.dropped++;

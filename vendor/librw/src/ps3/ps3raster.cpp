@@ -1622,7 +1622,11 @@ tjThreadMain(void *arg)
 		}
 		j->state = TJ_RUNNING;
 		sysMutexUnlock(tjMutex);
-		tjRun(j, &workerCtx);
+		{
+			uint64 t0 = sysGetSystemTime();
+			tjRun(j, &workerCtx);
+			perfCounters.texThreadUs += sysGetSystemTime() - t0;	// patch 46 (perf.txt)
+		}
 		texProfile.asyncLevels++;
 		sysMutexLock(tjMutex, 0);
 	}

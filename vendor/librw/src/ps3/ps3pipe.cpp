@@ -203,8 +203,21 @@ uninstance(rw::ObjPipeline *rwpipe, Atomic *atomic)
 	assert(0 && "can't uninstance");
 }
 
+static void renderImpl(rw::ObjPipeline *rwpipe, Atomic *atomic);
+
+// patch 46: the CPU time of the atomic pipelines (perf.txt)
 static void
 render(rw::ObjPipeline *rwpipe, Atomic *atomic)
+{
+	uint64 t0, t1;
+	__asm__ volatile("mftb %0" : "=r"(t0));
+	renderImpl(rwpipe, atomic);
+	__asm__ volatile("mftb %0" : "=r"(t1));
+	perfCounters.renderTb += t1 - t0;
+}
+
+static void
+renderImpl(rw::ObjPipeline *rwpipe, Atomic *atomic)
 {
 	ObjPipeline *pipe = (ObjPipeline*)rwpipe;
 	Geometry *geo = atomic->geometry;

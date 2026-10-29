@@ -64,6 +64,7 @@ void PS3_LogMemTag(const char *tag);	// heap, free memory, textures, streaming
 
 // ps3_autotest.cpp (USRDIR/autotest.txt)
 void PS3_AutotestFrame(void);		// CPad::UpdatePads, every frame
+void PS3_PerfTestFrame(void);		// patch 46: USRDIR/perf.txt (ps3_perftest.cpp)
 int  PS3_AutotestWantsLoad(void);	// main loop, between frames
 void PS3_AutotestLoaded(void);		// after a load it asked for
 

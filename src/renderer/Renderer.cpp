@@ -566,6 +566,19 @@ inline bool PutIntoSortedVehicleList(CVehicle *veh)
 }
 
 // this only renders objects in LCS
+#ifdef __PS3__
+bool gPS3SortOpaque;	// patch 46: off until perf.txt shows it worth it
+static int
+PS3_CmpEntityModel(const void *a, const void *b)
+{
+	const CEntity *ea = *(CEntity *const*)a, *eb = *(CEntity *const*)b;
+	int ma = ea->GetModelIndex(), mb = eb->GetModelIndex();
+	if(ma != mb)
+		return ma < mb ? -1 : 1;
+	return ea < eb ? -1 : ea > eb ? 1 : 0;
+}
+#endif
+
 void
 CRenderer::RenderEverythingBarRoads(void)
 {
@@ -578,8 +591,24 @@ CRenderer::RenderEverythingBarRoads(void)
 	SetCullMode(rwCULLMODECULLBACK);
 //	gSortedVehiclesAndPeds.Clear();
 
+#ifdef __PS3__
+	// patch 46 (perf.txt, OPAQUE SORT): the list in model order, so the
+	// instances of a model, and their textures, are drawn one after the
+	// other (fewer texture and state changes). Depth sorts the picture;
+	// only coplanar faces of different models could change who wins.
+	static CEntity *ps3Sorted[NUMVISIBLEENTITIES];
+	CEntity **list = ms_aVisibleEntityPtrs;
+	if(gPS3SortOpaque){
+		memcpy(ps3Sorted, ms_aVisibleEntityPtrs, ms_nNoOfVisibleEntities * sizeof(CEntity*));
+		qsort(ps3Sorted, ms_nNoOfVisibleEntities, sizeof(CEntity*), PS3_CmpEntityModel);
+		list = ps3Sorted;
+	}
+	for(i = 0; i < ms_nNoOfVisibleEntities; i++){
+		e = list[i];
+#else
 	for(i = 0; i < ms_nNoOfVisibleEntities; i++){
 		e = ms_aVisibleEntityPtrs[i];
+#endif
 
 		if(IsRoad(e))
 			continue;

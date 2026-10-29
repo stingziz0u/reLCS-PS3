@@ -53,6 +53,8 @@ uint32 BankStartOffset[MAX_SFX_BANKS];
 uint32 nNumMP3s;
 int defaultProvider = 0;
 
+// patch 46: the audio threads' busy time (perf.txt), microseconds, never reset
+uint64 gPS3MixerBusyUs, gPS3StreamBusyUs;
 static char SampleBankDescFilename[] = "audio/sfx.SDT";
 static char SampleBankDataFilename[] = "audio/sfx.RAW";
 
@@ -1156,7 +1158,9 @@ AudioThread(void *arg)
 			dist = 1;
 		}
 		while(dist <= AUDIO_AHEAD){
+			u64 t0 = sysGetSystemTime();
 			AudioFill(AudioBlock(next));
+			gPS3MixerBusyUs += sysGetSystemTime() - t0;	// patch 46 (perf.txt)
 			next = (next + 1) % blocks;
 			dist++;
 		}
@@ -1172,6 +1176,7 @@ StreamThread(void *arg)
 	static int16 tmp[4096*2];
 	(void)arg;
 	while(!s_audioQuit){
+		u64 busyStart = sysGetSystemTime();
 		s_streamPasses++;
 		s_streamStep = 1;
 		PedCommentRead();
@@ -1222,6 +1227,7 @@ StreamThread(void *arg)
 				}
 			}
 		}
+		gPS3StreamBusyUs += sysGetSystemTime() - busyStart;	// patch 46 (perf.txt)
 		s_streamStep = 3;
 		// sooner when a ped comment waits
 		for(int w = 0; w < 4 && pcRequest < 0 && !s_audioQuit; w++)

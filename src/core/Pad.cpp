@@ -1720,6 +1720,7 @@ void CPad::UpdatePads(void)
 
 #if defined(__PS3__) && PS3_STAGE != 1
 	PS3_AutotestFrame();	// the automatic test (USRDIR/autotest.txt), if any
+	PS3_PerfTestFrame();	// the performance test (USRDIR/perf.txt), if any
 	PS3_CarSpawnerPad();	// L3 + R3
 	{
 		// vibration (Gamepad settings): what the PS2 game sent to the
