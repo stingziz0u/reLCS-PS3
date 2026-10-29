@@ -19,11 +19,13 @@
 //   draws, texture binds, program switches, constants, and the busy time of
 //   the other threads (audio mixer, audio streams, texture conversion).
 //
-// What is switched between runs (patch 49): the audio mixer on the PPU
-// ("original") or on an SPU ("optimized", sampman_ps3.cpp). The mixer's time is
-// split: "mixer" is the PPU's work, "SPU" the mixer thread's wait for the SPU
-// (the PPU is free then). Patch 46's switches showed no difference: the
-// opaque sort stays off and the Leeds program without lights stays on.
+// What is switched between runs (patch 50): the particles' sprites built on
+// the PPU ("original") or on an SPU ("optimized", Particle.cpp). "particles" is
+// the game thread's time in CParticle::Render without its wait for the SPU,
+// "SPU" that wait. The audio mixer stays on its SPU (patch 49: it took
+// 1.4-8.6 ms of PPU per frame, 0.2-0.3 on the SPU); its time is split the same
+// way. Patch 46's switches showed no difference: the opaque sort stays off and
+// the Leeds program without lights stays on.
 // -O3 on the hot files is a build option (Makefile HOT_O3): the log says
 // which build this is.
 
@@ -59,6 +61,8 @@ extern bool gPS3SortOpaque;			// Renderer.cpp
 extern uint64 gPS3MixerBusyUs, gPS3StreamBusyUs;	// sampman_ps3.cpp
 extern bool gPS3SpuAudio;			// sampman_ps3.cpp (patch 49)
 extern uint64 gPS3SpuWaitUs;
+extern bool gPS3SpuParticles;			// Particle.cpp (patch 50)
+extern uint64 gPS3ParticleUs, gPS3SpuPartWaitUs;
 unsigned long long PS3_ProfEverUs(const char *name);	// ps3_prof.cpp
 
 #ifndef PS3_HOT_O3
@@ -79,6 +83,7 @@ struct Snapshot
 	rw::ps3::PerfCounters pc;
 	uint64 timers[NUM_TIMERS];
 	uint64 mixerUs, streamUs, spuUs;
+	uint64 partUs, partSpuUs;
 };
 
 struct Spot { const char *name; float x, y, z; };	// z: about the street (the ground is looked for under z + 2)
@@ -109,6 +114,7 @@ struct Result
 	float timerMs[NUM_TIMERS];
 	float draws, texBinds, vpSw, fpSw, consts;
 	float mixerMs, streamMs, texMs, spuMs;
+	float partMs, partSpuMs;
 };
 
 static int state;	// 0 not looked at, 1 waiting, 2 running, 3 done/off
@@ -120,7 +126,7 @@ static CVector spotPos[8];
 static int curSpot, curRun, phase;	// phase 0 going there, 1 settling, 2 measuring
 static CVector startPos;
 static float startHeading;
-static bool prevSort, prevNoLights, prevSpu;
+static bool prevSort, prevNoLights, prevSpu, prevSpuPart;
 static Snapshot snapStart;
 static float samples[MAX_SAMPLES];
 static int numSamples;
@@ -138,6 +144,8 @@ takeSnapshot(Snapshot *s)
 	s->spuUs = gPS3SpuWaitUs;
 	s->mixerUs = gPS3MixerBusyUs - s->spuUs;	// the PPU's part
 	s->streamUs = gPS3StreamBusyUs;
+	s->partSpuUs = gPS3SpuPartWaitUs;
+	s->partUs = gPS3ParticleUs - s->partSpuUs;
 }
 
 static void
@@ -145,7 +153,8 @@ setConfig(int cfg)
 {
 	gPS3SortOpaque = false;
 	rw::ps3::optLeedsNoDirLights = true;
-	gPS3SpuAudio = cfg != 0;
+	gPS3SpuAudio = true;
+	gPS3SpuParticles = cfg != 0;
 }
 
 static void
@@ -229,16 +238,18 @@ finishRun(void)
 	r.consts = (e.pc.consts - snapStart.pc.consts) / frames;
 	r.mixerMs = (e.mixerUs - snapStart.mixerUs) / 1000.0 / frames;
 	r.spuMs = (e.spuUs - snapStart.spuUs) / 1000.0 / frames;
+	r.partMs = (e.partUs - snapStart.partUs) / 1000.0 / frames;
+	r.partSpuMs = (e.partSpuUs - snapStart.partSpuUs) / 1000.0 / frames;
 	r.streamMs = (e.streamUs - snapStart.streamUs) / 1000.0 / frames;
 	r.texMs = (e.pc.texThreadUs - snapStart.pc.texThreadUs) / 1000.0 / frames;
 	PS3_Logf("[perf] %s, %s, %s (run %d%s): %.1f fps, frame %.2f ms (95%% under %.2f, worst %.1f, over 17.5 ms %.1f%%); "
 	         "CPU %.2f ms, RSX wait %.2f; backend %.2f ms (flushCache %.2f); game %.2f, render list %.2f, PreRender %.2f, "
-	         "scene %.2f, effects %.2f, 2D %.2f; %.0f draws, %.0f texture binds, VP %.1f FP %.1f, %.0f consts; "
+	         "scene %.2f, effects %.2f (particles %.2f, SPU %.2f), 2D %.2f; %.0f draws, %.0f texture binds, VP %.1f FP %.1f, %.0f consts; "
 	         "other threads per frame: mixer %.2f ms (SPU %.2f), streams %.2f ms, textures %.2f ms",
-	         spotNames[curSpot], scenNames[r.scen], r.cfg ? "SPU mixer" : "PPU mixer", curRun + 1,
+	         spotNames[curSpot], scenNames[r.scen], r.cfg ? "SPU particles" : "PPU particles", curRun + 1,
 	         r.scen >= SCEN_EXPLOSIONS ? (boomCount ? "" : ", no explosion took") : "", r.fps, r.avgMs, r.p95Ms, r.worstMs,
 	         r.missedPct, r.cpuMs, r.waitMs, r.renderMs, r.flushMs, r.timerMs[0], r.timerMs[1], r.timerMs[2],
-	         r.timerMs[3], r.timerMs[4], r.timerMs[5], r.draws, r.texBinds, r.vpSw, r.fpSw, r.consts,
+	         r.timerMs[3], r.timerMs[4], r.partMs, r.partSpuMs, r.timerMs[5], r.draws, r.texBinds, r.vpSw, r.fpSw, r.consts,
 	         r.mixerMs, r.spuMs, r.streamMs, r.texMs);
 }
 
@@ -259,6 +270,7 @@ logSummary(void)
 			for (int t = 0; t < NUM_TIMERS; t++)
 				s.timerMs[t] += r.timerMs[t];
 			s.draws += r.draws; s.texBinds += r.texBinds; s.consts += r.consts;
+			s.partMs += r.partMs; s.partSpuMs += r.partSpuMs;
 			s.mixerMs += r.mixerMs; s.spuMs += r.spuMs; s.streamMs += r.streamMs; s.texMs += r.texMs;
 			if (r.worstMs > s.worstMs)
 				s.worstMs = r.worstMs;
@@ -268,11 +280,11 @@ logSummary(void)
 			continue;
 		float k = 1.0f / n;
 		PS3_Logf("[perf] SUMMARY %s, %s (%d runs): frame %.2f ms (95%% under %.2f, worst %.1f, over 17.5 ms %.1f%%); CPU %.2f ms "
-		         "(backend %.2f, flushCache %.2f; game %.2f, render list %.2f, PreRender %.2f, scene %.2f, effects %.2f, 2D %.2f), "
+		         "(backend %.2f, flushCache %.2f; game %.2f, render list %.2f, PreRender %.2f, scene %.2f, effects %.2f (particles %.2f, SPU %.2f), 2D %.2f), "
 		         "RSX wait %.2f; %.0f draws, %.0f texture binds, %.0f consts; mixer %.2f ms (SPU %.2f), streams %.2f ms, textures %.2f ms per frame",
-		         scenNames[scen], cfg ? "SPU mixer" : "PPU mixer", n, s.avgMs * k, s.p95Ms * k, s.worstMs, s.missedPct * k, s.cpuMs * k,
+		         scenNames[scen], cfg ? "SPU particles" : "PPU particles", n, s.avgMs * k, s.p95Ms * k, s.worstMs, s.missedPct * k, s.cpuMs * k,
 		         s.renderMs * k, s.flushMs * k, s.timerMs[0] * k, s.timerMs[1] * k, s.timerMs[2] * k, s.timerMs[3] * k,
-		         s.timerMs[4] * k, s.timerMs[5] * k, s.waitMs * k, s.draws * k, s.texBinds * k, s.consts * k,
+		         s.timerMs[4] * k, s.partMs * k, s.partSpuMs * k, s.timerMs[5] * k, s.waitMs * k, s.draws * k, s.texBinds * k, s.consts * k,
 		         s.mixerMs * k, s.spuMs * k, s.streamMs * k, s.texMs * k);
 	}
 }
@@ -334,10 +346,12 @@ finishTest(CPlayerPed *p, const char *why)
 	gPS3SortOpaque = prevSort;
 	rw::ps3::optLeedsNoDirLights = prevNoLights;
 	gPS3SpuAudio = prevSpu;
+	gPS3SpuParticles = prevSpuPart;
 	if (numResults)
 		logSummary();
-	PS3_Logf("[perf] done (%s); the settings are back as they were (opaque sort %s, Leeds without lights %s, SPU mixer %s)",
-	         why, prevSort ? "on" : "off", prevNoLights ? "on" : "off", prevSpu ? "on" : "off");
+	PS3_Logf("[perf] done (%s); the settings are back as they were (opaque sort %s, Leeds without lights %s, SPU mixer %s, "
+	         "SPU particles %s)", why, prevSort ? "on" : "off", prevNoLights ? "on" : "off", prevSpu ? "on" : "off",
+	         prevSpuPart ? "on" : "off");
 	wchar none[1] = { 0 };
 	CHud::SetHelpMessage(none, true);
 	rename(PERF_FILE, PERF_DONE_FILE);
@@ -399,6 +413,7 @@ PS3_PerfTestFrame(void)
 		prevSort = gPS3SortOpaque;
 		prevNoLights = rw::ps3::optLeedsNoDirLights;
 		prevSpu = gPS3SpuAudio;
+		prevSpuPart = gPS3SpuParticles;
 		numSpots = 0;
 		spotNames[numSpots] = "where Toni stood";
 		spotPos[numSpots++] = startPos;
@@ -407,8 +422,8 @@ PS3_PerfTestFrame(void)
 				spotNames[numSpots] = portlandSpots[i].name;
 				spotPos[numSpots++] = CVector(portlandSpots[i].x, portlandSpots[i].y, portlandSpots[i].z);
 			}
-		PS3_Logf("[perf] start at %.1f %.1f %.1f: %d places x %d runs of %d s: clear (PPU mixer, SPU mixer, PPU, "
-		         "SPU), rain, explosions, rain + explosions (PPU mixer, SPU mixer each)",
+		PS3_Logf("[perf] start at %.1f %.1f %.1f: %d places x %d runs of %d s: clear (PPU particles, SPU particles, "
+		         "PPU, SPU), rain, explosions, rain + explosions (PPU particles, SPU particles each)",
 		         startPos.x, startPos.y, startPos.z, numSpots, NUM_RUNS, secsPerRun);
 		curScen = -1;
 		curSpot = 0;

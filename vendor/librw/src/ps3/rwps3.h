@@ -190,7 +190,12 @@ struct PerfCounters
 	uint64 texThreadUs;	// the texture thread's busy time (ps3raster)
 };
 extern PerfCounters perfCounters;
-extern bool optLeedsNoDirLights;	// patch 46: the Leeds program gets no directional lights (it reads none)
+extern bool optLeedsNoDirLights;
+// patch 50: space in this frame's vertex ring for vertices written by an SPU
+// (ringAlloc: CPU address, nil when the segment is full; *offset for the
+// draw) and Im2D quads drawn from there (4 Im2DVertex each, 0-1-2-3)
+uint8 *ringAlloc(uint32 size, uint32 *offset);
+void   im2DDrawQuadsAt(uint32 offset, int32 numQuads);	// patch 46: the Leeds program gets no directional lights (it reads none)
 rw::ObjPipeline *leedsWorldPipeline(void);	// for the buildings' atomics (CSimpleModelInfo::SetAtomic)
 void setWorldAmbient(float32 r, float32 g, float32 b);	// the time cycle ambient, 0..1, once a frame
 void applyGamma(Raster *camRaster, float32 exponent);	// the picture to the power exponent (1/gamma)
