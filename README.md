@@ -13,17 +13,16 @@ converted from your own copy. It is the sibling of
 [reVC-PS3](https://github.com/stingziz0u/reVC-PS3) (GTA Vice City), and
 shares their PS3 layer.
 
-> **Status: 1.0 alpha.** The game is playable on a real PS3, but it hasn't
+> **Status: 1.1 alpha.** The game is playable on a real PS3, but it hasn't
 > been played through yet. reLCS itself is still a work in progress (its
-> audio, for one), and this is the first release of the port: **expect bugs,
+> audio, for one), and this is still an alpha of the port: **expect bugs,
 > crashes and odd things**, and please report them with the log (see
 > [Troubleshooting](#troubleshooting)).
 > Only tested on real consoles, not on RPCS3.
 >
 >
 > **Known issues:**
-> - Ped voices: reLCS still uses Vice City's voice tables, so many peds
->   (women and old people too) speak with the generic male voices.
+> - Car headlights look square.
 > - Some LOD buildings can still pop in at a distance.
 > - Holding O while aiming with fists repeats very fast punches (not yet
 >   checked against the original).
@@ -36,6 +35,23 @@ Liberty City Stories for PS2, converted with the
 (see [Installation](#installation)). The PKG only has the program, its icon
 and two res-PS3 files (the PlayStation button icons and the controller
 picture of the settings page).
+
+## What's new in 1.1
+
+- **The Cell's SPUs at work**: the audio mixer runs on one SPU and the
+  particles' sprites (smoke, sparks, explosions, rain, splashes) are built on
+  another, so the PPU has that time for the game. With explosions and rain
+  around, the frame rate drops less and recovers faster (in the tests the
+  mixer alone took up to 8 ms of the PPU per frame; now 0.3).
+- The game's busiest code (collision, physics, entities, animation, the
+  world, the render list and the RSX pipelines) is built with `-O3`.
+- **Ped voices**: every LCS civilian speaks with its own voice bank (no more
+  generic male voice for women and old people).
+- Peds that a firefighter mission sets on fire no longer end up under the
+  street.
+- The taxi passenger no longer screams as if held hostage when getting out
+  at the end of a fare.
+- `perf.txt` performance test (see [Troubleshooting](#troubleshooting)).
 
 ## Features
 
@@ -80,6 +96,8 @@ picture of the settings page).
     finished picture: ~2 ms of GPU time and 7 MB of video memory at 720p).
 - DXT textures stay compressed in video memory and the RSX reads them as
   they are. Mip levels made on the CPU use AltiVec.
+- Two of the Cell's SPUs: the audio mixer and the particles' sprites (see
+  [What's new in 1.1](#whats-new-in-11)).
 - *Display > Screen size* for overscan, FPS counter (*Graphics > Show FPS*).
 - Settings saved in `USRDIR/reLCS.ini`, saves in `USRDIR/userfiles`.
 
@@ -101,7 +119,7 @@ else plays as the original):
 1. Convert your copy of GTA Liberty City Stories for PS2 with the
    [reLCS Asset Converter](https://github.com/knackers4/res/releases/download/relcs/reLCSAssetConverter.exe)
    (on a PC).
-2. Install `res-ps3-1.0-alpha.pkg` on a PS3 with homebrew support (CFW or
+2. Install `res-ps3-1.1-alpha.pkg` on a PS3 with homebrew support (CFW or
    HEN), e.g. copy it by FTP and install it with the package manager. It
    appears in the XMB as **reLCS**.
 3. The PKG creates `/dev_hdd0/game/RESPS3000/USRDIR` with these empty
@@ -153,6 +171,18 @@ and unconverted assets from other games or platforms don't.
 - Buildings popping in or out: an empty `USRDIR/nolodpairs.txt` goes back
   to the game's own rule for the LOD buildings, `USRDIR/noocclusion.txt`
   turns off the occluders. Report which one changes it, with the log.
+- Sound or particles that look or sound wrong: an empty
+  `USRDIR/nospuaudio.txt` mixes the audio on the PPU again,
+  `USRDIR/nospuparticles.txt` builds the particles on the PPU again, and
+  `USRDIR/spuparticles_ram.txt` keeps them on the SPU but has it write to
+  main memory (the PPU copies them for the RSX). Report which one changes
+  it, with the log.
+- `USRDIR/perf.txt` runs a performance test (load a save outdoors, not on a
+  mission, and leave the pad alone; it starts 10 s later and takes about 6
+  minutes in Portland): it measures every frame at a few busy places, clear,
+  in the rain, with explosions and both, switching the SPU particles off and
+  on, and writes `[perf]` lines to the log. `secs=N` in the file sets the
+  seconds per run (4 to 30). It is renamed to `perf.done.txt` at the end.
 - `USRDIR/autotest.txt` runs an automatic test while you watch (load a save
   outdoors first). The file is renamed to `autotest.done.txt` when the test
   ends.
@@ -174,7 +204,7 @@ On Linux or WSL (Ubuntu):
    make -C ps3 verify
    ```
 
-   The result is `ps3/res-ps3-1.0-alpha.pkg`.
+   The result is `ps3/res-ps3-1.1-alpha.pkg`.
 
 Other targets: `make -C ps3 DEBUG=1` (debug build with asserts),
 `make -C ps3 STAGE=1` (headless test build: loads the game without video,
@@ -192,7 +222,10 @@ and PSL1GHT's `cgcomp` with `cgcomp-relative-constants.patch`; see
 - `ps3/` — Makefile, PKG icon, patch level, tools (`lcsdis.py`, a
   disassembler for LCS's `main.scm`; `crashaddr.py`).
 - `src/skel/ps3/` — platform layer: main loop, file system, pad, log, test.
-- `src/audio/sampman_ps3.cpp` — audio (software mixer on libaudio, MP3/WAV streams).
+- `src/audio/sampman_ps3.cpp` — audio (mixer on an SPU, or the PPU, on libaudio; MP3/WAV streams).
+- `ps3/spu/` — the SPU programs: the audio mixer (`spumix.c`) and the
+  particles' sprites (`spuparticles.c`), built with `spu-gcc` and put in the
+  EBOOT.
 - `vendor/librw/src/ps3/` — librw's RSX backend: VRAM, rasters, pipelines
   (the Leeds world pipeline for the PS2 lighting), shaders.
 - `src/core/config.h` (`__PS3__` section) — what the PS3 build turns on and off.
