@@ -3294,8 +3294,18 @@ void
 CAutomobile::FireTruckControl(void)
 {
 	if(this == FindPlayerVehicle()){
-		if(CPad::GetPad(0)->GetCarGunFired()){
-			if(TheCamera.Cams[TheCamera.ActiveCam].Mode == CCam::MODE_CAM_ON_A_STRING){
+		bool cannonFired = CPad::GetPad(0)->GetCarGunFired();
+#ifdef __PS3__
+		// patch 51: the cannon is aimed all the time, not only while it fires
+		// (it only turned while the water was on): with the free camera it
+		// follows the camera, without it the right stick turns it
+		{
+			bool followCam = CCamera::bFreeCam && TheCamera.Cams[TheCamera.ActiveCam].Mode == CCam::MODE_CAM_ON_A_STRING;
+#else
+		if(cannonFired){
+			bool followCam = TheCamera.Cams[TheCamera.ActiveCam].Mode == CCam::MODE_CAM_ON_A_STRING;
+#endif
+			if(followCam){
 				// android code differs
 				CVector localFront = Multiply3x3(TheCamera.Cams[TheCamera.ActiveCam].Front, GetMatrix());
 				float targetDirLR = localFront.Heading();
@@ -3328,7 +3338,9 @@ CAutomobile::FireTruckControl(void)
 			if(m_fCarGunLR < -PI) m_fCarGunLR += TWOPI;
 			else if(m_fCarGunLR > PI) m_fCarGunLR -= TWOPI;
 			m_fCarGunUD = Clamp(m_fCarGunUD, -0.06f, 0.3f);
+		}
 
+		if(cannonFired){
 			CVector cannonPos, cannonDir;
 			CVector localOffset(0.0f, 0.75f, 0.0f);
 			CVector localPos(0.0f, 1.05f, 2.02f);
