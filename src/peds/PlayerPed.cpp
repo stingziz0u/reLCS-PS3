@@ -1446,6 +1446,15 @@ CPlayerPed::ProcessPlayerWeapon(CPad *padUsed)
 				} else {
 					m_fAttackButtonCounter = 0.0f;
 				}
+#ifdef __PS3__
+				// patch 52: locked on with fists (or a fight-mode weapon), holding
+				// the attack button started a new punch every frame the last one
+				// ended: endless fast punches. One attack per press, as when not
+				// locked on (that path waits for WeaponJustDown too)
+				if (!(GetWeapon()->m_eWeaponType == WEAPONTYPE_UNARMED || GetWeapon()->m_eWeaponType == WEAPONTYPE_BRASSKNUCKLE ||
+				      weaponInfo->IsFlagSet(WEAPONFLAG_FIGHTMODE)) ||
+				    padUsed->WeaponJustDown() || m_nPedState == PED_ATTACK)
+#endif
 				SetAttack(m_pPointGunAt);
 			} else {
 				if (m_nPedState == PED_ATTACK) {
