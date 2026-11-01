@@ -731,12 +731,27 @@ CPlayerPed::DoStuffToGoOnFire(void)
 		TheCamera.ClearPlayerWeaponMode();
 }
 
+// patch 54: the lock-on range of a weapon. Melee weapons (bat, knife,
+// chainsaw...) now lock on as the fists do (only the fists and the
+// fight-mode weapons did), at least as far as the fists reach
+static float
+PS3_LockOnRange(eWeaponType type)
+{
+	CWeaponInfo *info = CWeaponInfo::GetWeaponInfo(type);
+	float range = info->m_fRange;
+#ifdef __PS3__
+	if (info->m_eWeaponFire == WEAPON_FIRE_MELEE)
+		range = Max(range, CWeaponInfo::GetWeaponInfo(WEAPONTYPE_UNARMED)->m_fRange);
+#endif
+	return range;
+}
+
 bool
 CPlayerPed::DoesTargetHaveToBeBroken(CVector target, CWeapon *weaponUsed)
 {
 	CVector distVec = target - GetPosition();
 
-	if (distVec.Magnitude() > CWeaponInfo::GetWeaponInfo(weaponUsed->m_eWeaponType)->m_fRange)
+	if (distVec.Magnitude() > PS3_LockOnRange(weaponUsed->m_eWeaponType))
 		return true;
 
 	return false;
@@ -1191,7 +1206,7 @@ bool
 CPlayerPed::FindNextWeaponLockOnTarget(CEntity *previousTarget, bool lookToLeft)
 {
 	CEntity *nextTarget = nil;
-	float weaponRange = CWeaponInfo::GetWeaponInfo(GetWeapon()->m_eWeaponType)->m_fRange;
+	float weaponRange = PS3_LockOnRange(GetWeapon()->m_eWeaponType);
 	// nextTarget = nil; // duplicate
 	float lastCloseness = -10000.0f;
 	// CGeneral::GetATanOfXY(GetForward().x, GetForward().y); // unused
@@ -1233,7 +1248,7 @@ bool
 CPlayerPed::FindWeaponLockOnTarget(void)
 {
 	CEntity *nextTarget = nil;
-	float weaponRange = CWeaponInfo::GetWeaponInfo(GetWeapon()->m_eWeaponType)->m_fRange;
+	float weaponRange = PS3_LockOnRange(GetWeapon()->m_eWeaponType);
 
 	if (m_pPointGunAt) {
 		CVector distVec = m_pPointGunAt->GetPosition() - GetPosition();
@@ -1571,7 +1586,11 @@ CPlayerPed::ProcessPlayerWeapon(CPad *padUsed)
 
 	const bool isMeleeLockOn = GetWeapon()->m_eWeaponType == WEAPONTYPE_UNARMED ||
 		GetWeapon()->m_eWeaponType == WEAPONTYPE_BRASSKNUCKLE ||
-		weaponInfo->IsFlagSet(WEAPONFLAG_FIGHTMODE);
+		weaponInfo->IsFlagSet(WEAPONFLAG_FIGHTMODE)
+#ifdef __PS3__
+		|| weaponInfo->m_eWeaponFire == WEAPON_FIRE_MELEE	// patch 54: bat, knife, chainsaw...
+#endif
+		;
 	if (padUsed->GetTarget() && m_nSelectedWepSlot == m_currentWeapon && m_nMoveState != PEDMOVE_SPRINT &&
 		!TheCamera.Using1stPersonWeaponMode() && (weaponInfo->IsFlagSet(WEAPONFLAG_CANAIM) || isMeleeLockOn)) {
 		if (m_pPointGunAt) {
