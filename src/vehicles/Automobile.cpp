@@ -1763,7 +1763,7 @@ PS3_CarMeshMaterialCB(RpMaterial *m, void *data)
 	RwRaster *r = t ? RwTextureGetRaster(t) : nil;
 	PS3_Logf("[carmesh]     material colour %d %d %d %d, texture %s (raster format 0x%x), matfx %d",
 	         c->red, c->green, c->blue, c->alpha, t ? RwTextureGetName(t) : "none",
-	         r ? (unsigned)RwRasterGetFormat(r) : 0u, (int)RpMatFXMaterialGetEffects(m));
+	         r ? (unsigned)r->format : 0u, (int)RpMatFXMaterialGetEffects(m));
 	return m;
 }
 static RpAtomic*
