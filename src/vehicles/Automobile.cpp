@@ -1747,9 +1747,73 @@ float gTaxilightRange = 1.1f;
 CVector gHeadlightColour(0.86f, 0.82f, 1.0f);
 CVector gTaxilightColour(1.0, 1.0f, 0.5f);
 
+#ifdef __PS3__
+#include "NodeName.h"
+#include <rpmatfx.h>
+// patch 53: what the player's car is made of, once per model ([carmesh]
+// lines): every atomic (frame name, flags, vertices, size and where it is,
+// prelight alpha) and its materials (colour, texture, raster format, MatFX).
+// The square lights (Ren's photos): pale boxes sticking out of the lights.
+struct PS3CarMeshCtx { int atomic; };
+static RpMaterial*
+PS3_CarMeshMaterialCB(RpMaterial *m, void *data)
+{
+	const RwRGBA *c = RpMaterialGetColor(m);
+	RwTexture *t = RpMaterialGetTexture(m);
+	RwRaster *r = t ? RwTextureGetRaster(t) : nil;
+	PS3_Logf("[carmesh]     material colour %d %d %d %d, texture %s (raster format 0x%x), matfx %d",
+	         c->red, c->green, c->blue, c->alpha, t ? RwTextureGetName(t) : "none",
+	         r ? (unsigned)RwRasterGetFormat(r) : 0u, (int)RpMatFXMaterialGetEffects(m));
+	return m;
+}
+static RpAtomic*
+PS3_CarMeshAtomicCB(RpAtomic *atomic, void *data)
+{
+	PS3CarMeshCtx *ctx = (PS3CarMeshCtx*)data;
+	RpGeometry *geo = RpAtomicGetGeometry(atomic);
+	RwFrame *f = RpAtomicGetFrame(atomic);
+	RwSphere *sph = RpMorphTargetGetBoundingSphere(RpGeometryGetMorphTarget(geo, 0));
+	int minA = 255, maxA = 0;
+	RwRGBA *pre = RpGeometryGetPreLightColors(geo);
+	int nv = RpGeometryGetNumVertices(geo);
+	if (pre)
+		for (int i = 0; i < nv; i++) {
+			minA = Min(minA, (int)pre[i].alpha);
+			maxA = Max(maxA, (int)pre[i].alpha);
+		}
+	RwMatrix *ltm = f ? RwFrameGetLTM(f) : nil;
+	PS3_Logf("[carmesh]   atomic %d \"%s\": flags 0x%x, visibility id 0x%x, geometry flags 0x%x, %d vertices, %d triangles, "
+	         "sphere %.2f %.2f %.2f r %.2f (frame at %.2f %.2f %.2f), prelight alpha %s %d-%d",
+	         ctx->atomic++, f ? GetFrameNodeName(f) : "?", (unsigned)RpAtomicGetFlags(atomic),
+	         (unsigned)CVisibilityPlugins::GetAtomicId(atomic), (unsigned)RpGeometryGetFlags(geo), nv,
+	         RpGeometryGetNumTriangles(geo), sph->center.x, sph->center.y, sph->center.z, sph->radius,
+	         ltm ? ltm->pos.x : 0.0f, ltm ? ltm->pos.y : 0.0f, ltm ? ltm->pos.z : 0.0f,
+	         pre ? "" : "(none)", pre ? minA : 0, pre ? maxA : 0);
+	RpGeometryForAllMaterials(geo, PS3_CarMeshMaterialCB, nil);
+	return atomic;
+}
+static void
+PS3_CarMeshDump(CVehicle *v)
+{
+	static uint8 dumped[MODELINFOSIZE];
+	int mi = v->GetModelIndex();
+	if (mi < 0 || mi >= MODELINFOSIZE || dumped[mi] || v->m_rwObject == nil)
+		return;
+	dumped[mi] = 1;
+	PS3CarMeshCtx ctx = { 0 };
+	PS3_Logf("[carmesh] model %d (%s), lights %s:", mi, CModelInfo::GetModelInfo(mi)->GetModelName(),
+	         v->bLightsOn ? "on" : "off");
+	RpClumpForAllAtomics((RpClump*)v->m_rwObject, PS3_CarMeshAtomicCB, &ctx);
+}
+#endif
+
 void
 CAutomobile::PreRender(void)
 {
+#ifdef __PS3__
+	if(this == FindPlayerVehicle())
+		PS3_CarMeshDump(this);	// patch 53
+#endif
 	int i, j, n;
 	CVehicleModelInfo *mi = (CVehicleModelInfo*)CModelInfo::GetModelInfo(GetModelIndex());
 

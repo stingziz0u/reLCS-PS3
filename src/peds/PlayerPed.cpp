@@ -1447,13 +1447,17 @@ CPlayerPed::ProcessPlayerWeapon(CPad *padUsed)
 					m_fAttackButtonCounter = 0.0f;
 				}
 #ifdef __PS3__
-				// patch 52: locked on with fists (or a fight-mode weapon), holding
-				// the attack button started a new punch every frame the last one
-				// ended: endless fast punches. One attack per press, as when not
-				// locked on (that path waits for WeaponJustDown too)
-				if (!(GetWeapon()->m_eWeaponType == WEAPONTYPE_UNARMED || GetWeapon()->m_eWeaponType == WEAPONTYPE_BRASSKNUCKLE ||
-				      weaponInfo->IsFlagSet(WEAPONFLAG_FIGHTMODE)) ||
-				    padUsed->WeaponJustDown() || m_nPedState == PED_ATTACK)
+				// patch 52-53: locked on with fists (or a fight-mode weapon) the
+				// game went through SetAttack, the gun path: a PED_ATTACK melee
+				// anim that never played out (cut halfway, the punch didn't
+				// reach, and held it restarted every frame). The fight moves
+				// instead, one per press, as when not locked on (the lock-on
+				// keeps Toni turned to the target)
+				if (GetWeapon()->m_eWeaponType == WEAPONTYPE_UNARMED || GetWeapon()->m_eWeaponType == WEAPONTYPE_BRASSKNUCKLE ||
+				    weaponInfo->IsFlagSet(WEAPONFLAG_FIGHTMODE)) {
+					if (padUsed->WeaponJustDown() && m_nPedState != PED_ATTACK)
+						StartFightAttack(padUsed->GetWeapon());
+				} else
 #endif
 				SetAttack(m_pPointGunAt);
 			} else {
