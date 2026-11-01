@@ -160,6 +160,14 @@ CPed::SetPointGunAt(CEntity *to)
 	CWeaponInfo* curWeapon = CWeaponInfo::GetWeaponInfo(GetWeapon()->m_eWeaponType);
 	if (m_nPedState == PED_AIM_GUN || (bIsDucking && !IsPlayer()) || m_nWaitState == WAITSTATE_PLAYANIM_DUCK || curWeapon->m_AnimToPlay == ASSOCGRP_STD)
 		return;
+#ifdef __PS3__
+	// patch 57: the player locked on with a melee weapon doesn't go into the
+	// aiming state: it held the weapon's attack anim at its start (the swing
+	// ready, the fists up) and Toni stood still. He looks at the target and
+	// moves and fights as without the lock
+	if (IsPlayer() && curWeapon->m_eWeaponFire == WEAPON_FIRE_MELEE)
+		return;
+#endif
 
 	if (m_nPedState != PED_ATTACK)
 		SetStoredState();

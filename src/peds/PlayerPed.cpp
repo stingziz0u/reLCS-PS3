@@ -1455,31 +1455,21 @@ CPlayerPed::ProcessPlayerWeapon(CPad *padUsed)
 
 	if (padUsed->GetWeapon() && m_nMoveState != PEDMOVE_SPRINT) {
 		if (m_nSelectedWepSlot == m_currentWeapon) {
+#ifdef __PS3__
+			// patch 57: locked on with a melee weapon (fists, bat, chainsaw...)
+			// the attack is the one without the lock (fight moves, swings, the
+			// combo): the lock only keeps the camera and Toni on the target.
+			// The gun path (SetAttack on the target every frame) cut the
+			// swings and froze them
+			if (m_pPointGunAt && weaponInfo->m_eWeaponFire != WEAPON_FIRE_MELEE) {
+#else
 			if (m_pPointGunAt) {
+#endif
 				if (m_nPedState == PED_ATTACK) {
 					m_fAttackButtonCounter *= Pow(0.94f, CTimer::GetTimeStep());
 				} else {
 					m_fAttackButtonCounter = 0.0f;
 				}
-#ifdef __PS3__
-				// patch 52-53: locked on with fists (or a fight-mode weapon) the
-				// game went through SetAttack, the gun path: a PED_ATTACK melee
-				// anim that never played out (cut halfway, the punch didn't
-				// reach, and held it restarted every frame). The fight moves
-				// instead, one per press, as when not locked on (the lock-on
-				// keeps Toni turned to the target)
-				if (GetWeapon()->m_eWeaponType == WEAPONTYPE_UNARMED || GetWeapon()->m_eWeaponType == WEAPONTYPE_BRASSKNUCKLE ||
-				    weaponInfo->IsFlagSet(WEAPONFLAG_FIGHTMODE)) {
-					if (padUsed->WeaponJustDown() && m_nPedState != PED_ATTACK)
-						StartFightAttack(padUsed->GetWeapon());
-				} else if (weaponInfo->m_eWeaponFire == WEAPON_FIRE_MELEE) {
-					// patch 55: bat, knife, chainsaw: a press is a whole swing,
-					// also while walking (as when not locked on)
-					if (padUsed->WeaponJustDown())
-						m_bHaveTargetSelected = true;
-					SetAttack(m_pPointGunAt);
-				} else
-#endif
 				SetAttack(m_pPointGunAt);
 			} else {
 				if (m_nPedState == PED_ATTACK) {
