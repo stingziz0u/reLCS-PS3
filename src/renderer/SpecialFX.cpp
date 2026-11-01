@@ -994,6 +994,17 @@ CBrightLights::RegisterOne(CVector pos, CVector up, CVector side, CVector front,
 	if(aBrightLights[NumBrightLights].m_camDist > BRIGHTLIGHTS_MAX_DIST)
 		return;
 
+#ifdef __PS3__
+	// patch 56: the square car lights. The car lights' bright light is a
+	// white box (a cube of LongCarHeadLights... sizes) at each light, VC's
+	// (and III's) square headlights; LCS's cars, with other light positions,
+	// show it as pale boxes sticking out of the bodywork. The coronas, the
+	// light on the ground and on what's near give the lights already: the
+	// boxes of the cars aren't drawn (traffic lights and sirens still are)
+	if(type >= BRIGHTLIGHT_FRONT_LONG && type <= BRIGHTLIGHT_REAR_TALL)
+		return;
+#endif
+
 	aBrightLights[NumBrightLights].m_pos = pos;
 	aBrightLights[NumBrightLights].m_up = up;
 	aBrightLights[NumBrightLights].m_side = side;
