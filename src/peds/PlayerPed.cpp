@@ -1472,6 +1472,12 @@ CPlayerPed::ProcessPlayerWeapon(CPad *padUsed)
 				    weaponInfo->IsFlagSet(WEAPONFLAG_FIGHTMODE)) {
 					if (padUsed->WeaponJustDown() && m_nPedState != PED_ATTACK)
 						StartFightAttack(padUsed->GetWeapon());
+				} else if (weaponInfo->m_eWeaponFire == WEAPON_FIRE_MELEE) {
+					// patch 55: bat, knife, chainsaw: a press is a whole swing,
+					// also while walking (as when not locked on)
+					if (padUsed->WeaponJustDown())
+						m_bHaveTargetSelected = true;
+					SetAttack(m_pPointGunAt);
 				} else
 #endif
 				SetAttack(m_pPointGunAt);
@@ -1621,6 +1627,13 @@ CPlayerPed::ProcessPlayerWeapon(CPad *padUsed)
 			}
 
 			if (m_pPointGunAt) {
+#ifdef __PS3__
+				// patch 55: melee, walking: Toni goes where the stick says (he
+				// turns to the target when he stops or attacks)
+				if (!(weaponInfo->m_eWeaponFire == WEAPON_FIRE_MELEE &&
+				      (padUsed->GetPedWalkLeftRight() != 0 || padUsed->GetPedWalkUpDown() != 0) &&
+				      m_nPedState != PED_ATTACK && m_nPedState != PED_FIGHT))
+#endif
 				RotatePlayerToTrackTarget();
 			}
 
@@ -1660,6 +1673,12 @@ CPlayerPed::ProcessPlayerWeapon(CPad *padUsed)
 bool
 CPlayerPed::MovementDisabledBecauseOfTargeting(void)
 {
+#ifdef __PS3__
+	// patch 55: locked on with a melee weapon (fists, bat...) Toni moves
+	// freely; the lock keeps the camera on the target
+	if (m_pPointGunAt && CWeaponInfo::GetWeaponInfo(GetWeapon()->m_eWeaponType)->m_eWeaponFire == WEAPON_FIRE_MELEE)
+		return false;
+#endif
 	return m_pPointGunAt && !CWeaponInfo::GetWeaponInfo(GetWeapon()->m_eWeaponType)->IsFlagSet(WEAPONFLAG_CANAIM_WITHARM);
 }
 

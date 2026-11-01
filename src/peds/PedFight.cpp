@@ -1016,7 +1016,14 @@ CPed::Attack(void)
 				weaponAnimAssoc->SetCurrentTime(animLoopStart);
 				weaponAnimAssoc->SetRun();
 			}
-		} else if (IsPlayer() && m_pPointGunAt && bIsAimingGun && GetWeapon()->m_eWeaponState != WEAPONSTATE_RELOADING) {
+		} else if (IsPlayer() && m_pPointGunAt && bIsAimingGun && GetWeapon()->m_eWeaponState != WEAPONSTATE_RELOADING
+#ifdef __PS3__
+		           // patch 55: a gun stays pointed at the target at the end of the
+		           // shot; a melee swing froze there instead (and stayed frozen
+		           // once the target died): it plays out
+		           && ourWeapon->m_eWeaponFire != WEAPON_FIRE_MELEE
+#endif
+		           ) {
 			weaponAnimAssoc->SetCurrentTime(animLoopEnd);
 			weaponAnimAssoc->flags &= ~ASSOC_RUNNING;
 			SetPointGunAt(m_pPointGunAt);
