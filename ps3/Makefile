@@ -302,7 +302,10 @@ $(OBJDIR)/vendor/librw/src/ps3/ps3vmx.o: VMX_FLAGS := -maltivec
 $(OBJDIR)/src/%.o: $(SRC)/%.cpp $(OBJDIR)/flags.mode
 	@mkdir -p $(dir $@)
 	@echo "CXX $(patsubst $(ROOT)/%,%,$<)"
-	@$(CXX) $(GAME_FLAGS) $(OBJ_FLAGS) $(HOT_FLAGS) -c $< -o $@
+	@$(CXX) $(GAME_FLAGS) $(OBJ_FLAGS) $(HOT_FLAGS) $(VMX_FLAGS) -c $< -o $@
+
+# patch 62: the collision broadphase with AltiVec (only that file)
+$(OBJDIR)/src/collision/ColVmx.o: VMX_FLAGS := -maltivec
 
 # patch 46: the hot files (HOT_O3)
 HOT_SRCS := $(wildcard $(SRC)/collision/*.cpp $(SRC)/entities/*.cpp $(SRC)/animation/*.cpp $(SRC)/math/*.cpp) \

@@ -2832,6 +2832,24 @@ PS3_ColReport(unsigned int frames)
 	         (double)PS3_colPlaneTris / frames, PS3_colCacheUsed, PS3_colCacheLimit, PS3_colPlaneBytes >> 10);
 	PS3_colModelsTicks = PS3_colPlaneTicks = 0;
 	PS3_colModelsCalls = PS3_colPlaneMisses = PS3_colPlaneTris = 0;
+	{
+		// patch 62: ProcessColModels by part
+		extern bool gPS3VmxCol, gPS3VmxColCheck;
+		extern unsigned long long PS3_colBroadTicks, PS3_colSphTriTicks, PS3_colLineTriTicks;
+		extern uint32 PS3_colBroadTris, PS3_colBroadCands, PS3_colBroadKept, PS3_colSkipped;
+		extern uint32 PS3_colCheckCalls, PS3_colCheckMismatches;
+		PS3_Logf("[col]  ProcessColModels by part (broadphase %s): broadphase %.2f ms (%.0f triangles, %.0f boxes touched, "
+		         "%.0f kept), spheres vs triangles %.2f ms, lines vs triangles %.2f ms, %.0f exact tests skipped%s",
+		         gPS3VmxCol ? "AltiVec boxes" : "old loop", PS3_colBroadTicks * msPerTick / frames,
+		         (double)PS3_colBroadTris / frames, (double)PS3_colBroadCands / frames, (double)PS3_colBroadKept / frames,
+		         PS3_colSphTriTicks * msPerTick / frames, PS3_colLineTriTicks * msPerTick / frames,
+		         (double)PS3_colSkipped / frames, gPS3VmxColCheck ? "" : "");
+		if (gPS3VmxColCheck)
+			PS3_Logf("[col]  check against the old loop: %u calls, %u different", PS3_colCheckCalls, PS3_colCheckMismatches);
+		PS3_colBroadTicks = PS3_colSphTriTicks = PS3_colLineTriTicks = 0;
+		PS3_colBroadTris = PS3_colBroadCands = PS3_colBroadKept = PS3_colSkipped = 0;
+		PS3_colCheckCalls = PS3_colCheckMismatches = 0;
+	}
 	char line[700];
 	int len = snprintf(line, sizeof(line),
 	                   "[col]  ProcessCollision per frame: first pass %.2f ms (x%.1f), passes 2-5 %.2f ms (x%.1f), stuck pass %.2f ms (x%.1f) | slowest models:",

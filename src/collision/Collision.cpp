@@ -92,6 +92,53 @@ struct PS3ColTimer {
 	PS3ColTimer(unsigned long long *a) : t0(PS3_Ticks()), acc(a) {}
 	~PS3ColTimer() { *acc += PS3_Ticks() - t0; }
 };
+
+// patch 62: ProcessColModels' broadphase (A's bounding sphere against every
+// triangle of B) through the triangles' boxes, four at a time with AltiVec
+// (ColVmx.cpp), and the exact sphere/line vs triangle tests skipped for the
+// triangles whose box doesn't touch the sphere's or the line's. The same
+// collisions: only triangles that can't touch are skipped.
+// USRDIR/novmxcol.txt: the old loops; USRDIR/vmxcolcheck.txt: both, compared
+// ([col] check line)
+#include "ps3_platform.h"
+const float *PS3_TriBoxes(const CColModel *m);	// ColModel.cpp
+int PS3_ColBoxCandidates(const float *boxes, int numTriangles, float cx, float cy, float cz, float r, float eps, int *out);
+bool gPS3VmxCol = true;
+bool gPS3VmxColCheck;
+unsigned long long PS3_colBroadTicks, PS3_colSphTriTicks, PS3_colLineTriTicks;
+uint32 PS3_colBroadTris, PS3_colBroadCands, PS3_colBroadKept, PS3_colSkipped;
+uint32 PS3_colCheckCalls, PS3_colCheckMismatches;
+#define PS3_COL_EPS 0.01f
+
+static void
+PS3_ColVmxInit(void)
+{
+	static bool done;
+	if(done)
+		return;
+	done = true;
+	FILE *f = fopen(PS3_USRDIR "/novmxcol.txt", "rb");
+	if(f){
+		fclose(f);
+		gPS3VmxCol = false;
+	}
+	f = fopen(PS3_USRDIR "/vmxcolcheck.txt", "rb");
+	if(f){
+		fclose(f);
+		gPS3VmxColCheck = true;
+	}
+	PS3_Logf("[col] collision broadphase: %s%s", gPS3VmxCol ? "triangle boxes with AltiVec" : "the old loop (novmxcol.txt)",
+	         gPS3VmxColCheck ? ", checked against the old loop (vmxcolcheck.txt)" : "");
+}
+
+// does triangle k's box touch the box min..max (grown by eps)?
+static inline bool
+PS3_TriBoxTouches(const float *b, int n4, int k, float x0, float y0, float z0, float x1, float y1, float z1)
+{
+	return b[3*n4 + k] >= x0 - PS3_COL_EPS && b[k] <= x1 + PS3_COL_EPS &&
+	       b[4*n4 + k] >= y0 - PS3_COL_EPS && b[n4 + k] <= y1 + PS3_COL_EPS &&
+	       b[5*n4 + k] >= z0 - PS3_COL_EPS && b[2*n4 + k] <= z1 + PS3_COL_EPS;
+}
 #endif
 
 void
@@ -2050,9 +2097,62 @@ CCollision::ProcessColModels(const CMatrix &matrixA, CColModel &modelA,
 		if(TestSphereBox(bsphereAB, modelB.boxes[i]))
 			aBoxIndicesB[numBoxesB++] = i;
 	CalculateTrianglePlanes(&modelB);
+#ifdef __PS3__
+	PS3_ColVmxInit();
+	const float *ps3Boxes = nil;
+	int ps3N4 = (modelB.numTriangles + 3) & ~3;
+	{
+		unsigned long long ps3b0 = PS3_Ticks();
+		if(gPS3VmxCol && modelB.trianglePlanes && modelB.numTriangles > 0){
+			// the candidates apart: there can be more than MAXNUMTRIS of them
+			static int ps3Cands[32768];
+			ps3Boxes = PS3_TriBoxes(&modelB);
+			int cands = PS3_ColBoxCandidates(ps3Boxes, modelB.numTriangles, bsphereAB.center.x, bsphereAB.center.y,
+			                                 bsphereAB.center.z, bsphereAB.radius, PS3_COL_EPS, ps3Cands);
+			PS3_colBroadCands += cands;
+			for(i = 0; i < cands; i++){
+				int k = ps3Cands[i];
+				if(TestSphereTriangle(bsphereAB, modelB.vertices, modelB.triangles[k], modelB.trianglePlanes[k])){
+					if(numTrianglesB >= MAXNUMTRIS){
+						// the old loop wrote past the array here
+						static int logged;
+						if(logged++ < 4)
+							PS3_Logf("[col] more than %d triangles touched in one ProcessColModels: the rest left out", MAXNUMTRIS);
+						break;
+					}
+					aTriangleIndicesB[numTrianglesB++] = k;
+				}
+			}
+			if(gPS3VmxColCheck){
+				// the old loop, for the comparison
+				int n = 0;
+				bool same = true;
+				for(i = 0; i < modelB.numTriangles && n < MAXNUMTRIS; i++)
+					if(TestSphereTriangle(bsphereAB, modelB.vertices, modelB.triangles[i], modelB.trianglePlanes[i])){
+						if(n >= numTrianglesB || aTriangleIndicesB[n] != i)
+							same = false;
+						n++;
+					}
+				if(n != numTrianglesB)
+					same = false;
+				PS3_colCheckCalls++;
+				if(!same)
+					PS3_colCheckMismatches++;
+			}
+		}else{
+			for(i = 0; i < modelB.numTriangles; i++)
+				if(TestSphereTriangle(bsphereAB, modelB.vertices, modelB.triangles[i], modelB.trianglePlanes[i]))
+					aTriangleIndicesB[numTrianglesB++] = i;
+		}
+		PS3_colBroadTris += modelB.numTriangles;
+		PS3_colBroadKept += numTrianglesB;
+		PS3_colBroadTicks += PS3_Ticks() - ps3b0;
+	}
+#else
 	for(i = 0; i < modelB.numTriangles; i++)
 		if(TestSphereTriangle(bsphereAB, modelB.vertices, modelB.triangles[i], modelB.trianglePlanes[i]))
 			aTriangleIndicesB[numTrianglesB++] = i;
+#endif
 	assert(numSpheresB <= MAXNUMSPHERES);
 	assert(numBoxesB <= MAXNUMBOXES);
 	assert(numTrianglesB <= MAXNUMTRIS);
@@ -2078,13 +2178,30 @@ CCollision::ProcessColModels(const CMatrix &matrixA, CColModel &modelA,
 				aSpheresA[aSphereIndicesA[i]],
 				modelB.boxes[aBoxIndicesB[j]],
 				spherepoints[numCollisions], coldist);
-		for(j = 0; j < numTrianglesB; j++)
+#ifdef __PS3__
+		unsigned long long ps3s0 = PS3_Ticks();
+		const CColSphere &ps3S = aSpheresA[aSphereIndicesA[i]];
+#endif
+		for(j = 0; j < numTrianglesB; j++){
+#ifdef __PS3__
+			// patch 62: a triangle whose box doesn't touch the sphere's can't touch it
+			if(ps3Boxes && !PS3_TriBoxTouches(ps3Boxes, ps3N4, aTriangleIndicesB[j],
+			        ps3S.center.x - ps3S.radius, ps3S.center.y - ps3S.radius, ps3S.center.z - ps3S.radius,
+			        ps3S.center.x + ps3S.radius, ps3S.center.y + ps3S.radius, ps3S.center.z + ps3S.radius)){
+				PS3_colSkipped++;
+				continue;
+			}
+#endif
 			hasCollided |= ProcessSphereTriangle(
 				aSpheresA[aSphereIndicesA[i]],
 				modelB.vertices,
 				modelB.triangles[aTriangleIndicesB[j]],
 				modelB.trianglePlanes[aTriangleIndicesB[j]],
 				spherepoints[numCollisions], coldist);
+		}
+#ifdef __PS3__
+		PS3_colSphTriTicks += PS3_Ticks() - ps3s0;
+#endif
 
 		if(hasCollided)
 			numCollisions++;
@@ -2110,7 +2227,21 @@ CCollision::ProcessColModels(const CMatrix &matrixA, CColModel &modelA,
 				modelB.boxes[aBoxIndicesB[j]],
 				linepoints[aLineIndicesA[i]],
 				linedists[aLineIndicesA[i]]);
-		for(j = 0; j < numTrianglesB; j++)
+#ifdef __PS3__
+		unsigned long long ps3l0 = PS3_Ticks();
+		const CColLine &ps3L = aLinesA[aLineIndicesA[i]];
+		float ps3x0 = Min(ps3L.p0.x, ps3L.p1.x), ps3x1 = Max(ps3L.p0.x, ps3L.p1.x);
+		float ps3y0 = Min(ps3L.p0.y, ps3L.p1.y), ps3y1 = Max(ps3L.p0.y, ps3L.p1.y);
+		float ps3z0 = Min(ps3L.p0.z, ps3L.p1.z), ps3z1 = Max(ps3L.p0.z, ps3L.p1.z);
+#endif
+		for(j = 0; j < numTrianglesB; j++){
+#ifdef __PS3__
+			// patch 62: the same for the lines (the wheels' suspension lines)
+			if(ps3Boxes && !PS3_TriBoxTouches(ps3Boxes, ps3N4, aTriangleIndicesB[j], ps3x0, ps3y0, ps3z0, ps3x1, ps3y1, ps3z1)){
+				PS3_colSkipped++;
+				continue;
+			}
+#endif
 			aCollided[i] |= ProcessLineTriangle(
 				aLinesA[aLineIndicesA[i]],
 				modelB.vertices,
@@ -2118,6 +2249,10 @@ CCollision::ProcessColModels(const CMatrix &matrixA, CColModel &modelA,
 				modelB.trianglePlanes[aTriangleIndicesB[j]],
 				linepoints[aLineIndicesA[i]],
 				linedists[aLineIndicesA[i]]);
+		}
+#ifdef __PS3__
+		PS3_colLineTriTicks += PS3_Ticks() - ps3l0;
+#endif
 	}
 	for(i = 0; i < numLinesA; i++)
 		if(aCollided[i]){
