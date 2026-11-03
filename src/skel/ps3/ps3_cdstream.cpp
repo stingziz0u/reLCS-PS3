@@ -18,6 +18,7 @@
 #include <sys/thread.h>
 #include <sys/mutex.h>
 #include <sys/cond.h>
+#include <sys/systime.h>
 
 #include "CdStream.h"
 #include "rwcore.h"
