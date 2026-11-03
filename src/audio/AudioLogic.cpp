@@ -9561,11 +9561,29 @@ cAudioManager::ProcessFrontEnd()
 			AddSampleToRequestedQueue();
 		}
 		if (center) {
-			m_sQueueSample.m_nSampleIndex++;
-			m_sQueueSample.m_nCounter = iSound++;
-			m_sQueueSample.m_nPan = 63;
-			m_sQueueSample.m_nFrequency = SampleManager.GetSampleBaseFrequency(m_sQueueSample.m_nSampleIndex);
-			AddSampleToRequestedQueue();
+#ifdef __PS3__
+			// patch 75: the centre sample is the one after the right one in
+			// Vice City's list, not in LCS's (in name order): after GO_RIGHT
+			// comes GRAVEL_SKID (GO_CENTRE is before GO_LEFT), after
+			// WEAPON_RIGHT the cut WEST, and FE_INFO has no centre one
+			// (after it, JUMBO_DIST_FLY): the race's "go" and its end, the
+			// pickups and the menu/results sound played a wrong sample on top
+			uint32 left = m_sQueueSample.m_nSampleIndex - (stereo ? 1 : 0);
+			uint32 centre = left == SFX_GO_LEFT ? SFX_GO_CENTRE :
+			                left == SFX_WEAPON_LEFT ? SFX_WEAPON_CENTRE :
+			                left == SFX_PART_MISSION_COMPLETE_LEFT ? SFX_PART_MISSION_COMPLETE_CENTRE :
+			                NO_SAMPLE;
+			if (centre != NO_SAMPLE) {
+				m_sQueueSample.m_nSampleIndex = centre;
+#else
+			{
+				m_sQueueSample.m_nSampleIndex++;
+#endif
+				m_sQueueSample.m_nCounter = iSound++;
+				m_sQueueSample.m_nPan = 63;
+				m_sQueueSample.m_nFrequency = SampleManager.GetSampleBaseFrequency(m_sQueueSample.m_nSampleIndex);
+				AddSampleToRequestedQueue();
+			}
 		}
 	}
 }
