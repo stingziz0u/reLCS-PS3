@@ -66,12 +66,53 @@ PS3_TxdLoadHints(int32 slot)
 #include "KeyGen.h"
 
 #if defined(__PS3__) && defined(RW_PS3_RSX)
+// patch 63: every object converted in a frame (name, time, its parts); a
+// frame whose conversions took 6 ms or more is logged with them ([stream]
+// line, CStreaming::Update): which file makes the drop, and in which part
+extern uint64 PS3_dffParseUs, PS3_dffSetupUs;	// FileLoader.cpp
+struct PS3FrameObj { char name[28]; uint32 us, a, b; };	// a/b: DFF parse/setup, or TXD to RGBA8/swizzle+mips
+static PS3FrameObj ps3FrameObjs[12];
+static int ps3NumFrameObjs;
+static uint64 ps3FrameObjUs;
+static int ps3StreamFramesLogged;
+static uint64 ps3StreamLogMinute;
+
+static void
+PS3_StreamFrameStart(void)
+{
+	if(ps3FrameObjUs >= 6000 && ps3NumFrameObjs > 0){
+		uint64 now = rw::ps3::texProfNow();
+		if(now - ps3StreamLogMinute > 60000000ull){
+			ps3StreamLogMinute = now;
+			ps3StreamFramesLogged = 0;
+		}
+		if(ps3StreamFramesLogged++ < 20){
+			char line[600];
+			int len = snprintf(line, sizeof(line), "[stream] a frame with %.1f ms of conversions:", ps3FrameObjUs / 1000.0);
+			for(int i = 0; i < ps3NumFrameObjs && len < (int)sizeof(line) - 90; i++){
+				PS3FrameObj &o = ps3FrameObjs[i];
+				if(strncmp(o.name, "txd ", 4) == 0)
+					len += snprintf(line + len, sizeof(line) - len, " | %s %.1f (to RGBA8 %.1f, swizzle+mips %.1f, read/rest %.1f)",
+					                o.name, o.us / 1000.0, o.a / 1000.0, o.b / 1000.0,
+					                (o.us > o.a + o.b ? o.us - o.a - o.b : 0) / 1000.0);
+				else
+					len += snprintf(line + len, sizeof(line) - len, " | %s %.1f (DFF parse %.1f, game setup %.1f)",
+					                o.name, o.us / 1000.0, o.a / 1000.0, o.b / 1000.0);
+			}
+			PS3_Log(line);
+		}
+	}
+	ps3NumFrameObjs = 0;
+	ps3FrameObjUs = 0;
+}
+
 // how long each streamed object takes to become a RW object (the [tex] line)
 struct PS3StreamTimer {
 	uint64 start;
 	int32 streamId;
 	uint64 stage0[rw::ps3::TEXPROF_NUM];	// patch 59: the game thread's stage times before
-	PS3StreamTimer(int32 id) : start(rw::ps3::texProfNow()), streamId(id) {
+	uint64 parse0, setup0;			// patch 63
+	PS3StreamTimer(int32 id) : start(rw::ps3::texProfNow()), streamId(id), parse0(PS3_dffParseUs), setup0(PS3_dffSetupUs) {
 		static bool marked;
 		if(!marked){
 			rw::ps3::texProfMarkGameThread();
@@ -82,6 +123,28 @@ struct PS3StreamTimer {
 	~PS3StreamTimer() {
 		rw::ps3::TexProfile &t = rw::ps3::texProfile;
 		uint64 d = rw::ps3::texProfNow() - start;
+		t.dffParseUs += PS3_dffParseUs - parse0;	// patch 63: the [tex] line had them at 0
+		t.dffSetupUs += PS3_dffSetupUs - setup0;
+		ps3FrameObjUs += d;
+		if(ps3NumFrameObjs < (int)ARRAY_SIZE(ps3FrameObjs)){
+			PS3FrameObj &o = ps3FrameObjs[ps3NumFrameObjs++];
+			bool isTxd = streamId >= STREAM_OFFSET_TXD && streamId < STREAM_OFFSET_COL;
+			const char *name = streamId < STREAM_OFFSET_TXD ? CModelInfo::GetModelInfo(streamId)->GetModelName() :
+			                   isTxd ? CTxdStore::GetTxdName(streamId - STREAM_OFFSET_TXD) :
+			                   streamId < STREAM_OFFSET_ANIM ? "col" : "ifp";
+			snprintf(o.name, sizeof(o.name), "%s%s%s", isTxd ? "txd " : "", name,
+			         CStreaming::ms_aInfoForModel[streamId].m_loadState == STREAMSTATE_STARTED ? " (1st part)" : "");
+			o.us = (uint32)d;
+			if(isTxd){
+				o.a = (uint32)(t.gameUs[rw::ps3::TEXPROF_FROMIMAGE] - stage0[rw::ps3::TEXPROF_FROMIMAGE]);
+				o.b = (uint32)(t.gameUs[rw::ps3::TEXPROF_SWIZZLE] - stage0[rw::ps3::TEXPROF_SWIZZLE] +
+				               t.gameUs[rw::ps3::TEXPROF_MIPS] - stage0[rw::ps3::TEXPROF_MIPS] +
+				               t.gameUs[rw::ps3::TEXPROF_VRAM] - stage0[rw::ps3::TEXPROF_VRAM]);
+			}else{
+				o.a = (uint32)(PS3_dffParseUs - parse0);
+				o.b = (uint32)(PS3_dffSetupUs - setup0);
+			}
+		}
 		if(streamId >= STREAM_OFFSET_TXD && streamId < STREAM_OFFSET_COL && d > t.worstTxdUs){
 			t.worstTxdUs = d;
 			for(int i = 0; i < rw::ps3::TEXPROF_NUM; i++)
@@ -457,6 +520,9 @@ CStreaming::Update(void)
 	CStreamingInfo *si, *prev;
 	bool requestedSubway = false;
 	double updateStart = re3_wall_time_ms();
+#if defined(__PS3__) && defined(RW_PS3_RSX)
+	PS3_StreamFrameStart();	// patch 63: last frame's conversions, logged if heavy
+#endif
 
 #ifndef MASTER
 	timeProcessingTXD = 0;

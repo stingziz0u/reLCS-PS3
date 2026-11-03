@@ -29,6 +29,9 @@
 #include "Streaming.h"
 #include "ColStore.h"
 #include "Occlusion.h"
+#ifdef __PS3__
+#include <sys/systime.h>
+#endif
 
 char CFileLoader::ms_line[256];
 
@@ -576,6 +579,19 @@ CFileLoader::LoadClumpFile(const char *filename)
 	RwStreamClose(stream, nil);
 }
 
+#ifdef __PS3__
+// patch 63: a model's conversion in two: librw's parse of the DFF and the
+// game's setup of the clump (SetClump: vehicles' materials, environment
+// maps, the hierarchy...), for the [stream] lines (Streaming.cpp)
+uint64 PS3_dffParseUs, PS3_dffSetupUs;
+static inline uint64 PS3_DffNow(void) { return sysGetSystemTime(); }
+#define PS3_DFF_PARSE(stmt) do { uint64 ps3d0 = PS3_DffNow(); stmt; PS3_dffParseUs += PS3_DffNow() - ps3d0; } while(0)
+#define PS3_DFF_SETUP(stmt) do { uint64 ps3d0 = PS3_DffNow(); stmt; PS3_dffSetupUs += PS3_DffNow() - ps3d0; } while(0)
+#else
+#define PS3_DFF_PARSE(stmt) stmt
+#define PS3_DFF_SETUP(stmt) stmt
+#endif
+
 bool
 CFileLoader::LoadClumpFile(RwStream *stream, uint32 id)
 {
@@ -584,12 +600,12 @@ CFileLoader::LoadClumpFile(RwStream *stream, uint32 id)
 
 	if(!RwStreamFindChunk(stream, rwID_CLUMP, nil, nil))
 		return false;
-	clump = RpClumpStreamRead(stream);
+	PS3_DFF_PARSE(clump = RpClumpStreamRead(stream));
 	if(clump == nil)
 		return false;
 	InitClump(clump);
 	mi = (CClumpModelInfo*)CModelInfo::GetModelInfo(id);
-	mi->SetClump(clump);
+	PS3_DFF_SETUP(mi->SetClump(clump));
 	return true;
 }
 
@@ -597,7 +613,9 @@ bool
 CFileLoader::StartLoadClumpFile(RwStream *stream, uint32 id)
 {
 	if(RwStreamFindChunk(stream, rwID_CLUMP, nil, nil)){
-		return RpClumpGtaStreamRead1(stream);
+		bool ok;
+		PS3_DFF_PARSE(ok = RpClumpGtaStreamRead1(stream));
+		return ok;
 	}else{
 		re3_stall_log("STREAM vehicle-start failed id %u model %s", id,
 			CModelInfo::GetModelInfo(id)->GetModelName());
@@ -611,12 +629,12 @@ CFileLoader::FinishLoadClumpFile(RwStream *stream, uint32 id)
 	RpClump *clump;
 	CClumpModelInfo *mi;
 
-	clump = RpClumpGtaStreamRead2(stream);
+	PS3_DFF_PARSE(clump = RpClumpGtaStreamRead2(stream));
 
 	if(clump){
 		InitClump(clump);
 		mi = (CClumpModelInfo*)CModelInfo::GetModelInfo(id);
-		mi->SetClump(clump);
+		PS3_DFF_SETUP(mi->SetClump(clump));
 		return true;
 	}else{
 		re3_stall_log("STREAM vehicle-finish failed id %u model %s", id,
@@ -633,7 +651,7 @@ CFileLoader::LoadAtomicFile(RwStream *stream, uint32 id)
 	RpClump *clump;
 
 	if(RwStreamFindChunk(stream, rwID_CLUMP, nil, nil)){
-		clump = RpClumpStreamRead(stream);
+		PS3_DFF_PARSE(clump = RpClumpStreamRead(stream));
 		if(clump == nil)
 			return false;
 		gpRelatedModelInfo = (CSimpleModelInfo*)CModelInfo::GetModelInfo(id);
@@ -642,8 +660,7 @@ CFileLoader::LoadAtomicFile(RwStream *stream, uint32 id)
 		if(gpRelatedModelInfo->IsBuilding())
 			RpClumpForAllAtomics(clump, NeutralizeBuildingPrelight3DS, nil);
 #endif
-		RpClumpForAllAtomics(clump, SetRelatedModelInfoCB, clump);
-		RpClumpDestroy(clump);
+		PS3_DFF_SETUP(RpClumpForAllAtomics(clump, SetRelatedModelInfoCB, clump); RpClumpDestroy(clump));
 	}
 	return true;
 }

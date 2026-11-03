@@ -66,7 +66,7 @@ extern "C" void PS3_LogMemTag(const char *tag);	// ps3.cpp
 enum { PH_CALM, PH_TRAFFIC, PH_PILE, PH_CHASE, PH_BOOMS, PH_NEWCARS, PH_COLLISION, PH_TONI, PH_FILL, NUM_PHASE_KINDS };
 static const char *const phaseNames[NUM_PHASE_KINDS] = {
 	"calm", "traffic", "pile-up", "chase (wanted 4)", "explosions",
-	"new car models (load and spawn)", "collision (traffic, pile-up and explosions)",
+	"new car models (asked for as the traffic does, spawned when in)", "collision (traffic, pile-up and explosions)",
 	"Toni's lines (one every 0.8 s)", "streaming memory filled (every car model)"
 };
 struct TestKind { const char *file, *doneFile, *name; int numPhases; int phases[5]; };
@@ -80,6 +80,8 @@ static const TestKind *test;
 static int phaseIndex;
 static char flushLabel[96];
 #define MAX_NEWCARS 16
+static int pendingModel = -1;	// patch 63: asked for, not in yet
+static uint64 pendingSince;
 static CEntity *newCars[MAX_NEWCARS];
 static int numNewCars;
 
@@ -197,14 +199,23 @@ newCarModel(CPlayerPed *p)
 		PS3_Log("[sttest] every car model is loaded already");
 		return;
 	}
-	uint64 t0 = sysGetSystemTime();
+	// patch 63: asked for as the traffic does (no waiting here): the
+	// streaming reads it in the background and converts it over the next
+	// frames; spawned when it's in ([stream] lines: the frames it cost)
 	CStreaming::RequestModel(mi, STREAMFLAGS_DONT_REMOVE);
-	CStreaming::LoadAllRequestedModels(false);
-	uint64 t1 = sysGetSystemTime();
-	if (CStreaming::ms_aInfoForModel[mi].m_loadState != STREAMSTATE_LOADED) {
-		PS3_Logf("[sttest] model %d didn't load", mi);
+	pendingModel = mi;
+	pendingSince = sysGetSystemTime();
+	eventCount++;
+}
+
+static void
+spawnPending(CPlayerPed *p)
+{
+	int mi = pendingModel;
+	if (mi < 0 || CStreaming::ms_aInfoForModel[mi].m_loadState != STREAMSTATE_LOADED)
 		return;
-	}
+	pendingModel = -1;
+	uint64 t0 = pendingSince, t1 = sysGetSystemTime();
 	float a = CGeneral::GetRandomNumberInRange(0.0f, TWOPI);
 	CVector pos = p->GetPosition() + CVector(Cos(a) * 7.0f, Sin(a) * 7.0f, 0.0f);
 	bool found = false;
@@ -223,9 +234,8 @@ newCarModel(CPlayerPed *p)
 	}
 	CStreaming::SetModelIsDeletable(mi);
 	CStreaming::SetModelTxdIsDeletable(mi);
-	PS3_Logf("[sttest] model %d (%s): loaded in %.1f ms (TXD and DFF on the game thread, with the disc read)", mi,
+	PS3_Logf("[sttest] model %d (%s): in %.1f ms after the request (read in the background, converted over the frames)", mi,
 	         CModelInfo::GetModelInfo(mi)->GetModelName(), (t1 - t0) / 1000.0);
-	eventCount++;
 }
 
 // patch 61: a car model not loaded yet, loaded and left to the streaming
@@ -352,8 +362,12 @@ endPhase(CPlayerPed *p)
 	         phase == PH_FILL ? "models loaded" : "events");
 	if (phase == PH_PILE || phase == PH_COLLISION)
 		removePile();
-	if (phase == PH_NEWCARS)
+	if (phase == PH_NEWCARS) {
+		if (pendingModel >= 0)
+			CStreaming::SetModelIsDeletable(pendingModel);
+		pendingModel = -1;
 		removeNewCars();
+	}
 	if (phase == PH_CHASE) {
 		p->SetWantedLevel(0);
 		CWorld::ClearExcitingStuffFromArea(p->GetPosition(), 80.0f, true);
@@ -480,9 +494,12 @@ PS3_ProcessControlTestFrame(void)
 		fillOneModel();	// one every 0.3 s
 		nextEventUs = now + 300000;
 	}
-	if (phase == PH_NEWCARS && now >= nextEventUs) {
-		newCarModel(p);	// one every 2.5 s
-		nextEventUs = now + 2500000;
+	if (phase == PH_NEWCARS) {
+		spawnPending(p);
+		if (pendingModel < 0 && now >= nextEventUs) {
+			newCarModel(p);	// one every 2.5 s, when the last one is in
+			nextEventUs = now + 2500000;
+		}
 	}
 	if (phase == PH_COLLISION && now >= nextEventUs) {
 		// a car every 1.2 s until the pile is full, explosions in between
