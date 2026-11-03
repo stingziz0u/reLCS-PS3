@@ -1723,7 +1723,13 @@ CCamera::CamControl(void)
 							ReqMode = CCam::MODE_FOLLOWPED;
 					}else
 						ReqMode = PlayerWeaponMode.Mode;
+#ifdef __PS3__
+				// patch 65: the lock-on camera (behind Toni, towards the target) at
+				// the farthest zoom too; it left the camera as if not aiming there
+				}else if(ReqMode != CCam::MODE_TOP_DOWN_PED){
+#else
 				}else if(ReqMode != CCam::MODE_TOP_DOWN_PED && PedZoomIndicator != CAM_ZOOM_3){
+#endif
 					// Syphon mode
 					float playerTargetDist;
 					float deadPedDist = 4.0f;
