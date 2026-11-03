@@ -546,9 +546,10 @@ defaultRenderCB(Atomic *atomic, InstanceDataHeader *header)
 }
 
 // patch 66 (leedsRenderCB): the depth bias of a Leeds model's meshes after
-// its first. USRDIR/noleedsbias.txt turns it off; USRDIR/leedsbias.txt with
-// two numbers ("-1 -48") sets factor and units
-bool leedsBiasOn = true;
+// its first. Patch 67: off (it broke the lighting and the lines stayed, Ren);
+// USRDIR/leedsbias.txt turns it on, with two numbers ("-1 -48") for factor
+// and units
+bool leedsBiasOn = false;
 float leedsBiasFactor = -1.0f;
 float leedsBiasUnits = -48.0f;
 

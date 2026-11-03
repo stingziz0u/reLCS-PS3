@@ -908,15 +908,12 @@ PS3_GameMain(void)
 	}
 	// patch 66: the Leeds models' overlay meshes drawn a little in front of
 	// the wall under them (z-fighting: jagged lines on the buildings).
-	// USRDIR/noleedsbias.txt: off; USRDIR/leedsbias.txt "factor units": tuned
+	// Patch 67: off by default (it broke the lighting, the lines stayed);
+	// USRDIR/leedsbias.txt turns it on, "factor units" inside tunes it
 	{
-		FILE *nb = fopen(PS3_USRDIR "/noleedsbias.txt", "rb");
-		if (nb) {
-			fclose(nb);
-			rw::ps3::leedsBiasOn = false;
-		}
 		FILE *lb = fopen(PS3_USRDIR "/leedsbias.txt", "rb");
 		if (lb) {
+			rw::ps3::leedsBiasOn = true;
 			float f, u;
 			if (fscanf(lb, "%f %f", &f, &u) == 2) {
 				rw::ps3::leedsBiasFactor = f;
@@ -924,8 +921,8 @@ PS3_GameMain(void)
 			}
 			fclose(lb);
 		}
-		PS3_Logf("[5] Leeds overlay depth bias: %s (factor %.1f, units %.1f; noleedsbias.txt / leedsbias.txt)",
-		         rw::ps3::leedsBiasOn ? "on" : "OFF", rw::ps3::leedsBiasFactor, rw::ps3::leedsBiasUnits);
+		PS3_Logf("[5] Leeds overlay depth bias: %s (factor %.1f, units %.1f; leedsbias.txt turns it on)",
+		         rw::ps3::leedsBiasOn ? "ON (leedsbias.txt)" : "off", rw::ps3::leedsBiasFactor, rw::ps3::leedsBiasUnits);
 	}
 	// patch 28: the LOD buildings' pairing with their detailed instances and
 	// the occluders, both switchable to compare the pop-in

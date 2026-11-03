@@ -168,8 +168,64 @@ struct PS3StreamTimer {
 	}
 };
 #define PS3_STREAM_TIMER(id) PS3StreamTimer ps3StreamTimer(id)
+
+// patch 67: the worst frames left (11-22 ms in "stream: load requested") had
+// no [stream] line: the time isn't in the conversions. LoadRequestedModels
+// by part; a frame where it takes 8 ms or more gets a [loadreq] line.
+static uint64 ps3RemoveUs[4];		// RemoveModel of a loaded DFF / TXD / col / anim (all callers)
+static uint32 ps3RemoveN[4];
+static int ps3LoadReqLogged;
+static uint64 ps3LoadReqMinute;
+struct PS3LoadReqParts {
+	uint64 t0, conv0, rm0[4];
+	uint32 n0[4];
+	uint64 makeSpace, vehicle, request, cdRead, wait;
+	void Start(void) {
+		t0 = rw::ps3::texProfNow();
+		conv0 = ps3FrameObjUs;
+		memcpy(rm0, ps3RemoveUs, sizeof(rm0));
+		memcpy(n0, ps3RemoveN, sizeof(n0));
+		makeSpace = vehicle = request = cdRead = wait = 0;
+	}
+};
+static PS3LoadReqParts ps3LoadReq;
+static bool ps3LoadReqOn;	// inside LoadRequestedModels (the parts below count only then)
+#define PS3_LR_TIME(field, ...) do { uint64 lrT0 = rw::ps3::texProfNow(); __VA_ARGS__; \
+	if(ps3LoadReqOn) ps3LoadReq.field += rw::ps3::texProfNow() - lrT0; } while(0)
+
+static void
+PS3_LoadReqEnd(void)
+{
+	PS3LoadReqParts &p = ps3LoadReq;
+	uint64 total = rw::ps3::texProfNow() - p.t0;
+	if(total < 8000)
+		return;
+	uint64 now = rw::ps3::texProfNow();
+	if(now - ps3LoadReqMinute > 60000000ull){
+		ps3LoadReqMinute = now;
+		ps3LoadReqLogged = 0;
+	}
+	if(ps3LoadReqLogged++ >= 20)
+		return;
+	uint64 conv = ps3FrameObjUs - p.conv0;
+	uint64 rm[4];
+	uint32 n[4];
+	for(int i = 0; i < 4; i++){
+		rm[i] = ps3RemoveUs[i] - p.rm0[i];
+		n[i] = ps3RemoveN[i] - p.n0[i];
+	}
+	uint64 known = conv + p.makeSpace + p.vehicle + p.request + p.wait;
+	PS3_Logf("[loadreq] %.1f ms: conversions %.1f | make space %.1f | vehicle slot %.1f | next read %.1f (CdStreamRead %.1f) | "
+	         "channel status %.1f | rest %.1f || models removed in it: DFF %u %.1f ms, TXD %u %.1f ms, col %u %.1f, anim %u %.1f | "
+	         "texture backlog %u Ktexels",
+	         total / 1000.0, conv / 1000.0, p.makeSpace / 1000.0, p.vehicle / 1000.0, p.request / 1000.0, p.cdRead / 1000.0,
+	         p.wait / 1000.0, (total > known ? total - known : 0) / 1000.0,
+	         n[0], rm[0] / 1000.0, n[1], rm[1] / 1000.0, n[2], rm[2] / 1000.0, n[3], rm[3] / 1000.0,
+	         rw::ps3::textureBacklog() / 1000);
+}
 #else
 #define PS3_STREAM_TIMER(id)
+#define PS3_LR_TIME(field, ...) do { __VA_ARGS__; } while(0)
 #endif
 
 bool CStreaming::ms_disableStreaming;
@@ -1394,6 +1450,10 @@ CStreaming::RemoveModel(int32 id)
 		return;
 
 	if(ms_aInfoForModel[id].m_loadState == STREAMSTATE_LOADED){
+#if defined(__PS3__) && defined(RW_PS3_RSX)
+		uint64 rmT0 = rw::ps3::texProfNow();
+		int rmKind = id < STREAM_OFFSET_TXD ? 0 : id < STREAM_OFFSET_COL ? 1 : id < STREAM_OFFSET_ANIM ? 2 : 3;
+#endif
 		if(id < STREAM_OFFSET_TXD)
 			CModelInfo::GetModelInfo(id)->DeleteRwObject();
 		else if(id >= STREAM_OFFSET_TXD && id < STREAM_OFFSET_COL)
@@ -1405,6 +1465,10 @@ CStreaming::RemoveModel(int32 id)
 			CAnimManager::RemoveAnimBlock(id - STREAM_OFFSET_ANIM);
 		}
 		ms_memoryUsed -= ms_aInfoForModel[id].GetCdSize()*CDSTREAM_SECTOR_SIZE;
+#if defined(__PS3__) && defined(RW_PS3_RSX)
+		ps3RemoveUs[rmKind] += rw::ps3::texProfNow() - rmT0;
+		ps3RemoveN[rmKind]++;
+#endif
 	}
 
 	if(ms_aInfoForModel[id].m_next){
@@ -2527,7 +2591,9 @@ CStreaming::RequestModelStream(int32 ch)
 		ms_channel[ch].streamIds[i] = -1;
 	// Now read the data
 	assert(!(ms_bLoadingBigModel && ch == 1));	// this would clobber the buffer
-	if(CdStreamRead(ch, ms_pStreamingBuffer[ch], imgOffset+posn, totalSize) == STREAM_NONE)
+	int32 readStatus;
+	PS3_LR_TIME(cdRead, readStatus = CdStreamRead(ch, ms_pStreamingBuffer[ch], imgOffset+posn, totalSize));
+	if(readStatus == STREAM_NONE)
 		debug("FUCKFUCKFUCK\n");
 	ms_channel[ch].state = CHANNELSTATE_READING;
 	ms_channel[ch].field24 = 0;
@@ -2558,7 +2624,7 @@ CStreaming::ProcessLoadingChannel(int32 ch)
 	uint32 ps3Start = CTimer::GetCurrentTimeInCycles();
 #endif
 
-	status = CdStreamGetStatus(ch);
+	PS3_LR_TIME(wait, status = CdStreamGetStatus(ch));
 	if(status != STREAM_NONE){
 		// busy
 		if(status != STREAM_READING && status != STREAM_WAITING){
@@ -2589,10 +2655,12 @@ CStreaming::ProcessLoadingChannel(int32 ch)
 				continue;
 
 			cdsize = ms_aInfoForModel[id].GetCdSize();
+			bool noVehicleRoom = false;
 			if(id < STREAM_OFFSET_TXD && CModelInfo::GetModelInfo(id)->GetModelType() == MITYPE_VEHICLE &&
-			   ms_numVehiclesLoaded >= desiredNumVehiclesLoaded &&
-			   !RemoveLoadedVehicle() &&
-			   (CanRemoveModel(id) || GetAvailableVehicleSlot() == -1)){
+			   ms_numVehiclesLoaded >= desiredNumVehiclesLoaded)
+				PS3_LR_TIME(vehicle, noVehicleRoom = !RemoveLoadedVehicle() &&
+				                     (CanRemoveModel(id) || GetAvailableVehicleSlot() == -1));
+			if(noVehicleRoom){
 				// can't load vehicle
 				RemoveModel(id);
 				if(!CanRemoveModel(id))
@@ -2601,7 +2669,7 @@ CStreaming::ProcessLoadingChannel(int32 ch)
 					RemoveTxd(CModelInfo::GetModelInfo(id)->GetTxdSlot());
 				ms_channel[ch].streamIds[i] = -1;
 			}else{
-				MakeSpaceFor(cdsize * CDSTREAM_SECTOR_SIZE);
+				PS3_LR_TIME(makeSpace, MakeSpaceFor(cdsize * CDSTREAM_SECTOR_SIZE));
 				ConvertBufferToObject(&ms_pStreamingBuffer[ch][ms_channel[ch].offsets[i]*CDSTREAM_SECTOR_SIZE],
 					id);
 				if(ms_aInfoForModel[id].m_loadState == STREAMSTATE_STARTED){
@@ -2694,6 +2762,10 @@ CStreaming::LoadRequestedModels(void)
 	if(ms_bLoadingBigModel)
 		currentChannel = 0;
 
+#if defined(__PS3__) && defined(RW_PS3_RSX)
+	ps3LoadReq.Start();
+	ps3LoadReqOn = true;
+#endif
 	// We have data, load
 	if(ms_channel[currentChannel].state == CHANNELSTATE_READING ||
 	   ms_channel[currentChannel].state == CHANNELSTATE_STARTED){
@@ -2709,11 +2781,15 @@ CStreaming::LoadRequestedModels(void)
 	if(ms_channelError == -1){
 		// Channel is idle, read more data
 		if(ms_channel[currentChannel].state == CHANNELSTATE_IDLE)
-			RequestModelStream(currentChannel);
+			PS3_LR_TIME(request, RequestModelStream(currentChannel));
 		// Switch channel
 		if(ms_channel[currentChannel].state != CHANNELSTATE_STARTED)
 			currentChannel = 1 - currentChannel;
 	}
+#if defined(__PS3__) && defined(RW_PS3_RSX)
+	ps3LoadReqOn = false;
+	PS3_LoadReqEnd();
+#endif
 }
 
 
