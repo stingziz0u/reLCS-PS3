@@ -861,6 +861,10 @@ struct Stream
 };
 
 static Stream *streams[MAX_STREAMS];
+// patch 72: a stream change asked for and not done yet: the mixer leaves the
+// old stream out (patch 69 silenced it under the mixer lock, waiting ~2 ms
+// for the block being mixed)
+static volatile bool streamHold[MAX_STREAMS];
 
 static Stream*
 StreamCreate(Decoder *d, const char *name)
@@ -1380,7 +1384,7 @@ SpuMixBlock(void)
 	}
 	for(int i = 0; i < MAX_STREAMS; i++){
 		Stream *s = streams[i];
-		if(s == nil)
+		if(s == nil || streamHold[i])
 			continue;
 		float gl, gr;
 		double step;
@@ -1422,7 +1426,7 @@ SpuMixBlock(void)
 		}
 	}
 	for(int i = 0; i < MAX_STREAMS; i++)
-		if(streams[i] && ((uintptr_t)streams[i]->ring & 15) != 0){
+		if(streams[i] && !streamHold[i] && ((uintptr_t)streams[i]->ring & 15) != 0){
 			MixStream(*streams[i]);
 			spuPpuLeftovers++;
 		}
@@ -1473,7 +1477,7 @@ AudioFill(float *dst)
 				if(channels[i].playing)
 					MixChannel(channels[i]);
 			for(int i = 0; i < MAX_STREAMS; i++)
-				if(streams[i])
+				if(streams[i] && !streamHold[i])
 					MixStream(*streams[i]);
 		}
 		s_mixing = 0;
@@ -2466,12 +2470,14 @@ StreamRequest(uint8 n, int32 file, uint32 pos, int32 loops, bool playing)
 		r.loops = loops;
 		r.playing = playing;
 		r.paused = false;
+		// patch 72: the old stream left out of the mix until the change is
+		// done, without the mixer lock (it waited for the block being
+		// mixed); set with the request lock held, so the stream thread
+		// can't clear it before it is set
+		streamHold[n] = true;
 		__asm__ volatile("lwsync" ::: "memory");
 		r.seq++;
 	}
-	MixLock lock;
-	if(streams[n])
-		streams[n]->playing = false;
 }
 
 // game thread, before a change done right here (the MP3 player): a request
@@ -2484,6 +2490,7 @@ StreamCancel(uint8 n)
 	ReqLock rl;
 	streamReqs[n].seq++;
 	streamReqs[n].doneSeq = streamReqs[n].seq;
+	streamHold[n] = false;
 }
 
 // stream thread: the changes asked for
@@ -2519,6 +2526,11 @@ StreamRequestsProcess(void)
 		}
 		Stream *old = nil;
 		{
+			// patch 72: the stream and mixer locks first, the request lock
+			// last and only for the swap: the game thread's requests no
+			// longer wait for the mixer through it
+			StreamLock slock;
+			MixLock lock;
 			ReqLock rl;
 			StreamReq &q = streamReqs[n];
 			if(q.seq != mySeq){
@@ -2529,16 +2541,13 @@ StreamRequestsProcess(void)
 					s->playing = q.playing;	// StartPreloadedStreamedFile may have come since
 					s->paused = q.paused;
 				}
-				{
-					StreamLock slock;
-					MixLock lock;
-					old = streams[n];
-					streams[n] = s;
-					if(s)
-						ApplyStreamVolume(n, nStreamEffect[n], gStreamMaster[0], gStreamMaster[1],
-						                  gStreamMaster[2], gStreamMaster[3], gStreamMaster[4]);
-				}
+				old = streams[n];
+				streams[n] = s;
+				if(s)
+					ApplyStreamVolume(n, nStreamEffect[n], gStreamMaster[0], gStreamMaster[1],
+					                  gStreamMaster[2], gStreamMaster[3], gStreamMaster[4]);
 				q.doneSeq = mySeq;
+				streamHold[n] = false;
 			}
 		}
 		StreamDestroy(old);
