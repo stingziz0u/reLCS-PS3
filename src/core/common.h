@@ -96,6 +96,7 @@ static inline bool PS3_AngleOk(float &a) { if (!(a > -100000.0f && a < 100000.0f
 // time of an entity's work is added to a bucket with PS3_ProfAdd. Ticks are
 // the timebase's (mftb: no system call).
 extern "C" void PS3_ProfStep(int group, const char *name);
+extern "C" int PS3_logsOn;	// patch 69: USRDIR/logson.txt (ps3_log.cpp): the log and the diagnostics only then
 extern "C" void PS3_ProfAdd(int group, const char *name, unsigned long long ticks);
 static inline unsigned long long PS3_Ticks(void) { unsigned long long t; __asm__ volatile("mftb %0" : "=r"(t)); return t; }
 #define PS3_PROF_GAME	0

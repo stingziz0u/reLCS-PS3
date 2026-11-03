@@ -26,6 +26,7 @@ profNow(void)
 // frame phases after CGame::Process (audio, render list, scene, 2D, present)
 // had none. The names are string literals, as PS3_Crumb needs.
 extern "C" void PS3_Crumb(const char *tag, int val);
+extern "C" int PS3_logsOn;	// ps3_log.cpp (patch 69)
 
 #if PS3_STAGE != 1
 // the same timers on the RSX (librw ps3video.cpp)
@@ -143,6 +144,8 @@ profTicks(void)
 extern "C" void
 PS3_ProfAdd(int group, const char *name, unsigned long long ticks)
 {
+	if (!PS3_logsOn)	// patch 69: nothing to report without the log
+		return;
 	if (group < 0 || group >= PROF_GROUPS || name == NULL)
 		return;
 	ProfStepBucket *b = stepBuckets[group];
@@ -164,6 +167,8 @@ PS3_ProfAdd(int group, const char *name, unsigned long long ticks)
 extern "C" void
 PS3_ProfStep(int group, const char *name)
 {
+	if (!PS3_logsOn)
+		return;
 	if (group < 0 || group >= PROF_GROUPS)
 		return;
 	u64 now = profTicks();
@@ -306,7 +311,9 @@ void
 PS3_ProfFrame(void)
 {
 	u64 now = profNow();
-	PS3_crumbFrame++;	// the frame number in the [crash] lines
+	PS3_crumbFrame++;	// the frame number in the [crash] lines (and the hang watchdog's)
+	if (!PS3_logsOn)
+		return;		// patch 69: no reports without the log
 	if (frameStart) {
 		frameTotal += now - frameStart;
 		TrackWorstFrame(now - frameStart);	// patch 58
