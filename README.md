@@ -13,7 +13,7 @@ converted from your own copy. It is the sibling of
 [reVC-PS3](https://github.com/stingziz0u/reVC-PS3) (GTA Vice City), and
 shares their PS3 layer.
 
-> **Status: 1.1 alpha.** The game is playable on a real PS3, but it hasn't
+> **Status: 1.2 alpha.** The game is playable on a real PS3, but it hasn't
 > been played through yet. reLCS itself is still a work in progress (its
 > audio, for one), and this is still an alpha of the port: **expect bugs,
 > crashes and odd things**, and please report them with the log (see
@@ -35,6 +35,33 @@ Liberty City Stories for PS2, converted with the
 (see [Installation](#installation)). The PKG only has the program, its icon
 and two res-PS3 files (the PlayStation button icons and the controller
 picture of the settings page).
+
+## What's new in 1.2
+
+- **Smoother streaming**: driving around the city now holds its frame rate
+  (in the tests, minutes in a row without a single frame over 20 ms at
+  60 fps).
+  - The game data is read on a thread of its own: the game no longer
+    stops and waits for the disk whenever a new area or car loads (8-18 ms
+    each time before).
+  - The TXDs' true colour textures go straight into the PS3's textures,
+    finished by the texture thread on the PPU's second hardware thread:
+    a car or building TXD took 6-14 ms of the game's frame, now 1.5-2.6.
+  - Toni's lines and the radio and music changes are opened by the audio
+    stream thread (they stalled the frame for 9-15 ms).
+- **Faster collision**: a first pass with AltiVec over the triangles'
+  bounding boxes skips the exact tests that can't hit.
+- **The log is off by default**: nothing is written to the disk while you
+  play. An empty `USRDIR/logson.txt` turns it on (see
+  [Troubleshooting](#troubleshooting)).
+- **Melee lock-on**: bats, knives, the chainsaw and the other melee weapons
+  lock on like the fists. Toni moves freely while locked on and the camera
+  stays on the target; a swing plays out (no frozen aiming pose).
+- Locked on with the fists, one attack per press (no endless fast punches).
+- The lock-on camera also goes behind Toni at the farthest camera zoom.
+- The fire truck's water cannon (and the Rhino's turret) aim with the right
+  stick all the time, with or without the free camera.
+- No more square car headlights.
 
 ## What's new in 1.1
 
@@ -97,7 +124,9 @@ picture of the settings page).
 - DXT textures stay compressed in video memory and the RSX reads them as
   they are. Mip levels made on the CPU use AltiVec.
 - Two of the Cell's SPUs: the audio mixer and the particles' sprites (see
-  [What's new in 1.1](#whats-new-in-11)).
+  [What's new in 1.1](#whats-new-in-11)). The PPU's second hardware thread
+  converts textures and reads the game data (see
+  [What's new in 1.2](#whats-new-in-12)).
 - *Display > Screen size* for overscan, FPS counter (*Graphics > Show FPS*).
 - Settings saved in `USRDIR/reLCS.ini`, saves in `USRDIR/userfiles`.
 
