@@ -25,6 +25,29 @@
 #include "Bike.h"
 #include "Glass.h"
 #include "SpecialFX.h"
+#ifdef __PS3__
+#include "ps3_platform.h"	// PS3_Logf
+
+// patch 75: [kill] every ped that dies of damage, with the log on
+// (logson.txt): its model and type, if a mission made it, who did it and with
+// what, and if it counted as the player's kill (CDarkel::RegisterKillByPlayer,
+// the kill counters missions read). To see why a mission doesn't count a
+// kill (Avenging Angels, 4 gang members killed with melee weapons)
+static void
+PS3_LogKill(CPed *victim, CEntity *by, eWeaponType method, bool byPlayer)
+{
+	if (!PS3_logsOn)
+		return;
+	const char *who = by == nil ? "nobody" : by == FindPlayerPed() ? "the player" :
+	                  by == FindPlayerVehicle() ? "the player's vehicle" :
+	                  by->IsPed() ? "a ped" : by->IsVehicle() ? "a vehicle" : "something";
+	CVector pos = victim->GetPosition();
+	PS3_Logf("[kill] ped model %d type %d%s killed by %s, weapon %d: %s (at %.0f %.0f %.0f, state %d)",
+	         victim->GetModelIndex(), victim->m_nPedType, victim->CharCreatedBy == MISSION_CHAR ? " (mission)" : "",
+	         who, (int)method, byPlayer ? "the player's kill" : "not the player's",
+	         pos.x, pos.y, pos.z, victim->GetPedState());
+}
+#endif
 
 uint16 nPlayerInComboMove;
 RpClump* flyingClumpTemp;
@@ -3208,6 +3231,9 @@ CPed::InflictDamage(CEntity *damagedBy, eWeaponType method, float damage, ePedPi
 				if (driverOfVeh && driverOfVeh != this && damagedBy)
 					driverOfVeh->ReactToAttack(damagedBy);
 
+#ifdef __PS3__
+				PS3_LogKill(this, damagedBy, method, damagedBy == FindPlayerPed() || damagedBy && damagedBy == FindPlayerVehicle());
+#endif
 				if (damagedBy == FindPlayerPed() || damagedBy && damagedBy == FindPlayerVehicle()) {
 					CDarkel::RegisterKillByPlayer(this, method, headShot);
 					m_threatEntity = FindPlayerPed();
@@ -3230,6 +3256,9 @@ CPed::InflictDamage(CEntity *damagedBy, eWeaponType method, float damage, ePedPi
 		m_fHealth = 0.0f;
 		SetDie(dieAnim, dieDelta, dieSpeed);
 
+#ifdef __PS3__
+		PS3_LogKill(this, damagedBy, method, damagedBy == player || damagedBy && damagedBy == FindPlayerVehicle());
+#endif
 		if (damagedBy == player || damagedBy && damagedBy == FindPlayerVehicle()) {
 			CDarkel::RegisterKillByPlayer(this, method, headShot);
 			CWorld::Players[CWorld::PlayerInFocus].m_nHavocLevel += 10;

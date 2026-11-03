@@ -100,6 +100,13 @@ Note(const char *msg)
 	msNoteUntil = CTimer::GetTimeInMilliseconds() + 2500;
 }
 
+// patch 75: the missions after the named ones (main.scm has more) as "Mission N"
+static const char *
+MissionName(int sel)
+{
+	return sel < (int)ARRAY_SIZE(missionNames) ? missionNames[sel] : "Mission";
+}
+
 static void
 MakeName(void)
 {
@@ -107,7 +114,7 @@ MakeName(void)
 	char script[16];
 	PS3_MissionScriptName(idx, script);
 	char buf[96];
-	snprintf(buf, sizeof(buf), "%d: %s%s%s%s", idx, missionNames[msSel],
+	snprintf(buf, sizeof(buf), "%d: %s%s%s%s", idx, MissionName(msSel),
 	         script[0] ? " [" : "", script, script[0] ? "]" : "");
 	AsciiToUnicode(buf, msName);
 	char hint[120];
@@ -143,7 +150,7 @@ static void
 Launch(void)
 {
 	int idx = FIRST_MISSION + msSel;
-	PS3_Logf("[missions] mission spawner: %d \"%s\"", idx, missionNames[msSel]);
+	PS3_Logf("[missions] mission spawner: %d \"%s\"", idx, MissionName(msSel));
 	PS3_LaunchMission(idx);
 }
 
@@ -189,7 +196,7 @@ PS3_MissionSpawnerPad(void)
 				return;
 			}
 			if (msCount == 0) {
-				msCount = Min((int)ARRAY_SIZE(missionNames), CTheScripts::NumberOfMissionScripts - FIRST_MISSION);
+				msCount = CTheScripts::NumberOfMissionScripts - FIRST_MISSION;	// patch 75: all of them
 				if (msCount <= 0) {
 					msCount = 0;
 					Note("Mission spawner: no missions in main.scm");
