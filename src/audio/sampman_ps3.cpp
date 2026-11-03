@@ -176,6 +176,7 @@ static void PedCommentRead(void);
 static volatile int32 ptRequest = -1;
 static volatile uint32 ptOffset, ptSize;
 static void PlayerCommentRead(void);
+static void StreamRequestsProcess(void);	// patch 69 (the stream thread)
 
 static uint8 nChannelVolume[NUM_CHANNELS];
 static uint32 nStreamLength[TOTAL_STREAMED_SOUNDS];
@@ -903,6 +904,51 @@ StreamDestroy(Stream *s)
 	delete s;
 }
 
+// ---- patch 69: stream changes on the stream thread ----
+// A radio station or track change opened the file (a .VB tried, then the
+// .MP3), read its headers, seeked into it and swapped it in on the game
+// thread, waiting for the stream thread's lock too: 14.6 ms in a frame
+// ("music and radio", patch 68's log). Now PreloadStreamedFile,
+// StartStreamedFile and StopStreamedFile leave a request here and return;
+// the stream thread opens the file and swaps it in (within ~10 ms). Until
+// then the game sees the stream as asked for: playing, at the asked
+// position. The MP3 player (user tracks) stays as it was.
+// USRDIR/nostreamasync.txt: on the game thread, as before.
+struct StreamReq {
+	volatile uint32 seq;	// bumped by every request of the game thread
+	volatile uint32 doneSeq;	// the last one the stream thread finished
+	int32 file;		// -1: no stream (stop)
+	uint32 pos;
+	int32 loops;
+	bool playing, paused;
+};
+static StreamReq streamReqs[MAX_STREAMS];
+static sys_mutex_t reqMutex;
+static bool gStreamAsync;	// set once the stream thread runs
+static uint8 nStreamEffect[MAX_STREAMS];	// the last SetStreamedVolumeAndPan's effect flag
+static uint8 gStreamMaster[5];	// and the master volumes it used (fx fade, fx, music fade, music, MP3 boost)
+uint32 gPS3StreamChanges, gPS3StreamChangeUs;	// done on the stream thread, and the time they took there
+
+struct ReqLock {
+	ReqLock() { sysMutexLock(reqMutex, 0); }
+	~ReqLock() { sysMutexUnlock(reqMutex); }
+};
+
+static inline bool
+StreamPending(uint8 n)
+{
+	return gStreamAsync && streamReqs[n].seq != streamReqs[n].doneSeq;
+}
+
+static bool
+AnyStreamPending(void)
+{
+	for(int i = 0; i < MAX_STREAMS; i++)
+		if(StreamPending(i))
+			return true;
+	return false;
+}
+
 // ============================================================================
 // MP3 player radio (sampman_oal's _FindMP3s & co.)
 // ============================================================================
@@ -1508,6 +1554,7 @@ StreamThread(void *arg)
 		s_streamStep = 1;
 		PedCommentRead();
 		PlayerCommentRead();	// patch 60
+		StreamRequestsProcess();	// patch 69
 		s_streamStep = 2;
 		{
 			for(int i = 0; i < MAX_STREAMS; i++){
@@ -1558,7 +1605,7 @@ StreamThread(void *arg)
 		gPS3StreamBusyUs += sysGetSystemTime() - busyStart;	// patch 46 (perf.txt)
 		s_streamStep = 3;
 		// sooner when a ped comment waits
-		for(int w = 0; w < 4 && pcRequest < 0 && ptRequest < 0 && !s_audioQuit; w++)
+		for(int w = 0; w < 4 && pcRequest < 0 && ptRequest < 0 && !AnyStreamPending() && !s_audioQuit; w++)
 			usleep(2000);
 		s_streamStep = 0;
 	}
@@ -1635,6 +1682,14 @@ AudioPortInit(void)
 	}
 	if(sysThreadCreate(&streamTid, StreamThread, NULL, 900, 128*1024, THREAD_JOINABLE, (char*)"resstream") != 0){
 		PS3_Log("[audio] sysThreadCreate failed (streams)");
+	}else{
+		// patch 69: radio and music changes on the stream thread
+		FILE *na = fopen(PS3_USRDIR "/nostreamasync.txt", "rb");
+		if(na)
+			fclose(na);
+		gStreamAsync = na == nil;
+		PS3_Logf("[audio] stream changes: %s", gStreamAsync ? "on the stream thread (nostreamasync.txt turns it off)" :
+		         "on the game thread (nostreamasync.txt)");
 	}
 	audioOpen = true;
 	PS3_Logf("[audio] port %u open: %u blocks, %u channels, %d Hz",
@@ -1738,6 +1793,7 @@ cSampleManager::Initialise(void)
 	SetUpDebugBanksInfo();
 	CreateMutex(&mixMutex, "resmix");
 	CreateMutex(&streamMutex, "resstrm");
+	CreateMutex(&reqMutex, "resreq");	// patch 69
 
 	for(int32 i = 0; i < TOTAL_AUDIO_SAMPLES; i++){
 		m_aSamples[i].nOffset = 0;
@@ -2397,25 +2453,127 @@ ApplyStreamVolume(uint8 nStream, uint8 nEffectFlag, uint8 fxFade, uint8 fxVol, u
 	s->pan = nStreamPan[nStream];
 }
 
+// game thread: a stream change for the stream thread. The stream playing
+// now is silenced right away (as the old code destroyed it).
+static void
+StreamRequest(uint8 n, int32 file, uint32 pos, int32 loops, bool playing)
+{
+	{
+		ReqLock rl;
+		StreamReq &r = streamReqs[n];
+		r.file = file;
+		r.pos = pos;
+		r.loops = loops;
+		r.playing = playing;
+		r.paused = false;
+		__asm__ volatile("lwsync" ::: "memory");
+		r.seq++;
+	}
+	MixLock lock;
+	if(streams[n])
+		streams[n]->playing = false;
+}
+
+// game thread, before a change done right here (the MP3 player): a request
+// still pending is dropped
+static void
+StreamCancel(uint8 n)
+{
+	if(!gStreamAsync)
+		return;
+	ReqLock rl;
+	streamReqs[n].seq++;
+	streamReqs[n].doneSeq = streamReqs[n].seq;
+}
+
+// stream thread: the changes asked for
+static void
+StreamRequestsProcess(void)
+{
+	for(int n = 0; n < MAX_STREAMS; n++){
+		if(!StreamPending(n))
+			continue;
+		uint64 t0 = sysGetSystemTime();
+		StreamReq r;
+		uint32 mySeq;
+		{
+			ReqLock rl;
+			mySeq = streamReqs[n].seq;
+			r = streamReqs[n];
+		}
+		__asm__ volatile("lwsync" ::: "memory");
+		Stream *s = nil;
+		if(r.file >= 0){
+			s = StreamCreateTrack(r.file);
+			if(s){
+				s->loopsLeft = r.loops;
+				uint32 pos = r.pos;
+				if(pos){
+					if(s->lengthMs && pos >= s->lengthMs)
+						pos = 0;
+					s->dec->Seek(pos);
+					s->startMs = pos;
+				}
+				s->pan = nStreamPan[n];
+			}
+		}
+		Stream *old = nil;
+		{
+			ReqLock rl;
+			StreamReq &q = streamReqs[n];
+			if(q.seq != mySeq){
+				// asked for something else meanwhile: that one next pass
+				old = s;
+			}else{
+				if(s){
+					s->playing = q.playing;	// StartPreloadedStreamedFile may have come since
+					s->paused = q.paused;
+				}
+				{
+					StreamLock slock;
+					MixLock lock;
+					old = streams[n];
+					streams[n] = s;
+					if(s)
+						ApplyStreamVolume(n, nStreamEffect[n], gStreamMaster[0], gStreamMaster[1],
+						                  gStreamMaster[2], gStreamMaster[3], gStreamMaster[4]);
+				}
+				q.doneSeq = mySeq;
+			}
+		}
+		StreamDestroy(old);
+		gPS3StreamChanges++;
+		gPS3StreamChangeUs += (uint32)(sysGetSystemTime() - t0);
+	}
+}
+
 void
 cSampleManager::PreloadStreamedFile(uint32 nFile, uint8 nStream)
 {
 	PS3_AUDIO_SLOW("cSampleManager::PreloadStreamedFile");
 	if(nFile >= TOTAL_STREAMED_SOUNDS || nStream >= MAX_STREAMS)
 		return;
+	if(nStream == 0)
+		mp3Active = false;
+	if(gStreamAsync){
+		StreamRequest(nStream, nFile, 0, 1, false);	// patch 69
+		return;
+	}
 	Stream *s = StreamCreateTrack(nFile);
 	if(s){
 		s->volume = 0;
 		s->pan = 63;
 	}
-	if(nStream == 0)
-		mp3Active = false;
 	ReplaceStream(nStream, s);
 }
 
 void
 cSampleManager::PauseStream(bool8 nPauseFlag, uint8 nStream)
 {
+	if(nStream < MAX_STREAMS && StreamPending(nStream)){
+		ReqLock rl;
+		streamReqs[nStream].paused = nPauseFlag != 0;
+	}
 	MixLock lock;
 	if(nStream < MAX_STREAMS && streams[nStream])
 		streams[nStream]->paused = nPauseFlag != 0;
@@ -2425,6 +2583,11 @@ void
 cSampleManager::StartPreloadedStreamedFile(uint8 nStream)
 {
 	PS3_AUDIO_SLOW("cSampleManager::StartPreloadedStreamedFile");
+	if(nStream < MAX_STREAMS && StreamPending(nStream)){
+		ReqLock rl;
+		streamReqs[nStream].playing = true;
+		return;
+	}
 	MixLock lock;
 	if(nStream < MAX_STREAMS && streams[nStream])
 		streams[nStream]->playing = true;
@@ -2437,6 +2600,7 @@ cSampleManager::StartStreamedFile(uint32 nFile, uint32 nPos, uint8 nStream)
 	if(nFile >= TOTAL_STREAMED_SOUNDS || nStream >= MAX_STREAMS)
 		return false;
 	if(nFile == STREAMED_SOUND_RADIO_MP3_PLAYER){
+		StreamCancel(nStream);	// patch 69: done right here
 		// sampman_oal: started again while one plays (it ended) = the next
 		// file; else the file and position of nPos in the station
 		for(uint32 tries = 0; tries < nNumMP3s; tries++){
@@ -2476,10 +2640,14 @@ cSampleManager::StartStreamedFile(uint32 nFile, uint32 nPos, uint8 nStream)
 	}
 	if(nStream == 0)
 		mp3Active = false;
-	Stream *s = StreamCreateTrack(nFile);
 	// sampman_oal: looped unless SetStreamedFileLoopFlag(0) came right before
 	int32 loops = nStreamLoopedFlag[nStream] ? 0 : 1;
 	nStreamLoopedFlag[nStream] = 1;
+	if(gStreamAsync){
+		StreamRequest(nStream, nFile, nPos, loops, true);	// patch 69
+		return true;
+	}
+	Stream *s = StreamCreateTrack(nFile);
 	if(s == nil){
 		ReplaceStream(nStream, nil);
 		return false;
@@ -2502,8 +2670,12 @@ void
 cSampleManager::StopStreamedFile(uint8 nStream)
 {
 	PS3_AUDIO_SLOW("cSampleManager::StopStreamedFile");
-	if(nStream < MAX_STREAMS)
-		ReplaceStream(nStream, nil);
+	if(nStream < MAX_STREAMS){
+		if(gStreamAsync)
+			StreamRequest(nStream, -1, 0, 1, false);	// patch 69
+		else
+			ReplaceStream(nStream, nil);
+	}
 	if(nStream == 0)
 		mp3Active = false;
 }
@@ -2512,6 +2684,8 @@ int32
 cSampleManager::GetStreamedFilePosition(uint8 nStream)
 {
 	PS3_AUDIO_SLOW("cSampleManager::GetStreamedFilePosition");
+	if(nStream < MAX_STREAMS && StreamPending(nStream))
+		return streamReqs[nStream].file >= 0 ? streamReqs[nStream].pos : 0;	// patch 69: as asked for
 	MixLock lock;
 	Stream *s = nStream < MAX_STREAMS ? streams[nStream] : nil;
 	if(s == nil || s->rate == 0)
@@ -2540,6 +2714,12 @@ cSampleManager::SetStreamedVolumeAndPan(uint8 nVolume, uint8 nPan, bool8 nEffect
 	if(nPan > MAX_VOLUME) nPan = MAX_VOLUME;
 	nStreamVolume[nStream] = nVolume;
 	nStreamPan[nStream] = nPan;
+	nStreamEffect[nStream] = nEffectFlag;	// patch 69: for a stream swapped in later
+	gStreamMaster[0] = m_nEffectsFadeVolume;
+	gStreamMaster[1] = m_nEffectsVolume;
+	gStreamMaster[2] = m_nMusicFadeVolume;
+	gStreamMaster[3] = m_nMusicVolume;
+	gStreamMaster[4] = m_nMP3BoostVolume;
 	MixLock lock;
 	ApplyStreamVolume(nStream, nEffectFlag, m_nEffectsFadeVolume, m_nEffectsVolume,
 	                  m_nMusicFadeVolume, m_nMusicVolume, m_nMP3BoostVolume);
@@ -2554,6 +2734,8 @@ cSampleManager::GetStreamedFileLength(uint8 nStream)
 bool8
 cSampleManager::IsStreamPlaying(uint8 nStream)
 {
+	if(nStream < MAX_STREAMS && StreamPending(nStream))
+		return streamReqs[nStream].file >= 0 && streamReqs[nStream].playing;	// patch 69: as asked for
 	MixLock lock;
 	Stream *s = nStream < MAX_STREAMS ? streams[nStream] : nil;
 	if(s == nil || !s->playing)
