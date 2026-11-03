@@ -133,15 +133,26 @@ PS3_FreeUserMemMB(void)
 	return best;
 }
 
+// patch 60: the lowest free user memory and the highest streaming use seen
+// since the start (the budget went from 93 to 110 MB in patch 58)
+static unsigned memLowestFreeMB = ~0u;
+static size_t memStreamPeak;
+
 static void
 PS3_LogMem(const char *tag)
 {
 	struct mallinfo mi = mallinfo();
-	PS3_Logf("%s heap %.1f MB (in use %.1f MB), free user mem ~%u MB, "
-	         "textures %d (%.1f MB, %d DXT), streaming %.1f MB",
-	         tag, mi.arena / 1048576.0, mi.uordblks / 1048576.0, PS3_FreeUserMemMB(),
+	unsigned freeMB = PS3_FreeUserMemMB();
+	if (freeMB < memLowestFreeMB)
+		memLowestFreeMB = freeMB;
+	if (CStreaming::ms_memoryUsed > memStreamPeak)
+		memStreamPeak = CStreaming::ms_memoryUsed;
+	PS3_Logf("%s heap %.1f MB (in use %.1f MB), free user mem ~%u MB (lowest seen %u), "
+	         "textures %d (%.1f MB, %d DXT), streaming %.1f of %.0f MB (peak %.1f)",
+	         tag, mi.arena / 1048576.0, mi.uordblks / 1048576.0, freeMB, memLowestFreeMB,
 	         rw::ps3::rasterStats.numTextures, rw::ps3::rasterStats.textureBytes / 1048576.0,
-	         rw::ps3::rasterStats.numDXT, CStreaming::ms_memoryUsed / 1048576.0);
+	         rw::ps3::rasterStats.numDXT, CStreaming::ms_memoryUsed / 1048576.0,
+	         CStreaming::ms_memoryAvailable / 1048576.0, memStreamPeak / 1048576.0);
 }
 
 extern "C" void

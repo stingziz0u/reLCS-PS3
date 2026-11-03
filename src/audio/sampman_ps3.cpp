@@ -81,7 +81,7 @@ static uint8 nCurrentPedSlot;
 // player's comments, read from sfx.raw when the game asks
 static uint32 nMissionSlotSfx[MISSION_AUDIO_SLOTS] = { UINT32_MAX, UINT32_MAX };
 static uint8 *pMissionSlotData;
-static uint32 gPlayerTalkSfx = UINT32_MAX;
+static volatile uint32 gPlayerTalkSfx = UINT32_MAX;	// patch 60: written by the stream thread
 static uint8 *gPlayerTalkData;
 static uint32 nPlayerTalkSize;	// gPlayerTalkData's size: the biggest player comment
 
@@ -169,6 +169,13 @@ static volatile int32 pcRequest = -1;	// comment being read (-1: none)
 static volatile int32 pcSlot;
 static volatile uint32 pcOffset, pcSize;	// in sfx.raw
 static void PedCommentRead(void);
+// patch 60: Toni's lines (MISSION_AUDIO_PLAYER_COMMENT) read by the stream
+// thread too: up to 12 ms on the game thread each, several a second with
+// explosions around (streaming.txt). The game asks every frame until they're
+// in (IsMissionAudioLoaded), as with the peds' lines
+static volatile int32 ptRequest = -1;
+static volatile uint32 ptOffset, ptSize;
+static void PlayerCommentRead(void);
 
 static uint8 nChannelVolume[NUM_CHANNELS];
 static uint32 nStreamLength[TOTAL_STREAMED_SOUNDS];
@@ -1500,6 +1507,7 @@ StreamThread(void *arg)
 		s_streamPasses++;
 		s_streamStep = 1;
 		PedCommentRead();
+		PlayerCommentRead();	// patch 60
 		s_streamStep = 2;
 		{
 			for(int i = 0; i < MAX_STREAMS; i++){
@@ -1550,7 +1558,7 @@ StreamThread(void *arg)
 		gPS3StreamBusyUs += sysGetSystemTime() - busyStart;	// patch 46 (perf.txt)
 		s_streamStep = 3;
 		// sooner when a ped comment waits
-		for(int w = 0; w < 4 && pcRequest < 0 && !s_audioQuit; w++)
+		for(int w = 0; w < 4 && pcRequest < 0 && ptRequest < 0 && !s_audioQuit; w++)
 			usleep(2000);
 		s_streamStep = 0;
 	}
@@ -2005,8 +2013,9 @@ cSampleManager::IsMissionAudioLoaded(uint8 nSlot, uint32 nSample)
 	return LOADING_STATUS_NOT_LOADED;
 }
 
-// read by the game thread, as sampman_oal does (the game plays it the same
-// frame); a mission line is one read of up to 160 KB
+// the mission slots are read by the game thread, as sampman_oal does (the
+// game plays them the same frame); a mission line is one read of up to
+// 160 KB. Toni's lines go to the stream thread (patch 60)
 bool8
 cSampleManager::LoadMissionAudio(uint8 nSlot, uint32 nSample)
 {
@@ -2025,12 +2034,22 @@ cSampleManager::LoadMissionAudio(uint8 nSlot, uint32 nSample)
 		nMissionSlotSfx[nSlot] = UINT32_MAX;
 		break;
 	case MISSION_AUDIO_PLAYER_COMMENT:
-		if(gPlayerTalkData == nil)
+		if(gPlayerTalkData == nil || fpPedCommentHandle == nil)
 			return FALSE;
-		dst = gPlayerTalkData;
-		cap = nPlayerTalkSize;
-		gPlayerTalkSfx = UINT32_MAX;
-		break;
+		if(ptRequest >= 0)
+			return TRUE;	// one being read: asked again next frame
+		{
+			uint32 size = m_aSamples[nSample].nSize;
+			if(size > nPlayerTalkSize)
+				size = nPlayerTalkSize;
+			StopChannelsIn(gPlayerTalkData, nPlayerTalkSize);
+			gPlayerTalkSfx = UINT32_MAX;
+			ptOffset = m_aSamples[nSample].nOffset;
+			ptSize = size;
+			__asm__ volatile("lwsync" ::: "memory");
+			ptRequest = nSample;	// PlayerCommentRead
+		}
+		return TRUE;
 	default:
 		return FALSE;
 	}
@@ -2097,6 +2116,25 @@ cSampleManager::LoadPedComment(uint32 nComment)
 	__asm__ volatile("lwsync" ::: "memory");
 	pcRequest = nComment;	// the stream thread reads it (PedCommentRead)
 	return true;
+}
+
+// stream thread (patch 60): Toni's line into its buffer
+static void
+PlayerCommentRead(void)
+{
+	int32 nSample = ptRequest;
+	if(nSample < 0)
+		return;
+	__asm__ volatile("lwsync" ::: "memory");
+	uint32 size = ptSize;
+	if(fseek(fpPedCommentHandle, ptOffset, SEEK_SET) == 0 &&
+	   fread(gPlayerTalkData, 1, size, fpPedCommentHandle) == size){
+		LittleSwap16(gPlayerTalkData, size/2);
+		__asm__ volatile("lwsync" ::: "memory");
+		gPlayerTalkSfx = nSample;
+	}
+	__asm__ volatile("lwsync" ::: "memory");
+	ptRequest = -1;
 }
 
 // stream thread
