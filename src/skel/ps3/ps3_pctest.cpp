@@ -49,26 +49,32 @@
 #include "ModelInfo.h"
 #include "VehicleModelInfo.h"
 #include "Automobile.h"
+#include "soundlist.h"
 
 extern "C" void PS3_ProfFlush(const char *label);	// ps3_prof.cpp
 extern "C" void PS3_ProfHold(int hold);		// patch 59: no 10 s logs inside a phase
+extern "C" void PS3_LogMemTag(const char *tag);	// ps3.cpp
 
 // patch 59: two tests on the same machinery. processcontrol.txt (patch 58)
 // and streaming.txt: car models that aren't loaded yet, loaded and spawned
 // one every 2.5 s (what a new car in the traffic costs the game thread: its
 // TXD and DFF, the [tex] lines say by stage), then the collision baseline for
 // the VMX/SPU work (traffic, the pile-up and explosions together).
-enum { PH_CALM, PH_TRAFFIC, PH_PILE, PH_CHASE, PH_BOOMS, PH_NEWCARS, PH_COLLISION, NUM_PHASE_KINDS };
+// patch 61: streaming.txt also has Toni's lines (patch 60: read by the audio
+// stream thread now) and the streaming memory filled up to its budget (patch
+// 58: 110 MB), with the [mem] line at the end of every phase
+enum { PH_CALM, PH_TRAFFIC, PH_PILE, PH_CHASE, PH_BOOMS, PH_NEWCARS, PH_COLLISION, PH_TONI, PH_FILL, NUM_PHASE_KINDS };
 static const char *const phaseNames[NUM_PHASE_KINDS] = {
 	"calm", "traffic", "pile-up", "chase (wanted 4)", "explosions",
-	"new car models (load and spawn)", "collision (traffic, pile-up and explosions)"
+	"new car models (load and spawn)", "collision (traffic, pile-up and explosions)",
+	"Toni's lines (one every 0.8 s)", "streaming memory filled (every car model)"
 };
 struct TestKind { const char *file, *doneFile, *name; int numPhases; int phases[5]; };
 static const TestKind tests[2] = {
 	{ PS3_USRDIR "/processcontrol.txt", PS3_USRDIR "/processcontrol.done.txt", "processcontrol test", 5,
 	  { PH_CALM, PH_TRAFFIC, PH_PILE, PH_CHASE, PH_BOOMS } },
-	{ PS3_USRDIR "/streaming.txt", PS3_USRDIR "/streaming.done.txt", "streaming test", 2,
-	  { PH_NEWCARS, PH_COLLISION } },
+	{ PS3_USRDIR "/streaming.txt", PS3_USRDIR "/streaming.done.txt", "streaming test", 4,
+	  { PH_NEWCARS, PH_TONI, PH_FILL, PH_COLLISION } },
 };
 static const TestKind *test;
 static int phaseIndex;
@@ -222,6 +228,37 @@ newCarModel(CPlayerPed *p)
 	eventCount++;
 }
 
+// patch 61: a car model not loaded yet, loaded and left to the streaming
+// (deletable): the streaming memory fills up to its budget
+static int fillNext;
+static void
+fillOneModel(void)
+{
+	for (int n = 0; n < MODELINFOSIZE; n++) {
+		int i = (fillNext + n) % MODELINFOSIZE;
+		CBaseModelInfo *info = CModelInfo::GetModelInfo(i);
+		if (info == nil || info->GetModelType() != MITYPE_VEHICLE)
+			continue;
+		if (CStreaming::ms_aInfoForModel[i].m_loadState == STREAMSTATE_LOADED)
+			continue;
+		fillNext = i + 1;
+		CStreaming::RequestModel(i, 0);
+		CStreaming::LoadAllRequestedModels(false);
+		eventCount++;
+		return;
+	}
+	fillNext = 0;
+}
+
+// patch 61: Toni says something (his lines are the "player comments")
+static void
+toniLine(CPlayerPed *p)
+{
+	static const int16 sounds[4] = { SOUND_PED_DAMAGE, SOUND_PED_HIT, SOUND_PED_LAND, SOUND_PED_BULLET_HIT };
+	p->Say(sounds[eventCount & 3]);
+	eventCount++;
+}
+
 static void
 removeNewCars(void)
 {
@@ -282,7 +319,7 @@ startPhase(CPlayerPed *p, int index, uint64 now)
 	phaseStart = now;
 	nextEventUs = now;
 	eventCount = 0;
-	bool busy = ph != PH_CALM && ph != PH_NEWCARS;
+	bool busy = ph != PH_CALM && ph != PH_NEWCARS && ph != PH_TONI && ph != PH_FILL;
 	CPopulation::PedDensityMultiplier = busy ? Max(prevPedDensity, 1.0f) * 1.5f : prevPedDensity;
 	CCarCtrl::CarDensityMultiplier = busy ? Max(prevCarDensity, 1.0f) * 1.5f : prevCarDensity;
 	keepSafe(p, true, ph == PH_CHASE);
@@ -308,9 +345,11 @@ endPhase(CPlayerPed *p)
 	char *l = label[phaseIndex & 1];
 	snprintf(l, 96, "%s: %s", test->name, phaseNames[phase]);
 	PS3_ProfFlush(l);
+	PS3_LogMemTag("[mem] ");	// patch 61: memory at the end of every phase
 	PS3_Logf("[pctest] %s, phase %d done: %d %s", test->name, phaseIndex + 1, eventCount,
 	         phase == PH_PILE ? "cars dropped" : phase == PH_BOOMS ? "explosions" : phase == PH_NEWCARS ? "car models loaded" :
-	         phase == PH_COLLISION ? "cars dropped and explosions" : "events");
+	         phase == PH_COLLISION ? "cars dropped and explosions" : phase == PH_TONI ? "lines asked for" :
+	         phase == PH_FILL ? "models loaded" : "events");
 	if (phase == PH_PILE || phase == PH_COLLISION)
 		removePile();
 	if (phase == PH_NEWCARS)
@@ -432,6 +471,14 @@ PS3_ProcessControlTestFrame(void)
 	if (phase == PH_BOOMS && now >= nextEventUs) {
 		boom(p);
 		nextEventUs = now + 600000;
+	}
+	if (phase == PH_TONI && now >= nextEventUs) {
+		toniLine(p);
+		nextEventUs = now + 800000;
+	}
+	if (phase == PH_FILL && now >= nextEventUs) {
+		fillOneModel();	// one every 0.3 s
+		nextEventUs = now + 300000;
 	}
 	if (phase == PH_NEWCARS && now >= nextEventUs) {
 		newCarModel(p);	// one every 2.5 s
