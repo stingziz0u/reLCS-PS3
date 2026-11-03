@@ -77,9 +77,29 @@ static uint64 ps3FrameObjUs;
 static int ps3StreamFramesLogged;
 static uint64 ps3StreamLogMinute;
 
+extern uint32 gPS3CdReads, gPS3CdSyncWaits;	// ps3_cdstream.cpp (patch 68)
+extern uint64 gPS3CdThreadUs;
+
 static void
 PS3_StreamFrameStart(void)
 {
+	// patch 68: the reader thread, once a minute
+	{
+		static uint64 lastLog;
+		static uint32 reads0, waits0;
+		static uint64 us0;
+		uint64 now = rw::ps3::texProfNow();
+		if(lastLog == 0)
+			lastLog = now;
+		else if(now - lastLog > 60000000ull){
+			PS3_Logf("[cd] last minute: %u reads, %.1f ms of them on the reader thread, %u waits for it (loading)",
+			         gPS3CdReads - reads0, (gPS3CdThreadUs - us0) / 1000.0, gPS3CdSyncWaits - waits0);
+			lastLog = now;
+			reads0 = gPS3CdReads;
+			us0 = gPS3CdThreadUs;
+			waits0 = gPS3CdSyncWaits;
+		}
+	}
 	if(ps3FrameObjUs >= 6000 && ps3NumFrameObjs > 0){
 		uint64 now = rw::ps3::texProfNow();
 		if(now - ps3StreamLogMinute > 60000000ull){
