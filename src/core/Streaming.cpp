@@ -136,7 +136,9 @@ struct PS3StreamTimer {
 			         CStreaming::ms_aInfoForModel[streamId].m_loadState == STREAMSTATE_STARTED ? " (1st part)" : "");
 			o.us = (uint32)d;
 			if(isTxd){
-				o.a = (uint32)(t.gameUs[rw::ps3::TEXPROF_FROMIMAGE] - stage0[rw::ps3::TEXPROF_FROMIMAGE]);
+				// patch 64: librw's D3D8 -> Image step counted here too (it was in read/rest)
+				o.a = (uint32)(t.gameUs[rw::ps3::TEXPROF_FROMIMAGE] - stage0[rw::ps3::TEXPROF_FROMIMAGE] +
+				               t.gameUs[rw::ps3::TEXPROF_CONVERT] - stage0[rw::ps3::TEXPROF_CONVERT]);
 				o.b = (uint32)(t.gameUs[rw::ps3::TEXPROF_SWIZZLE] - stage0[rw::ps3::TEXPROF_SWIZZLE] +
 				               t.gameUs[rw::ps3::TEXPROF_MIPS] - stage0[rw::ps3::TEXPROF_MIPS] +
 				               t.gameUs[rw::ps3::TEXPROF_VRAM] - stage0[rw::ps3::TEXPROF_VRAM]);

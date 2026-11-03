@@ -588,7 +588,7 @@ Raster::convertTexToCurrentPlatform(rw::Raster *ras)
 	// TODO: maybe don't *always* do this?
 	img->unpalettize();
 #ifdef RW_PS3
-	ps3::texProfile.us[ps3::TEXPROF_CONVERT] += ps3::texProfNow() - tprof;
+	ps3::texProfAdd(ps3::TEXPROF_CONVERT, ps3::texProfNow() - tprof);	// patch 64: the game thread's share too ([tex], [stream])
 #endif
 	Raster::imageFindRasterFormat(img, Raster::TEXTURE, &width, &height, &depth, &format);
 	format |= ras->format & (Raster::MIPMAP | Raster::AUTOMIPMAP);
@@ -610,7 +610,7 @@ Raster::convertTexToCurrentPlatform(rw::Raster *ras)
 		// TODO: maybe don't *always* do this?
 		img->unpalettize();
 #ifdef RW_PS3
-		ps3::texProfile.us[ps3::TEXPROF_CONVERT] += ps3::texProfNow() - tprof;
+		ps3::texProfAdd(ps3::TEXPROF_CONVERT, ps3::texProfNow() - tprof);
 #endif
 		newras->lock(i, Raster::LOCKWRITE|Raster::LOCKNOFETCH);
 		newras->setFromImage(img);

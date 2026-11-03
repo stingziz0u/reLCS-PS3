@@ -895,6 +895,17 @@ PS3_GameMain(void)
 		}
 		PS3_Logf("[5] texture thread: %s", rw::ps3::texAsync ? "on (notexthread.txt turns it off)" : "OFF (notexthread.txt)");
 	}
+	// patch 64: the TXDs' true colour textures straight into PS3 rasters,
+	// turned into RGBA8 by the texture thread. An empty USRDIR/notxddirect.txt:
+	// librw's way, as before (to compare, or if a texture ever looks wrong)
+	{
+		FILE *td = fopen(PS3_USRDIR "/notxddirect.txt", "rb");
+		if (td) {
+			fclose(td);
+			rw::ps3::txdDirect = false;
+		}
+		PS3_Logf("[5] true colour TXD textures: %s", rw::ps3::txdDirect ? "read straight (notxddirect.txt turns it off)" : "librw's way (notxddirect.txt)");
+	}
 	// patch 28: the LOD buildings' pairing with their detailed instances and
 	// the occluders, both switchable to compare the pop-in
 	{
