@@ -38,6 +38,9 @@
 #include "Weather.h"
 #include "ZoneCull.h"
 #include "sampman.h"
+#ifdef __PS3__
+#include "ps3_platform.h"	// PS3_Logf (patch 73)
+#endif
 #include "Bike.h"
 #include "WindModifiers.h"
 #include "Fluff.h"
@@ -11884,7 +11887,7 @@ cAudioManager::PreloadMissionAudio(uint8 slot, Const char *name)
 		uint32 missionAudioSfx = FindMissionAudioSfx(name);
 #ifdef __PS3__
 		if (PS3_logsOn)	// patch 73: [sfx]
-			PS3_Logf("[sfx] mission audio slot %u: \"%s\" = sample %u (%u bytes, %u Hz)", slot + 1, name, missionAudioSfx,
+			PS3_Logf("[sfx] mission audio slot %d: \"%s\" = sample %u (%u bytes, %u Hz)", slot + 1, name, missionAudioSfx,
 				missionAudioSfx != NO_SAMPLE ? SampleManager.GetSampleLength(missionAudioSfx) * 2 : 0,
 				missionAudioSfx != NO_SAMPLE ? SampleManager.GetSampleBaseFrequency(missionAudioSfx) : 0);
 #endif
