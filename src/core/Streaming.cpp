@@ -303,8 +303,11 @@ CStreaming::Init2(void)
 	// lv2 hangs instead of failing when it runs out: stay well inside.
 	{
 		int32 freeMB = (int32)PS3_FreeUserMemMB();
-		int32 mb = freeMB - 48;
-		if(mb > 96) mb = 96;
+		// patch 58: up to 110 MB (it was 96, 93 on Ren's console: the
+		// streaming sat at 92 of 93 MB, removing and reloading models, with
+		// ~113 MB still free while playing); 30 MB kept back instead of 48
+		int32 mb = freeMB - 30;
+		if(mb > 110) mb = 110;
 		if(mb < 65) mb = 65;
 		ms_memoryAvailable = mb*MB;
 		PS3_Logf("[mem] streaming budget %d MB (free user memory %d MB)", mb, freeMB);

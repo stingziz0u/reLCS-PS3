@@ -221,6 +221,7 @@ float fFlySpeedMult = -0.6f;
 void
 CBike::ProcessControl(void)
 {
+	PS3_PROF_SCOPE(PS3_PROF_VEHICLES, "bike total");	// patch 58
 	int i;
 	float wheelRot;
 	float acceleration = 0.0f;

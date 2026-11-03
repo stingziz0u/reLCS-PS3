@@ -308,6 +308,9 @@ CAutomobile::ProcessControl(void)
 	float wheelRot;
 	CColModel *colModel;
 	float brake = 0.0f;
+	// patch 58: [prof] vehicles: the car's time by part
+	PS3_PROF_SCOPE(PS3_PROF_VEHICLES, "car total");
+	PS3_PROF_STEPS(PS3_PROF_VEHICLES, "car: start (alarm, fade, parking)");
 
 	if(TheCamera.WorldViewerBeingUsed){
 		if(bIsAmbulanceOnDuty){
@@ -447,6 +450,7 @@ CAutomobile::ProcessControl(void)
 	// Process depending on status
 
 	bool playerRemote = false;
+	PS3_PROF_STEP(PS3_PROF_VEHICLES, "car: AI and driving (by status)");
 	switch(GetStatus()){
 	case STATUS_PLAYER_REMOTE:
 		if(CPad::GetPad(0)->CarGunJustDown() && !bDisableRemoteDetonation){
@@ -724,6 +728,7 @@ CAutomobile::ProcessControl(void)
 		m_nStaticFrames = 0;
 	}
 
+	PS3_PROF_STEP(PS3_PROF_VEHICLES, "car: damage and stuck checks");
 	VehicleDamage(0.0f, 0);
 
 	// special control
@@ -826,9 +831,11 @@ CAutomobile::ProcessControl(void)
 			bIsStuck = false;		
 		}
 
+		PS3_PROF_STEP(PS3_PROF_VEHICLES, "car: physics (CPhysical, buoyancy)");
 		CPhysical::ProcessControl();
 
 		ProcessBuoyancy();
+		PS3_PROF_STEP(PS3_PROF_VEHICLES, "car: suspension (springs, dampers)");
 
 		// Rescale spring ratios, i.e. subtract wheel radius
 		for(i = 0; i < 4; i++){
@@ -1063,6 +1070,7 @@ CAutomobile::ProcessControl(void)
 			m_fSteerAngle *= steerRange;
 		}
 
+		PS3_PROF_STEP(PS3_PROF_VEHICLES, "car: wheels (traction, engine)");
 		brake = m_fBrakePedal * pHandling->fBrakeDeceleration * CTimer::GetTimeStep();
 
 		if(pHandling->Flags & HANDLING_REARWHEEL_1ST){
@@ -1076,6 +1084,7 @@ CAutomobile::ProcessControl(void)
 			ProcessCarWheelPair(CARWHEEL_REAR_LEFT, CARWHEEL_REAR_RIGHT, -999.0f, contactSpeeds, contactPoints,
 				traction, acceleration, brake, false);
 		}
+		PS3_PROF_STEP(PS3_PROF_VEHICLES, "car: end (wheel anim, sound, effects)");
 
 		for(i = 0; i < 4; i++){
 			float wheelPos = colModel->lines[i].p0.z;

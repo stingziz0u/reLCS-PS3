@@ -113,7 +113,7 @@ PS3_ProfEverUs(const char *name)
 // ---- steps inside CGame::Process / CWorld::Process (common.h) ----------------
 // One timebase read per step or entity; buckets found by the name's pointer
 // (string literals), logged sorted, every 10 s.
-#define PROF_GROUPS	3
+#define PROF_GROUPS	5	// patch 58: + peds, vehicles
 #define MAX_STEPS	80
 
 struct ProfStepBucket
@@ -173,6 +173,84 @@ PS3_ProfStep(int group, const char *name)
 	stepStart[group] = now;
 }
 
+// patch 58: the worst frame of each period, with what its time went to (the
+// buckets' growth over that frame), and a log on demand (the processcontrol
+// sequence: ps3_pctest.cpp)
+static u64 stepPrev[PROF_GROUPS][MAX_STEPS];
+static u64 worstStep[PROF_GROUPS][MAX_STEPS];
+static u64 timerPrev[MAX_TIMERS], worstTimer[MAX_TIMERS];
+static u64 worstFrameUs;
+static const char *flushLabel;
+
+extern "C" void
+PS3_ProfFlush(const char *label)
+{
+	flushLabel = label;
+}
+
+static void
+TrackWorstFrame(u64 frameUs)
+{
+	bool worst = frameUs > worstFrameUs;
+	if (worst)
+		worstFrameUs = frameUs;
+	for (int g = 0; g < PROF_GROUPS; g++)
+		for (int i = 0; i < numStepBuckets[g]; i++) {
+			u64 t = stepBuckets[g][i].ticks;
+			if (worst)
+				worstStep[g][i] = t - stepPrev[g][i];
+			stepPrev[g][i] = t;
+		}
+	for (int i = 0; i < numTimers; i++) {
+		u64 t = timers[i].total;
+		if (worst)
+			worstTimer[i] = t - timerPrev[i];
+		timerPrev[i] = t;
+	}
+}
+
+static void
+LogWorstFrame(void)
+{
+	static u64 freq;
+	if (freq == 0)
+		freq = sysGetTimebaseFrequency();
+	char line[1400];
+	int len = snprintf(line, sizeof(line), "[prof] worst frame %.1f ms:", worstFrameUs / 1000.0);
+	for (int i = 0; i < numTimers && len < (int)sizeof(line) - 60; i++)
+		if (worstTimer[i] >= 300)
+			len += snprintf(line + len, sizeof(line) - len, " %s %.2f", timers[i].name, worstTimer[i] / 1000.0);
+	static const char *const groupNames[PROF_GROUPS] = { "game", "world", "scene", "peds", "vehicles" };
+	for (int g = 0; g < PROF_GROUPS; g++) {
+		// its five biggest buckets
+		int used[5], nu = 0;
+		len += snprintf(line + len, sizeof(line) - len, " || %s:", groupNames[g]);
+		for (int k = 0; k < 5; k++) {
+			int best = -1;
+			for (int i = 0; i < numStepBuckets[g]; i++) {
+				bool taken = false;
+				for (int u = 0; u < nu; u++)
+					if (used[u] == i)
+						taken = true;
+				if (!taken && (best < 0 || worstStep[g][i] > worstStep[g][best]))
+					best = i;
+			}
+			if (best < 0)
+				break;
+			double ms = worstStep[g][best] * 1000.0 / freq;
+			if (ms < 0.1)
+				break;
+			used[nu++] = best;
+			if (len < (int)sizeof(line) - 80)
+				len += snprintf(line + len, sizeof(line) - len, " %s %.2f", stepBuckets[g][best].name, ms);
+		}
+	}
+	PS3_Log(line);
+	worstFrameUs = 0;
+	memset(stepPrev, 0, sizeof(stepPrev));
+	memset(timerPrev, 0, sizeof(timerPrev));
+}
+
 static int
 CmpBucket(const void *a, const void *b)
 {
@@ -221,16 +299,22 @@ PS3_ProfFrame(void)
 {
 	u64 now = profNow();
 	PS3_crumbFrame++;	// the frame number in the [crash] lines
-	if (frameStart)
+	if (frameStart) {
 		frameTotal += now - frameStart;
+		TrackWorstFrame(now - frameStart);	// patch 58
+	}
 	frameStart = now;
 	if (lastLog == 0) {
 		lastLog = now;
 		return;
 	}
 	frames++;
-	if (now - lastLog < LOG_EVERY_US || frames == 0)
+	if ((now - lastLog < LOG_EVERY_US && flushLabel == NULL) || frames == 0)
 		return;
+	if (flushLabel) {
+		PS3_Logf("[prof] ---- %s: %.1f s, %u frames ----", flushLabel, (now - lastLog) / 1e6, frames);
+		flushLabel = NULL;
+	}
 
 	char line[512];
 	int n = snprintf(line, sizeof(line), "[prof] ms per frame: total %.1f |", frameTotal / 1000.0 / frames);
@@ -248,6 +332,9 @@ PS3_ProfFrame(void)
 	}
 	LogStepGroup(1, "world (CWorld::Process; the checks are inside control peds)", frames);
 	LogStepGroup(2, "scene (RenderScene, RenderEffects)", frames);
+	LogWorstFrame();	// patch 58: before the peds/vehicles reset their buckets
+	LogStepGroup(3, "peds (ProcessControl inside control peds; total = the whole call)", frames);
+	LogStepGroup(4, "vehicles (ProcessControl inside control vehicles; total = the whole call)", frames);
 	PS3_FxReport(frames);	// Particle.cpp: what the particles drew
 	PS3_ColReport(frames);	// World.cpp: ProcessCollision's passes and models
 	PS3_LogMemTag("[mem] ");	// heap, free user memory, textures, streaming

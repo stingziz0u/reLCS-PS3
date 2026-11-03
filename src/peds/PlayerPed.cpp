@@ -1916,6 +1916,7 @@ PS3_PlayerUnstick(CPlayerPed *p)
 void
 CPlayerPed::ProcessControl(void)
 {
+	PS3_PROF_SCOPE(PS3_PROF_PEDS, "player total (includes the base)");	// patch 58
 	// Mobile has some debug/abandoned cheat thing in here: "gbFrankenTommy"
 	RestorePlayerVehicleInvariant(this);
 

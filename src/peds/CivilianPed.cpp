@@ -230,6 +230,7 @@ CCivilianPed::ProcessControl(void)
 		return;
 
 	CPed::ProcessControl();
+	PS3_PROF_SCOPE(PS3_PROF_PEDS, "civilian AI (after the base)");	// patch 58
 
 	if (bWasPostponed)
 		return;

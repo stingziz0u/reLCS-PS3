@@ -1981,6 +1981,9 @@ CPed::ProcessControl(void)
 {
 	CColPoint foundCol;
 	CEntity *foundEnt = nil;
+	// patch 58: [prof] peds: the ped's time by part
+	PS3_PROF_SCOPE(PS3_PROF_PEDS, "ped base total (CPed::ProcessControl)");
+	PS3_PROF_STEPS(PS3_PROF_PEDS, "ped: start (checks, hits, collision response)");
 
 #ifdef __PS3__
 	PS3_CheckPedPointers(this, 0);
@@ -2782,6 +2785,7 @@ CPed::ProcessControl(void)
 			|| bIsInTheAir
 			|| m_pCurrentPhysSurface) {
 
+			PS3_PROF_STEP(PS3_PROF_PEDS, "ped: physics (CPhysical)");
 			CPhysical::ProcessControl();
 		} else {
 			bHasContacted = false;
@@ -2799,6 +2803,7 @@ CPed::ProcessControl(void)
 
 		if (m_nPedState != PED_DIE || bIsPedDieAnimPlaying) {
 			PS3_PED_STEP();
+			PS3_PROF_STEP(PS3_PROF_PEDS, "ped: movement (velocity, heading, position, in the air)");
 			RequestDelayedWeapon();
 			PlayFootSteps();
 			if (m_nPedState != PED_DEAD) {
@@ -2822,7 +2827,9 @@ CPed::ProcessControl(void)
 					bHeadStuckInCollision = false;
 			}
 			PS3_PED_CHECK();
+			PS3_PROF_STEP(PS3_PROF_PEDS, "ped: objective AI (ProcessObjective)");
 			ProcessObjective();
+			PS3_PROF_STEP(PS3_PROF_PEDS, "ped: state machine, aim, the rest");
 			if (!bIsAimingGun) {
 				if (bIsRestoringGun)
 					RestoreGunPosition();

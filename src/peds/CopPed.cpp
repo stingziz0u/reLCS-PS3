@@ -594,6 +594,7 @@ CCopPed::ProcessControl(void)
 		ProcessHeliSwat();
 
 	CPed::ProcessControl();
+	PS3_PROF_SCOPE(PS3_PROF_PEDS, "cop AI (after the base)");	// patch 58
 
 	if (m_bThrowsSpikeTrap) {
 		if (CGame::currArea != AREA_MALL)

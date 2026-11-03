@@ -101,6 +101,29 @@ static inline unsigned long long PS3_Ticks(void) { unsigned long long t; __asm__
 #define PS3_PROF_GAME	0
 #define PS3_PROF_WORLD	1
 #define PS3_PROF_SCENE	2
+// patch 58: what the peds' and the vehicles' ProcessControl spend their time
+// on ("[prof] peds:" and "[prof] vehicles:"). PS3_PROF_SCOPE times the rest of
+// the block (nested ones are counted in both, the outer one says "total")
+#define PS3_PROF_PEDS	3
+#define PS3_PROF_VEHICLES	4
+struct PS3ProfScope {
+	int g; const char *n; unsigned long long t0;
+	PS3ProfScope(int g_, const char *n_) : g(g_), n(n_), t0(PS3_Ticks()) {}
+	~PS3ProfScope() { PS3_ProfAdd(g, n, PS3_Ticks() - t0); }
+};
+#define PS3_PROF_CAT2(a, b) a##b
+#define PS3_PROF_CAT(a, b) PS3_PROF_CAT2(a, b)
+#define PS3_PROF_SCOPE(g, name) PS3ProfScope PS3_PROF_CAT(ps3scope_, __LINE__)(g, name)
+// steps of a group inside a function: PS3_PROF_STEPS(g, first) starts the
+// first and closes the last one when the function returns
+struct PS3ProfSteps {
+	int g;
+	PS3ProfSteps(int g_, const char *first) : g(g_) { PS3_ProfStep(g, first); }
+	~PS3ProfSteps() { PS3_ProfStep(g, (const char *)0); }
+};
+#define PS3_PROF_STEPS(g, first) PS3ProfSteps PS3_PROF_CAT(ps3steps_, __LINE__)(g, first)
+#define PS3_PROF_STEP(g, name) PS3_ProfStep(g, name)
+#define PS3_PROF_CALL(g, name, call) do { unsigned long long ps3c0_ = PS3_Ticks(); call; PS3_ProfAdd(g, name, PS3_Ticks() - ps3c0_); } while (0)
 #define PS3_GAME_STEP(tag) do { PS3_Crumb(tag, 0); PS3_ProfStep(PS3_PROF_GAME, tag); } while (0)
 // the scene steps also leave a crumb (patch 22: RenderScene had none, a crash
 // there said only "RenderScene 1")
@@ -125,6 +148,10 @@ extern CEntity *PS3_renderEntity;
 #define PS3_GAME_STEP(tag)
 #define PS3_SCENE_STEP(tag)
 #define PS3_FX_STEP(tag)
+#define PS3_PROF_SCOPE(g, name)
+#define PS3_PROF_STEPS(g, first)
+#define PS3_PROF_STEP(g, name)
+#define PS3_PROF_CALL(g, name, call) call
 #endif
 
 // gotta put this somewhere

@@ -2331,8 +2331,15 @@ CWorld::Process(void)
 	} else {
 		for(CPtrNode *node = ms_listMovingEntityPtrs.first; node; node = node->next) {
 			CEntity *movingEnt = (CEntity *)node->item;
-			if(!movingEnt->bRemoveFromWorld)
+			if(!movingEnt->bRemoveFromWorld){
+#ifdef __PS3__
+				PS3_ENT_T0();	// patch 58: by kind
 				movingEnt->UpdateAnim();
+				PS3_ENT_ADD(ps3AnimNames, movingEnt);
+#else
+				movingEnt->UpdateAnim();
+#endif
+			}
 		}
 		for(CPtrNode *node = ms_listMovingEntityPtrs.first; node; node = node->next) {
 			CPhysical *movingEnt = (CPhysical *)node->item;
@@ -2341,8 +2348,15 @@ CWorld::Process(void)
 				PS3_CUR_ENTITY(movingEnt, "removal");
 				RemoveEntityInsteadOfProcessingIt(movingEnt);
 			} else {
-				if(!CCutsceneMgr::IsCutsceneProcessing() || movingEnt->UpdatesInCutscene())
+				if(!CCutsceneMgr::IsCutsceneProcessing() || movingEnt->UpdatesInCutscene()){
+#ifdef __PS3__
+					PS3_ENT_T0();	// patch 58: by kind (the postponed ones below too)
 					movingEnt->ProcessControl();
+					PS3_ENT_ADD(ps3ControlNames, movingEnt);
+#else
+					movingEnt->ProcessControl();
+#endif
+				}
 				if(movingEnt->GetIsStatic()) { movingEnt->RemoveFromMovingList(); }
 			}
 		}
