@@ -188,6 +188,14 @@ PS3_ProfFlush(const char *label)
 	flushLabel = label;
 }
 
+// patch 59: while a test holds it, only its flushes log (each phase whole)
+static int profHold;
+extern "C" void
+PS3_ProfHold(int hold)
+{
+	profHold = hold;
+}
+
 static void
 TrackWorstFrame(u64 frameUs)
 {
@@ -309,7 +317,7 @@ PS3_ProfFrame(void)
 		return;
 	}
 	frames++;
-	if ((now - lastLog < LOG_EVERY_US && flushLabel == NULL) || frames == 0)
+	if (((now - lastLog < LOG_EVERY_US || profHold) && flushLabel == NULL) || frames == 0)
 		return;
 	if (flushLabel) {
 		PS3_Logf("[prof] ---- %s: %.1f s, %u frames ----", flushLabel, (now - lastLog) / 1e6, frames);

@@ -70,10 +70,24 @@ PS3_TxdLoadHints(int32 slot)
 struct PS3StreamTimer {
 	uint64 start;
 	int32 streamId;
-	PS3StreamTimer(int32 id) : start(rw::ps3::texProfNow()), streamId(id) {}
+	uint64 stage0[rw::ps3::TEXPROF_NUM];	// patch 59: the game thread's stage times before
+	PS3StreamTimer(int32 id) : start(rw::ps3::texProfNow()), streamId(id) {
+		static bool marked;
+		if(!marked){
+			rw::ps3::texProfMarkGameThread();
+			marked = true;
+		}
+		memcpy(stage0, rw::ps3::texProfile.gameUs, sizeof(stage0));
+	}
 	~PS3StreamTimer() {
 		rw::ps3::TexProfile &t = rw::ps3::texProfile;
 		uint64 d = rw::ps3::texProfNow() - start;
+		if(streamId >= STREAM_OFFSET_TXD && streamId < STREAM_OFFSET_COL && d > t.worstTxdUs){
+			t.worstTxdUs = d;
+			for(int i = 0; i < rw::ps3::TEXPROF_NUM; i++)
+				t.worstTxdStage[i] = t.gameUs[i] - stage0[i];
+			snprintf(t.worstTxdName, sizeof(t.worstTxdName), "%s", CTxdStore::GetTxdName(streamId - STREAM_OFFSET_TXD));
+		}
 		if(d > t.worstUs){
 			t.worstUs = d;
 			// VC also streams col (STREAM_OFFSET_COL) and ifp (STREAM_OFFSET_ANIM)
@@ -459,11 +473,12 @@ CStreaming::Update(void)
 	if(CTimer::GetIsPaused())
 		return;
 
-	LoadBigBuildingsWhenNeeded();
+	// patch 59: CStreaming::Update by part ([prof] game)
+	PS3_PROF_CALL(PS3_PROF_GAME, "stream: big buildings", LoadBigBuildingsWhenNeeded());
 	if(!ms_disableStreaming && TheCamera.GetPosition().z < 55.0f)
-		AddModelsToRequestList(TheCamera.GetPosition(), 0);
+		PS3_PROF_CALL(PS3_PROF_GAME, "stream: request around the camera", AddModelsToRequestList(TheCamera.GetPosition(), 0));
 
-	DeleteFarAwayRwObjects(TheCamera.GetPosition());
+	PS3_PROF_CALL(PS3_PROF_GAME, "stream: delete far away", DeleteFarAwayRwObjects(TheCamera.GetPosition()));
 
 	if(!ms_disableStreaming &&
 	   !CCutsceneMgr::IsCutsceneProcessing() &&
@@ -471,12 +486,11 @@ CStreaming::Update(void)
 	   !CRenderer::m_loadingPriority &&
 	   CGame::currArea == AREA_MAIN_MAP &&
 	   !CReplay::IsPlayingBack()){
-		StreamVehiclesAndPeds();
-		StreamZoneModels(FindPlayerCoors());
+		PS3_PROF_CALL(PS3_PROF_GAME, "stream: vehicles, peds, zone models", StreamVehiclesAndPeds(); StreamZoneModels(FindPlayerCoors()));
 	}
 
 	double loadStart = re3_wall_time_ms();
-	LoadRequestedModels();
+	PS3_PROF_CALL(PS3_PROF_GAME, "stream: load requested (TXD/DFF conversion)", LoadRequestedModels());
 	double loadMs = re3_wall_time_ms() - loadStart;
 
 	double collisionStart = re3_wall_time_ms();

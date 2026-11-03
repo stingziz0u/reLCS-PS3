@@ -124,9 +124,16 @@ cAudioManager::Service()
 #ifdef AUDIO_REFLECTIONS
 		UpdateReflections();
 #endif
+#ifdef __PS3__
+		// patch 59: the two halves of DMAudio.Service, apart in [prof] game
+		PS3_PROF_CALL(PS3_PROF_GAME, "audio: sound effects (in DMAudio.Service)", ServiceSoundEffects());
+		PS3_CRUMB("audio: MusicManager.Service", MusicManager.GetMusicMode());
+		PS3_PROF_CALL(PS3_PROF_GAME, "audio: music and radio (in DMAudio.Service)", MusicManager.Service());
+#else
 		ServiceSoundEffects();
 		PS3_CRUMB("audio: MusicManager.Service", MusicManager.GetMusicMode());
 		MusicManager.Service();
+#endif
 		PS3_CRUMB("audio: done", 0);
 	}
 }

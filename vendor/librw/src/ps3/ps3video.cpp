@@ -564,6 +564,24 @@ logStats(void)
 		       t.txds, t.txdUs/1000.0, t.models, t.modelUs/1000.0, t.dffParseUs/1000.0, t.dffSetupUs/1000.0,
 		       t.others, t.otherUs/1000.0, t.worstUs/1000.0, t.worstName,
 		       t.instCount, t.instUs/1000.0, t.instWorstUs/1000.0);
+	if(t.txds){
+		// patch 59: what the game thread itself spent (all the TXDs), and the
+		// slowest TXD by stage; "read" is the rest (the stream parse, the
+		// raster setup, librw's own work)
+		uint64 st = 0;
+		for(int i = 0; i < TEXPROF_NUM; i++)
+			st += t.worstTxdStage[i];
+		rsxLog("[tex]   TXDs on the game thread: convert %.1f, to RGBA8 %.1f, swizzle %.1f, VRAM %.1f, mipmaps %.1f, "
+		       "palettized %.1f, DXT %.1f ms | slowest TXD %s %.1f ms: convert %.1f, to RGBA8 %.1f, swizzle %.1f, "
+		       "VRAM %.1f, mipmaps %.1f, palettized %.1f, DXT %.1f, read/rest %.1f",
+		       t.gameUs[TEXPROF_CONVERT]/1000.0, t.gameUs[TEXPROF_FROMIMAGE]/1000.0, t.gameUs[TEXPROF_SWIZZLE]/1000.0,
+		       t.gameUs[TEXPROF_VRAM]/1000.0, t.gameUs[TEXPROF_MIPS]/1000.0, t.gameUs[TEXPROF_INDEXED]/1000.0,
+		       t.gameUs[TEXPROF_DXT]/1000.0, t.worstTxdName, t.worstTxdUs/1000.0,
+		       t.worstTxdStage[TEXPROF_CONVERT]/1000.0, t.worstTxdStage[TEXPROF_FROMIMAGE]/1000.0,
+		       t.worstTxdStage[TEXPROF_SWIZZLE]/1000.0, t.worstTxdStage[TEXPROF_VRAM]/1000.0,
+		       t.worstTxdStage[TEXPROF_MIPS]/1000.0, t.worstTxdStage[TEXPROF_INDEXED]/1000.0,
+		       t.worstTxdStage[TEXPROF_DXT]/1000.0, (t.worstTxdUs > st ? t.worstTxdUs - st : 0)/1000.0);
+	}
 	if(t.imgLookups)
 		rsxLog("[tex]   textures not in their TXD, looked for as image files: %u names, %.1f ms (once per name)",
 		       t.imgLookups, t.imgLookupUs/1000.0);

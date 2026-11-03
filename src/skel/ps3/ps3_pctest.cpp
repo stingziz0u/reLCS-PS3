@@ -51,15 +51,31 @@
 #include "Automobile.h"
 
 extern "C" void PS3_ProfFlush(const char *label);	// ps3_prof.cpp
+extern "C" void PS3_ProfHold(int hold);		// patch 59: no 10 s logs inside a phase
 
-#define PC_FILE      PS3_USRDIR "/processcontrol.txt"
-#define PC_DONE_FILE PS3_USRDIR "/processcontrol.done.txt"
-
-enum { PH_CALM, PH_TRAFFIC, PH_PILE, PH_CHASE, PH_BOOMS, NUM_PHASES };
-static const char *const phaseNames[NUM_PHASES] = {
-	"processcontrol test: calm", "processcontrol test: traffic", "processcontrol test: pile-up",
-	"processcontrol test: chase (wanted 4)", "processcontrol test: explosions"
+// patch 59: two tests on the same machinery. processcontrol.txt (patch 58)
+// and streaming.txt: car models that aren't loaded yet, loaded and spawned
+// one every 2.5 s (what a new car in the traffic costs the game thread: its
+// TXD and DFF, the [tex] lines say by stage), then the collision baseline for
+// the VMX/SPU work (traffic, the pile-up and explosions together).
+enum { PH_CALM, PH_TRAFFIC, PH_PILE, PH_CHASE, PH_BOOMS, PH_NEWCARS, PH_COLLISION, NUM_PHASE_KINDS };
+static const char *const phaseNames[NUM_PHASE_KINDS] = {
+	"calm", "traffic", "pile-up", "chase (wanted 4)", "explosions",
+	"new car models (load and spawn)", "collision (traffic, pile-up and explosions)"
 };
+struct TestKind { const char *file, *doneFile, *name; int numPhases; int phases[5]; };
+static const TestKind tests[2] = {
+	{ PS3_USRDIR "/processcontrol.txt", PS3_USRDIR "/processcontrol.done.txt", "processcontrol test", 5,
+	  { PH_CALM, PH_TRAFFIC, PH_PILE, PH_CHASE, PH_BOOMS } },
+	{ PS3_USRDIR "/streaming.txt", PS3_USRDIR "/streaming.done.txt", "streaming test", 2,
+	  { PH_NEWCARS, PH_COLLISION } },
+};
+static const TestKind *test;
+static int phaseIndex;
+static char flushLabel[96];
+#define MAX_NEWCARS 16
+static CEntity *newCars[MAX_NEWCARS];
+static int numNewCars;
 
 #define MAX_PILE 12
 static CEntity *pile[MAX_PILE];	// references: nil if the game removes them
@@ -149,6 +165,81 @@ dropCar(CPlayerPed *p)
 	eventCount++;
 }
 
+// a car model not loaded yet: loaded now (on the game thread, as a new car
+// in the traffic is) and parked near Toni
+static void
+newCarModel(CPlayerPed *p)
+{
+	if (numNewCars >= MAX_NEWCARS)
+		return;
+	static int next;
+	int mi = -1;
+	for (int n = 0; n < MODELINFOSIZE; n++) {
+		int i = (next + n) % MODELINFOSIZE;
+		CBaseModelInfo *info = CModelInfo::GetModelInfo(i);
+		if (info == nil || info->GetModelType() != MITYPE_VEHICLE)
+			continue;
+		if (((CVehicleModelInfo*)info)->m_vehicleType != VEHICLE_TYPE_CAR || i == MI_RCBANDIT)
+			continue;
+		if (CStreaming::ms_aInfoForModel[i].m_loadState == STREAMSTATE_LOADED)
+			continue;
+		mi = i;
+		next = i + 1;
+		break;
+	}
+	if (mi < 0) {
+		PS3_Log("[sttest] every car model is loaded already");
+		return;
+	}
+	uint64 t0 = sysGetSystemTime();
+	CStreaming::RequestModel(mi, STREAMFLAGS_DONT_REMOVE);
+	CStreaming::LoadAllRequestedModels(false);
+	uint64 t1 = sysGetSystemTime();
+	if (CStreaming::ms_aInfoForModel[mi].m_loadState != STREAMSTATE_LOADED) {
+		PS3_Logf("[sttest] model %d didn't load", mi);
+		return;
+	}
+	float a = CGeneral::GetRandomNumberInRange(0.0f, TWOPI);
+	CVector pos = p->GetPosition() + CVector(Cos(a) * 7.0f, Sin(a) * 7.0f, 0.0f);
+	bool found = false;
+	float gz = CWorld::FindGroundZFor3DCoord(pos.x, pos.y, pos.z + 3.0f, &found);
+	CAutomobile *v = found ? new CAutomobile(mi, RANDOM_VEHICLE) : nil;
+	if (v) {
+		pos.z = gz + v->GetDistanceFromCentreOfMassToBaseOfModel();
+		v->SetPosition(pos);
+		v->SetHeading(CGeneral::GetRandomNumberInRange(0.0f, TWOPI));
+		v->SetStatus(STATUS_ABANDONED);
+		v->m_nDoorLock = CARLOCK_LOCKED;
+		CWorld::Add(v);
+		newCars[numNewCars] = v;
+		v->RegisterReference(&newCars[numNewCars]);
+		numNewCars++;
+	}
+	CStreaming::SetModelIsDeletable(mi);
+	CStreaming::SetModelTxdIsDeletable(mi);
+	PS3_Logf("[sttest] model %d (%s): loaded in %.1f ms (TXD and DFF on the game thread, with the disc read)", mi,
+	         CModelInfo::GetModelInfo(mi)->GetModelName(), (t1 - t0) / 1000.0);
+	eventCount++;
+}
+
+static void
+removeNewCars(void)
+{
+	for (int i = 0; i < numNewCars; i++) {
+		CEntity *e = newCars[i];
+		if (e == nil)
+			continue;
+		e->CleanUpOldReference(&newCars[i]);
+		newCars[i] = nil;
+		CVehicle *v = (CVehicle*)e;
+		if (v->pDriver || v->m_nNumPassengers)
+			continue;
+		CWorld::Remove(v);
+		delete v;
+	}
+	numNewCars = 0;
+}
+
 static void
 removePile(void)
 {
@@ -183,40 +274,52 @@ boom(CPlayerPed *p)
 }
 
 static void
-startPhase(CPlayerPed *p, int ph, uint64 now)
+startPhase(CPlayerPed *p, int index, uint64 now)
 {
+	int ph = test->phases[index];
+	phaseIndex = index;
 	phase = ph;
 	phaseStart = now;
 	nextEventUs = now;
 	eventCount = 0;
-	bool busy = ph != PH_CALM;
+	bool busy = ph != PH_CALM && ph != PH_NEWCARS;
 	CPopulation::PedDensityMultiplier = busy ? Max(prevPedDensity, 1.0f) * 1.5f : prevPedDensity;
 	CCarCtrl::CarDensityMultiplier = busy ? Max(prevCarDensity, 1.0f) * 1.5f : prevCarDensity;
 	keepSafe(p, true, ph == PH_CHASE);
 	if (ph == PH_CHASE)
 		p->SetWantedLevel(4);
-	if (ph == PH_CALM)	// the time before the test, logged apart (later phases start as one ends)
-		PS3_ProfFlush("processcontrol test: (before it, not counted)");
-	PS3_Logf("[pctest] phase %d: %s, %d s (densities: peds %.2f, cars %.2f)", ph + 1, phaseNames[ph], secsPerPhase,
-	         CPopulation::PedDensityMultiplier, CCarCtrl::CarDensityMultiplier);
+	if (index == 0) {	// the time before the test, logged apart (later phases start as one ends)
+		snprintf(flushLabel, sizeof(flushLabel), "%s: (before it, not counted)", test->name);
+		PS3_ProfFlush(flushLabel);
+		PS3_ProfHold(1);
+	}
+	PS3_Logf("[pctest] %s, phase %d: %s, %d s (densities: peds %.2f, cars %.2f)", test->name, index + 1, phaseNames[ph],
+	         secsPerPhase, CPopulation::PedDensityMultiplier, CCarCtrl::CarDensityMultiplier);
 	char msg[64];
-	snprintf(msg, sizeof(msg), "PROCESSCONTROL TEST %d/%d: DON'T TOUCH THE PAD", ph + 1, NUM_PHASES);
+	snprintf(msg, sizeof(msg), "%s %d/%d: DON'T TOUCH THE PAD", test == &tests[0] ? "PROCESSCONTROL TEST" : "STREAMING TEST",
+	         index + 1, test->numPhases);
 	showText(msg);
 }
 
 static void
 endPhase(CPlayerPed *p)
 {
-	PS3_ProfFlush(phaseNames[phase]);
-	PS3_Logf("[pctest] phase %d done: %d %s", phase + 1, eventCount,
-	         phase == PH_PILE ? "cars dropped" : phase == PH_BOOMS ? "explosions" : "events");
-	if (phase == PH_PILE)
+	static char label[2][96];	// two phases may be waiting for the log (the flush is the next frame's)
+	char *l = label[phaseIndex & 1];
+	snprintf(l, 96, "%s: %s", test->name, phaseNames[phase]);
+	PS3_ProfFlush(l);
+	PS3_Logf("[pctest] %s, phase %d done: %d %s", test->name, phaseIndex + 1, eventCount,
+	         phase == PH_PILE ? "cars dropped" : phase == PH_BOOMS ? "explosions" : phase == PH_NEWCARS ? "car models loaded" :
+	         phase == PH_COLLISION ? "cars dropped and explosions" : "events");
+	if (phase == PH_PILE || phase == PH_COLLISION)
 		removePile();
+	if (phase == PH_NEWCARS)
+		removeNewCars();
 	if (phase == PH_CHASE) {
 		p->SetWantedLevel(0);
 		CWorld::ClearExcitingStuffFromArea(p->GetPosition(), 80.0f, true);
 	}
-	if (phase == PH_BOOMS) {
+	if (phase == PH_BOOMS || phase == PH_COLLISION) {
 		CExplosion::ClearAllExplosions();
 		gFireManager.ExtinguishPoint(p->GetPosition(), 80.0f);
 	}
@@ -226,6 +329,8 @@ static void
 finishTest(CPlayerPed *p, const char *why)
 {
 	removePile();
+	removeNewCars();
+	PS3_ProfHold(0);
 	CPopulation::PedDensityMultiplier = prevPedDensity;
 	CCarCtrl::CarDensityMultiplier = prevCarDensity;
 	if (p) {
@@ -235,7 +340,8 @@ finishTest(CPlayerPed *p, const char *why)
 	PS3_Logf("[pctest] done (%s); densities and wanted level put back", why);
 	wchar none[1] = { 0 };
 	CHud::SetHelpMessage(none, true);
-	rename(PC_FILE, PC_DONE_FILE);
+	if (test)
+		rename(test->file, test->doneFile);
 	state = 3;
 }
 
@@ -250,7 +356,12 @@ PS3_ProcessControlTestFrame(void)
 	lastFrameUs = now;
 
 	if (state == 0) {
-		FILE *f = fopen(PC_FILE, "rb");
+		FILE *f = nil;
+		for (int k = 0; k < 2 && f == nil; k++) {
+			f = fopen(tests[k].file, "rb");
+			if (f)
+				test = &tests[k];
+		}
 		if (f == nil) {
 			state = 3;
 			return;
@@ -260,8 +371,8 @@ PS3_ProcessControlTestFrame(void)
 			if (strncmp(line, "secs=", 5) == 0)
 				secsPerPhase = Clamp(atoi(line + 5), 8, 40);
 		fclose(f);
-		PS3_Logf("[pctest] processcontrol.txt found: the test starts 10 s after a game is playing, outdoors and not on "
-		         "a mission (%d phases of %d s)", NUM_PHASES, secsPerPhase);
+		PS3_Logf("[pctest] %s found: the test starts 10 s after a game is playing, outdoors and not on "
+		         "a mission (%d phases of %d s)", test->file, test->numPhases, secsPerPhase);
 		state = 1;
 		return;
 	}
@@ -282,7 +393,8 @@ PS3_ProcessControlTestFrame(void)
 			static int shown = -1;
 			if (left != shown) {
 				char a[64];
-				snprintf(a, sizeof(a), "PROCESSCONTROL TEST IN %d S: DON'T TOUCH THE PAD", left);
+				snprintf(a, sizeof(a), "%s IN %d S: DON'T TOUCH THE PAD",
+				         test == &tests[0] ? "PROCESSCONTROL TEST" : "STREAMING TEST", left);
 				showText(a);
 				shown = left;
 			}
@@ -291,9 +403,10 @@ PS3_ProcessControlTestFrame(void)
 		prevPedDensity = CPopulation::PedDensityMultiplier;
 		prevCarDensity = CCarCtrl::CarDensityMultiplier;
 		numPile = 0;
+		numNewCars = 0;
 		PS3_Logf("[pctest] start at %.1f %.1f %.1f", p->GetPosition().x, p->GetPosition().y, p->GetPosition().z);
 		state = 2;
-		startPhase(p, PH_CALM, now);
+		startPhase(p, 0, now);
 		return;
 	}
 
@@ -320,11 +433,24 @@ PS3_ProcessControlTestFrame(void)
 		boom(p);
 		nextEventUs = now + 600000;
 	}
+	if (phase == PH_NEWCARS && now >= nextEventUs) {
+		newCarModel(p);	// one every 2.5 s
+		nextEventUs = now + 2500000;
+	}
+	if (phase == PH_COLLISION && now >= nextEventUs) {
+		// a car every 1.2 s until the pile is full, explosions in between
+		static int tick;
+		if ((tick++ & 1) == 0 && numPile < MAX_PILE)
+			dropCar(p);
+		else
+			boom(p);
+		nextEventUs = now + 600000;
+	}
 
 	if (now - phaseStart >= (uint64)secsPerPhase * 1000000) {
 		endPhase(p);
-		if (phase + 1 < NUM_PHASES)
-			startPhase(p, phase + 1, now);
+		if (phaseIndex + 1 < test->numPhases)
+			startPhase(p, phaseIndex + 1, now);
 		else
 			finishTest(p, "all phases run");
 	}

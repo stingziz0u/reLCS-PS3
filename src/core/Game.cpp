@@ -1126,6 +1126,7 @@ void CGame::Process(void)
 	}
 #endif
 	//uint32 startTime = CTimer::GetCurrentTimeInCycles() / CTimer::GetCyclesPerMillisecond();
+	PS3_GAME_STEP("CStreaming::Update");	// patch 59: it was counted in CTheZones::Update
 #ifdef _3DS
 	uint64 profileStreamingStart = rw::c3d::profileTimerStart();
 #endif

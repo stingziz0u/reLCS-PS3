@@ -289,6 +289,11 @@ struct TexProfile {
 	uint64 dffParseUs, dffSetupUs, instUs, instWorstUs;
 	uint32 instCount;
 	char worstName[24];	// the slowest object of the period
+	// patch 59: the stages as the game thread spent them (the texture thread's
+	// share left out), and the slowest TXD of the period by stage
+	uint64 gameUs[TEXPROF_NUM];
+	uint64 worstTxdUs, worstTxdStage[TEXPROF_NUM];
+	char worstTxdName[24];
 	// textures a model wants and its TXD doesn't have: looked for as image
 	// files (once per name now, see imageMissKnown)
 	uint32 imgLookups;
@@ -308,6 +313,8 @@ extern uint32 texMissTotal;
 extern void (*texMissHook)(const char *name, const char *mask);
 inline void texMissed(const char *name, const char *mask) { texMissTotal++; if(texMissHook) texMissHook(name, mask); }
 extern TexProfile texProfile;
+void texProfAdd(int stage, uint64 us);	// patch 59: texProfile.us, and gameUs on the game thread
+void texProfMarkGameThread(void);	// the calling thread is the game's (Streaming.cpp)
 uint64 texProfNow(void);	// microseconds
 
 }

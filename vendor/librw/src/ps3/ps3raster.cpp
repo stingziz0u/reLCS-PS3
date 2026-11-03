@@ -68,6 +68,30 @@ texProfNow(void)
 	return tb * 1000000 / freq;
 }
 
+// patch 59: the stage times, also kept apart for the game thread (the TXD
+// conversions it waits for); the texture thread adds to texProfile.us only
+static sys_ppu_thread_t texProfGame;
+static bool texProfGameKnown;
+
+void
+texProfMarkGameThread(void)
+{
+	sysThreadGetId(&texProfGame);
+	texProfGameKnown = true;
+}
+
+void
+texProfAdd(int stage, uint64 us)
+{
+	texProfile.us[stage] += us;
+	if(texProfGameKnown){
+		sys_ppu_thread_t self;
+		sysThreadGetId(&self);
+		if(self == texProfGame)
+			texProfile.gameUs[stage] += us;
+	}
+}
+
 // Hashes of "name|mask" (lower case) looked for as image files and not
 // found. Open addressing; emptied when 3/4 full (a few hundred names).
 #define IMGMISS_SIZE 2048
@@ -904,7 +928,7 @@ uploadLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba, ConvCtx
 			}
 			vramFlush(natras->vram, natras->pitch*h);
 		}
-		texProfile.us[TEXPROF_SWIZZLE] += texProfNow() - t0;
+		texProfAdd(TEXPROF_SWIZZLE, texProfNow() - t0);
 		texProfile.levels++;
 		texProfile.texels += w*h;
 		drawStats.texUploadBytes += bytes;
@@ -928,8 +952,8 @@ uploadLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba, ConvCtx
 		memcpy(natras->vram + natras->levelOffset[level], pix, bytes);
 		vramFlush(natras->vram + natras->levelOffset[level], bytes);
 		uint64 t2 = texProfNow();
-		texProfile.us[TEXPROF_SWIZZLE] += t1 - t0;
-		texProfile.us[TEXPROF_VRAM] += t2 - t1;
+		texProfAdd(TEXPROF_SWIZZLE, t1 - t0);
+		texProfAdd(TEXPROF_VRAM, t2 - t1);
 		texProfile.levels++;
 		texProfile.texels += w*h;
 		drawStats.texUploadBytes += bytes;
@@ -945,7 +969,7 @@ uploadLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba, ConvCtx
 			memcpy(natras->vram + y*natras->pitch, row, w*4);
 		}
 		vramFlush(natras->vram, natras->pitch*h);
-		texProfile.us[TEXPROF_VRAM] += texProfNow() - t0;
+		texProfAdd(TEXPROF_VRAM, texProfNow() - t0);
 		texProfile.levels++;
 		texProfile.texels += w*h;
 		drawStats.texUploadBytes += w*h*4;
@@ -977,7 +1001,7 @@ copyDXTLevel(Raster *raster, Ps3Raster *natras, int32 level, const uint8 *blocks
 	uint64 t0 = texProfNow();
 	memcpy(natras->vram + natras->levelOffset[level], blocks, bytes);
 	vramFlush(natras->vram + natras->levelOffset[level], bytes);
-	texProfile.us[TEXPROF_VRAM] += texProfNow() - t0;
+	texProfAdd(TEXPROF_VRAM, texProfNow() - t0);
 	texProfile.levels++;
 	texProfile.dxtLevels++;
 	texProfile.texels += w*h;
@@ -1000,7 +1024,7 @@ encodeDXTLevel(Raster *raster, Ps3Raster *natras, int32 level, const uint8 *rgba
 		return;
 	uint64 t0 = texProfNow();
 	encodeDXT(dxt, rgba, w, h, out);
-	texProfile.us[TEXPROF_ENCODE] += texProfNow() - t0;
+	texProfAdd(TEXPROF_ENCODE, texProfNow() - t0);
 	texProfile.encLevels++;
 	copyDXTLevel(raster, natras, level, out, cx);
 }
@@ -1040,7 +1064,7 @@ uploadMipChain(Raster *raster, Ps3Raster *natras, uint8 *rgba, int32 from, ConvC
 			downsampleCoverage(next, nw, nh, prev, pw, ph);
 		else
 			downsampleRGBA8(next, nw, nh, prev, pw, ph);
-		texProfile.us[TEXPROF_MIPS] += texProfNow() - tm;
+		texProfAdd(TEXPROF_MIPS, texProfNow() - tm);
 		putMipLevel(raster, natras, i, next, cx);
 		prev = next;
 		pw = nw;
@@ -1080,7 +1104,7 @@ uploadDXTDirect(Raster *raster, Ps3Raster *natras, int32 level, const uint8 *blo
 	dxtToSwizzled(dxt, natras->vramFmt, blocks, w, h, tx, ty, buf);
 	memcpy(natras->vram + natras->levelOffset[level], buf, bytes);
 	vramFlush(natras->vram + natras->levelOffset[level], bytes);
-	texProfile.us[TEXPROF_DXT] += texProfNow() - t0;
+	texProfAdd(TEXPROF_DXT, texProfNow() - t0);
 	texProfile.levels++;
 	texProfile.texels += w*h;
 	drawStats.texUploadBytes += bytes;
@@ -1458,7 +1482,7 @@ convertLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *src, ConvCtx
 				return;
 			uint64 tm = texProfNow();
 			dxtHalf(rasterDXT(natras), src, w, h, natras->forcedMips, half);
-			texProfile.us[TEXPROF_MIPS] += texProfNow() - tm;
+			texProfAdd(TEXPROF_MIPS, texProfNow() - tm);
 			encodeDXTLevel(raster, natras, 1, half, cx);
 			uploadMipChain(raster, natras, half, 1, cx);
 		}
@@ -1474,7 +1498,7 @@ convertLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *src, ConvCtx
 				if(half){
 					uint64 tm = texProfNow();
 					dxtHalf(dxt, src, w, h, natras->forcedMips, half);
-					texProfile.us[TEXPROF_MIPS] += texProfNow() - tm;
+					texProfAdd(TEXPROF_MIPS, texProfNow() - tm);
 					uploadLevel(raster, natras, 1, half, cx);
 					uploadMipChain(raster, natras, half, 1, cx);
 				}
@@ -1491,7 +1515,7 @@ convertLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *src, ConvCtx
 			return;
 		uint64 td = texProfNow();
 		decodeDXT(dxt, decoded, dw, dh, src);
-		texProfile.us[TEXPROF_DXT] += texProfNow() - td;
+		texProfAdd(TEXPROF_DXT, texProfNow() - td);
 		if(dw != w || dh != h){
 			// tiny level: the top left corner
 			for(int32 y = 0; y < h; y++)
@@ -1892,7 +1916,7 @@ lockTexture(Raster *raster, Ps3Raster *natras, int32 level, int32 lockMode)
 	if(!(lockMode & Raster::LOCKNOFETCH) && (natras->validLevels & (1<<level)) && !natras->isCompressed){
 		uint64 t0 = texProfNow();
 		readbackLevel(raster, natras, level, natras->staging);
-		texProfile.us[TEXPROF_READBACK] += texProfNow() - t0;
+		texProfAdd(TEXPROF_READBACK, texProfNow() - t0);
 		texProfile.readbacks++;
 	}
 	else if(lockMode & Raster::LOCKREAD && natras->isCompressed){
@@ -2274,7 +2298,7 @@ readPalettedD3D8(Stream *stream, int32 width, int32 height, int32 format, int32 
 	rwFree(data);
 	if(ras)
 		GETPS3RASTEREXT(ras)->serial++;
-	texProfile.us[TEXPROF_INDEXED] += texProfNow() - t0;
+	texProfAdd(TEXPROF_INDEXED, texProfNow() - t0);
 	texProfile.indexed++;
 	*out = ras;
 	return true;
@@ -2700,7 +2724,7 @@ rasterFromImage(Raster *raster, Image *image)
 		imgpixels += image->stride;
 		pixels += raster->stride;
 	}
-	texProfile.us[TEXPROF_FROMIMAGE] += texProfNow() - tconv;
+	texProfAdd(TEXPROF_FROMIMAGE, texProfNow() - tconv);
 	if(unlock)
 		raster->unlock(0);
 

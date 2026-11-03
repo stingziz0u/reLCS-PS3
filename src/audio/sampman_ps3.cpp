@@ -209,6 +209,24 @@ static volatile int s_mixing;		// the mixer holds the lock
 static volatile uint32 s_streamPasses;	// stream thread loops
 static volatile int s_streamStep;	// where the stream thread is (see StreamThread)
 
+// patch 59: a game-thread call into the mixer that took 2 ms or more (the
+// 11 ms DMAudio.Service of the processcontrol test's chase): logged with its
+// name, 40 times at most
+static int s_slowLogged;
+struct PS3AudioSlow {
+	const char *name;
+	uint64 t0;
+	PS3AudioSlow(const char *n) : name(n), t0(sysGetSystemTime()) {}
+	~PS3AudioSlow() {
+		uint64 d = sysGetSystemTime() - t0;
+		if (d >= 2000 && s_slowLogged < 40) {
+			s_slowLogged++;
+			PS3_Logf("[audio] slow: %s %.1f ms", name, d / 1000.0);
+		}
+	}
+};
+#define PS3_AUDIO_SLOW(name) PS3AudioSlow ps3AudioSlow(name)
+
 struct MixLock {
 	MixLock() {
 		// 2 s without it is a hang: say so, then go on waiting
@@ -1941,6 +1959,7 @@ PS3_BankCheck(const tSample *table)
 bool8
 cSampleManager::LoadSampleBank(uint8 nBank)
 {
+	PS3_AUDIO_SLOW("cSampleManager::LoadSampleBank");
 	if(CTimer::GetIsCodePaused())
 		return false;
 	if(MusicManager.IsInitialised() && MusicManager.GetMusicMode() == MUSICMODE_CUTSCENE && nBank != SFX_BANK_0)
@@ -1991,6 +2010,7 @@ cSampleManager::IsMissionAudioLoaded(uint8 nSlot, uint32 nSample)
 bool8
 cSampleManager::LoadMissionAudio(uint8 nSlot, uint32 nSample)
 {
+	PS3_AUDIO_SLOW("cSampleManager::LoadMissionAudio");
 	if(nSample >= TOTAL_AUDIO_SAMPLES || fpSampleDataHandle == nil)
 		return FALSE;
 	uint8 *dst;
@@ -2056,6 +2076,7 @@ cSampleManager::_GetPedCommentSlot(uint32 nComment)
 bool8
 cSampleManager::LoadPedComment(uint32 nComment)
 {
+	PS3_AUDIO_SLOW("cSampleManager::LoadPedComment");
 	if(CTimer::GetIsCodePaused())
 		return false;
 	// no talking peds during cutscenes
@@ -2120,6 +2141,7 @@ void cSampleManager::SetChannelReverbFlag(uint32 nChannel, bool8 nReverbFlag) { 
 bool8
 cSampleManager::InitialiseChannel(uint32 nChannel, uint32 nSfx, uint8 nBank)
 {
+	PS3_AUDIO_SLOW("cSampleManager::InitialiseChannel");
 	uintptr addr;
 	uint32 maxSize = 0;	// the slot's size (ped comments, mission audio)
 	if(nChannel >= NUM_CHANNELS || nSfx >= TOTAL_AUDIO_SAMPLES)
@@ -2278,6 +2300,7 @@ cSampleManager::GetChannelUsedFlag(uint32 nChannel)
 void
 cSampleManager::StartChannel(uint32 nChannel)
 {
+	PS3_AUDIO_SLOW("cSampleManager::StartChannel");
 	MixLock lock;
 	Channel &c = channels[nChannel];
 	if(c.data == nil)
@@ -2290,6 +2313,7 @@ cSampleManager::StartChannel(uint32 nChannel)
 void
 cSampleManager::StopChannel(uint32 nChannel)
 {
+	PS3_AUDIO_SLOW("cSampleManager::StopChannel");
 	MixLock lock;
 	channels[nChannel].playing = false;
 }
@@ -2338,6 +2362,7 @@ ApplyStreamVolume(uint8 nStream, uint8 nEffectFlag, uint8 fxFade, uint8 fxVol, u
 void
 cSampleManager::PreloadStreamedFile(uint32 nFile, uint8 nStream)
 {
+	PS3_AUDIO_SLOW("cSampleManager::PreloadStreamedFile");
 	if(nFile >= TOTAL_STREAMED_SOUNDS || nStream >= MAX_STREAMS)
 		return;
 	Stream *s = StreamCreateTrack(nFile);
@@ -2361,6 +2386,7 @@ cSampleManager::PauseStream(bool8 nPauseFlag, uint8 nStream)
 void
 cSampleManager::StartPreloadedStreamedFile(uint8 nStream)
 {
+	PS3_AUDIO_SLOW("cSampleManager::StartPreloadedStreamedFile");
 	MixLock lock;
 	if(nStream < MAX_STREAMS && streams[nStream])
 		streams[nStream]->playing = true;
@@ -2369,6 +2395,7 @@ cSampleManager::StartPreloadedStreamedFile(uint8 nStream)
 bool8
 cSampleManager::StartStreamedFile(uint32 nFile, uint32 nPos, uint8 nStream)
 {
+	PS3_AUDIO_SLOW("cSampleManager::StartStreamedFile");
 	if(nFile >= TOTAL_STREAMED_SOUNDS || nStream >= MAX_STREAMS)
 		return false;
 	if(nFile == STREAMED_SOUND_RADIO_MP3_PLAYER){
@@ -2436,6 +2463,7 @@ cSampleManager::StartStreamedFile(uint32 nFile, uint32 nPos, uint8 nStream)
 void
 cSampleManager::StopStreamedFile(uint8 nStream)
 {
+	PS3_AUDIO_SLOW("cSampleManager::StopStreamedFile");
 	if(nStream < MAX_STREAMS)
 		ReplaceStream(nStream, nil);
 	if(nStream == 0)
@@ -2445,6 +2473,7 @@ cSampleManager::StopStreamedFile(uint8 nStream)
 int32
 cSampleManager::GetStreamedFilePosition(uint8 nStream)
 {
+	PS3_AUDIO_SLOW("cSampleManager::GetStreamedFilePosition");
 	MixLock lock;
 	Stream *s = nStream < MAX_STREAMS ? streams[nStream] : nil;
 	if(s == nil || s->rate == 0)
@@ -2466,6 +2495,7 @@ cSampleManager::GetStreamedFilePosition(uint8 nStream)
 void
 cSampleManager::SetStreamedVolumeAndPan(uint8 nVolume, uint8 nPan, bool8 nEffectFlag, uint8 nStream)
 {
+	PS3_AUDIO_SLOW("cSampleManager::SetStreamedVolumeAndPan");
 	if(nStream >= MAX_STREAMS)
 		return;
 	if(nVolume > MAX_VOLUME) nVolume = MAX_VOLUME;
@@ -2505,6 +2535,7 @@ cSampleManager::SetStreamedFileLoopFlag(bool8 nLoopFlag, uint8 nStream)
 void
 cSampleManager::Service(void)
 {
+	PS3_AUDIO_SLOW("cSampleManager::Service");
 	// the streams have their own thread
 	PS3_BankCheck(m_aSamples);
 }
