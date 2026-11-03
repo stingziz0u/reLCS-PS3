@@ -95,4 +95,6 @@ void PS3_SpuTaskStop(PS3SpuTask *t);
 // ps3_carspawn.cpp (L3 + R3)
 void PS3_CarSpawnerPad(void);		// CPad::UpdatePads, after pad 0
 void PS3_CarSpawnerDraw(void);		// CHud::Draw, after the subtitles
+void PS3_MissionSpawnerPad(void);	// patch 74 (ps3_missionspawn.cpp): CPad::UpdatePads, after the car spawner
+void PS3_MissionSpawnerDraw(void);	// CHud::Draw, after the car spawner
 #endif

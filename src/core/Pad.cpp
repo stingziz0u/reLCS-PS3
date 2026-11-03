@@ -1723,6 +1723,7 @@ void CPad::UpdatePads(void)
 	PS3_PerfTestFrame();	// the performance test (USRDIR/perf.txt), if any
 	PS3_ProcessControlTestFrame();	// patch 58: USRDIR/processcontrol.txt
 	PS3_CarSpawnerPad();	// L3 + R3
+	PS3_MissionSpawnerPad();	// L3 + Select (patch 74)
 	{
 		// vibration (Gamepad settings): what the PS2 game sent to the
 		// DualShock 2 every frame, on the DS3's large motor

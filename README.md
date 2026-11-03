@@ -109,6 +109,13 @@ picture of the settings page).
   `carspawner.txt` in `USRDIR`, any content): L3 + R3 together on foot. The
   vehicle shows as "ID: name" over the subtitles; Left/Right go one by one,
   L1/R1 by 10 (hold to scroll), X puts you in it, O closes.
+- **Mission spawner** (for testing, off unless there is a file named
+  `missionspawner.txt` in `USRDIR`, any content): L3 + Select together. Every
+  mission and side activity (races, Bumps and Grinds, the RC and vehicle
+  jobs...) shows as "number: name [script]"; Left/Right go one by one, L1/R1
+  by 10 (hold to scroll), X starts it, O closes. A mission that is running
+  ends first; Toni is taken to where the chosen one starts, in its vehicle if
+  it needs one.
 - **MP3 player** radio station: put `.mp3` files in `USRDIR/mp3`; it is in
   the radio dial between the last station and off.
 - Ped and car density sliders in *Display*.

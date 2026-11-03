@@ -1382,6 +1382,7 @@ void CHud::Draw()
 
 #if defined(__PS3__) && PS3_STAGE != 1
 		PS3_CarSpawnerDraw();
+		PS3_MissionSpawnerDraw();	// patch 74
 #endif
 
 		/*

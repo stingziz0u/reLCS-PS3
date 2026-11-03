@@ -1018,6 +1018,73 @@ static const MissionPlace *findPlace(int idx)
 	return nil;
 }
 
+// Toni where the mission starts (mp: from missionPlaces, nil: where he is),
+// in its vehicle if it has one, and the mission started. The autotest's
+// mission steps and the mission spawner (patch 74, ps3_missionspawn.cpp)
+static void launchMission(CPlayerPed *p, int idx, const MissionPlace *mp, const char *logPrefix)
+{
+	char name[16];
+	missionScriptName(idx, name);
+	CVehicle *car = nil;
+	if (p->bInVehicle)
+		warpOutOfCar(p->GetPosition() + CVector(0.0f, 0.0f, 1.0f));
+	CVector pos = p->GetPosition();
+	if (mp && mp->place != MP_HERE) {
+		pos = CVector(mp->x, mp->y, mp->z);
+		if (mp->place == MP_NEAR) {
+			// next to the place the job checks he has left
+			static const float off[4][2] = { { 12, 0 }, { -12, 0 }, { 0, 12 }, { 0, -12 } };
+			for (int i = 0; i < 4; i++) {
+				float gz;
+				if (groundAt(mp->x + off[i][0], mp->y + off[i][1], &gz, mp->z > -50.0f ? mp->z + 10.0f : 1000.0f)) {
+					pos = CVector(mp->x + off[i][0], mp->y + off[i][1], gz);
+					break;
+				}
+			}
+		} else {
+			float gz;
+			if (groundAt(pos.x, pos.y, &gz, mp->z > -50.0f ? mp->z + 5.0f : 1000.0f))
+				pos.z = gz;
+		}
+		CStreaming::LoadScene(pos);
+		warpOutOfCar(pos + CVector(0.0f, 0.0f, 0.5f));
+	}
+	if (mp && mp->model > 0) {
+		CVector vpos = mp->place == MP_HERE ? pos + CVector(4.0f, 0.0f, 0.0f) : pos;
+		float gz;
+		if (groundAt(vpos.x, vpos.y, &gz, vpos.z + 10.0f))
+			vpos.z = gz;
+		car = makeVehicle(mp->model, vpos, p->m_fRotationCur);
+		if (car)
+			warpIntoCar(car);
+	}
+	PS3_Logf("%smission %d is \"%s\"%s%s", logPrefix, idx, name,
+	         mp && mp->place != MP_HERE ? ", Toni put where it starts" : "",
+	         car ? ", in its vehicle" : "");
+	CTheScripts::SwitchToMission(idx);	// the vehicle is the mission's now (its cleanup may delete it)
+}
+
+// patch 74: for the mission spawner. The script's name of mission idx
+// ("" if none), and launchMission with its place (if main.scm's name is
+// the one in the table: another main.scm starts it where Toni is)
+void PS3_MissionScriptName(int idx, char *out)
+{
+	missionScriptName(idx, out);
+}
+
+void PS3_LaunchMission(int idx)
+{
+	CPlayerPed *p = FindPlayerPed();
+	if (p == nil)
+		return;
+	char name[16];
+	missionScriptName(idx, name);
+	const MissionPlace *mp = findPlace(idx);
+	if (mp && strcmp(mp->name, name) != 0)
+		mp = nil;
+	launchMission(p, idx, mp, "[missions] ");
+}
+
 static void addGarageSteps(void)
 {
 	bool doneType[64] = { false };
@@ -1587,43 +1654,7 @@ static void runMission(Step &s)
 			PS3_Logf("[autotest]     mission %d is \"%s\", not \"%s\" (another main.scm): started where Toni is", s.a, name, mp->name);
 			mp = nil;
 		}
-		if (p->bInVehicle)
-			warpOutOfCar(p->GetPosition() + CVector(0.0f, 0.0f, 1.0f));
-		CVector pos = p->GetPosition();
-		if (mp && mp->place != MP_HERE) {
-			pos = CVector(mp->x, mp->y, mp->z);
-			if (mp->place == MP_NEAR) {
-				// next to the place the job checks he has left
-				static const float off[4][2] = { { 12, 0 }, { -12, 0 }, { 0, 12 }, { 0, -12 } };
-				for (int i = 0; i < 4; i++) {
-					float gz;
-					if (groundAt(mp->x + off[i][0], mp->y + off[i][1], &gz, mp->z > -50.0f ? mp->z + 10.0f : 1000.0f)) {
-						pos = CVector(mp->x + off[i][0], mp->y + off[i][1], gz);
-						break;
-					}
-				}
-			} else {
-				float gz;
-				if (groundAt(pos.x, pos.y, &gz, mp->z > -50.0f ? mp->z + 5.0f : 1000.0f))
-					pos.z = gz;
-			}
-			CStreaming::LoadScene(pos);
-			warpOutOfCar(pos + CVector(0.0f, 0.0f, 0.5f));
-		}
-		if (mp && mp->model > 0) {
-			CVector vpos = mp->place == MP_HERE ? pos + CVector(4.0f, 0.0f, 0.0f) : pos;
-			float gz;
-			if (groundAt(vpos.x, vpos.y, &gz, vpos.z + 10.0f))
-				vpos.z = gz;
-			testCar = makeVehicle(mp->model, vpos, p->m_fRotationCur);
-			if (testCar)
-				warpIntoCar(testCar);
-		}
-		PS3_Logf("[autotest]     mission %d is \"%s\"%s%s", s.a, name,
-		         mp && mp->place != MP_HERE ? ", Toni put where it starts" : "",
-		         testCar ? ", in its vehicle" : "");
-		CTheScripts::SwitchToMission(s.a);
-		testCar = nil;	// the mission's now (its cleanup may delete it)
+		launchMission(p, s.a, mp, "[autotest]     ");
 		nextPhase();
 		break;
 	}
