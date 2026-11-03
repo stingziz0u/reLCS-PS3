@@ -545,6 +545,13 @@ defaultRenderCB(Atomic *atomic, InstanceDataHeader *header)
 	}
 }
 
+// patch 66 (leedsRenderCB): the depth bias of a Leeds model's meshes after
+// its first. USRDIR/noleedsbias.txt turns it off; USRDIR/leedsbias.txt with
+// two numbers ("-1 -48") sets factor and units
+bool leedsBiasOn = true;
+float leedsBiasFactor = -1.0f;
+float leedsBiasUnits = -48.0f;
+
 // ---- Leeds world pipeline (res-PS3 patch 27) ------------------------------------------
 // LCS's buildings and map objects, as reLCS's leedsBuilding.vert /
 // leedsDefault.frag with their PS2 settings (custompipes_d3d9.cpp
@@ -581,8 +588,18 @@ leedsRenderCB(Atomic *atomic, InstanceDataHeader *header)
 		       g->numVertices, c ? "kept" : "freed", c ? c[0].red : -1, c ? c[0].green : -1, c ? c[0].blue : -1,
 		       c ? c[0].alpha : -1, n, header->inst->material->texture != nil, header->inst->material->color.alpha);
 	}
-	while(n--){
+	bool biased = false;
+	for(int32 k = 0; n--; k++){
 		m = inst->material;
+		// patch 66: the meshes after the first (LCS's overlays on the walls:
+		// edges, dirt, signs, on the same plane as the wall under them) a
+		// little in front, as the PS2 drew them after it; they fought with it
+		// as the camera moved (jagged black lines on the buildings)
+		if(k == 1 && leedsBiasOn && rsxCtx){
+			rsxSetPolygonOffset(rsxCtx, leedsBiasFactor, leedsBiasUnits);
+			rsxSetPolygonOffsetFillEnable(rsxCtx, GCM_TRUE);
+			biased = true;
+		}
 		// only the material's alpha (distance fading) is used, the time
 		// cycle ambient goes in its place; textured meshes x255/128 in
 		// rw_leeds.fcg, untextured ones as they are (rw_simple.fcg)
@@ -593,6 +610,8 @@ leedsRenderCB(Atomic *atomic, InstanceDataHeader *header)
 		drawInst(header, inst);
 		inst++;
 	}
+	if(biased)
+		rsxSetPolygonOffsetFillEnable(rsxCtx, GCM_FALSE);
 }
 
 rw::ObjPipeline*

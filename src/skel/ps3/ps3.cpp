@@ -906,6 +906,27 @@ PS3_GameMain(void)
 		}
 		PS3_Logf("[5] true colour TXD textures: %s", rw::ps3::txdDirect ? "read straight (notxddirect.txt turns it off)" : "librw's way (notxddirect.txt)");
 	}
+	// patch 66: the Leeds models' overlay meshes drawn a little in front of
+	// the wall under them (z-fighting: jagged lines on the buildings).
+	// USRDIR/noleedsbias.txt: off; USRDIR/leedsbias.txt "factor units": tuned
+	{
+		FILE *nb = fopen(PS3_USRDIR "/noleedsbias.txt", "rb");
+		if (nb) {
+			fclose(nb);
+			rw::ps3::leedsBiasOn = false;
+		}
+		FILE *lb = fopen(PS3_USRDIR "/leedsbias.txt", "rb");
+		if (lb) {
+			float f, u;
+			if (fscanf(lb, "%f %f", &f, &u) == 2) {
+				rw::ps3::leedsBiasFactor = f;
+				rw::ps3::leedsBiasUnits = u;
+			}
+			fclose(lb);
+		}
+		PS3_Logf("[5] Leeds overlay depth bias: %s (factor %.1f, units %.1f; noleedsbias.txt / leedsbias.txt)",
+		         rw::ps3::leedsBiasOn ? "on" : "OFF", rw::ps3::leedsBiasFactor, rw::ps3::leedsBiasUnits);
+	}
 	// patch 28: the LOD buildings' pairing with their detailed instances and
 	// the occluders, both switchable to compare the pop-in
 	{

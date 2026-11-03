@@ -180,6 +180,8 @@ extern int32 texFilterMode;	// 3D textures: 0 the game's filter, 1 bilinear, 2 t
 extern int32 texAniso;		// 3D textures: anisotropic filtering, 1 (off), 2, 4, 8, 16
 extern bool fxaaOn;		// FXAA on the camera's picture before it is shown
 // res-PS3 patch 27: LCS's lighting and gamma
+extern bool leedsBiasOn;	// patch 66: a Leeds model's meshes after the first drawn a little in front (USRDIR/noleedsbias.txt turns it off)
+extern float leedsBiasFactor, leedsBiasUnits;	// their polygon offset (USRDIR/leedsbias.txt: "factor units")
 extern bool leedsLighting;	// the Leeds world pipeline draws as LCS (false: as the default pipeline)
 extern uint32 leedsDraws;	// patch 33: Leeds models drawn this frame (diagnostics)
 extern bool leedsWantSample;	// log the next one drawn
