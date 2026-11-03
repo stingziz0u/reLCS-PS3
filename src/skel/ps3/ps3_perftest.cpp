@@ -24,8 +24,8 @@
 // the game thread's time in CParticle::Render without its wait for the SPU,
 // "SPU" that wait. The audio mixer stays on its SPU (patch 49: it took
 // 1.4-8.6 ms of PPU per frame, 0.2-0.3 on the SPU); its time is split the same
-// way. Patch 46's switches showed no difference: the opaque sort stays off and
-// the Leeds program without lights stays on.
+// way. Patch 46's switches showed no difference: the opaque sort was taken out
+// (patch 69) and the Leeds program without lights stays on.
 // -O3 on the hot files is a build option (Makefile HOT_O3): the log says
 // which build this is.
 
@@ -57,7 +57,6 @@
 #include "General.h"
 
 #include "src/ps3/rwps3.h"
-extern bool gPS3SortOpaque;			// Renderer.cpp
 extern uint64 gPS3MixerBusyUs, gPS3StreamBusyUs;	// sampman_ps3.cpp
 extern bool gPS3SpuAudio;			// sampman_ps3.cpp (patch 49)
 extern uint64 gPS3SpuWaitUs;
@@ -126,7 +125,7 @@ static CVector spotPos[8];
 static int curSpot, curRun, phase;	// phase 0 going there, 1 settling, 2 measuring
 static CVector startPos;
 static float startHeading;
-static bool prevSort, prevNoLights, prevSpu, prevSpuPart;
+static bool prevNoLights, prevSpu, prevSpuPart;
 static Snapshot snapStart;
 static float samples[MAX_SAMPLES];
 static int numSamples;
@@ -151,7 +150,6 @@ takeSnapshot(Snapshot *s)
 static void
 setConfig(int cfg)
 {
-	gPS3SortOpaque = false;
 	rw::ps3::optLeedsNoDirLights = true;
 	gPS3SpuAudio = true;
 	gPS3SpuParticles = cfg != 0;
@@ -343,14 +341,13 @@ finishTest(CPlayerPed *p, const char *why)
 		p->m_fRotationCur = p->m_fRotationDest = startHeading;
 		keepSafe(p, false);
 	}
-	gPS3SortOpaque = prevSort;
 	rw::ps3::optLeedsNoDirLights = prevNoLights;
 	gPS3SpuAudio = prevSpu;
 	gPS3SpuParticles = prevSpuPart;
 	if (numResults)
 		logSummary();
-	PS3_Logf("[perf] done (%s); the settings are back as they were (opaque sort %s, Leeds without lights %s, SPU mixer %s, "
-	         "SPU particles %s)", why, prevSort ? "on" : "off", prevNoLights ? "on" : "off", prevSpu ? "on" : "off",
+	PS3_Logf("[perf] done (%s); the settings are back as they were (Leeds without lights %s, SPU mixer %s, "
+	         "SPU particles %s)", why, prevNoLights ? "on" : "off", prevSpu ? "on" : "off",
 	         prevSpuPart ? "on" : "off");
 	wchar none[1] = { 0 };
 	CHud::SetHelpMessage(none, true);
@@ -410,7 +407,6 @@ PS3_PerfTestFrame(void)
 		}
 		startPos = p->GetPosition();
 		startHeading = p->m_fRotationCur;
-		prevSort = gPS3SortOpaque;
 		prevNoLights = rw::ps3::optLeedsNoDirLights;
 		prevSpu = gPS3SpuAudio;
 		prevSpuPart = gPS3SpuParticles;

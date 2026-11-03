@@ -95,19 +95,8 @@ CCoronas::Init(void)
 			gpCoronaTexture[i] = RwTextureRead(aCoronaSpriteNames[i], nil);
 
 #ifdef __PS3__
-	// patch 46: Ren: the cars' headlights are squares. A corona sprite that
-	// particle.txd hasn't is drawn with no texture: a white square. What
-	// each one is ([corona] lines), and a missing one gets the round
-	// "corona" sprite instead.
-	for(i = 0; i < 9; i++){
-		RwTexture *t = gpCoronaTexture[i];
-		if(t && t->raster)
-			PS3_Logf("[corona] %s: %dx%d, raster format 0x%x, depth %d", aCoronaSpriteNames[i],
-			         t->raster->width, t->raster->height, t->raster->format, t->raster->depth);
-		else
-			PS3_Logf("[corona] %s: MISSING from particle.txd%s", aCoronaSpriteNames[i],
-			         gpCoronaTexture[1] ? ", drawn with \"corona\"" : "");
-	}
+	// patch 46: a corona sprite that particle.txd hasn't was drawn with no
+	// texture (a white square): it gets the round "corona" sprite instead
 	for(i = 0; i < 9; i++)
 		if(gpCoronaTexture[i] == nil && gpCoronaTexture[1])
 			gpCoronaTexture[i] = RwTextureAddRef(gpCoronaTexture[1]);

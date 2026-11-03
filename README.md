@@ -22,12 +22,12 @@ shares their PS3 layer.
 >
 >
 > **Known issues:**
-> - Car headlights look square.
 > - Some LOD buildings can still pop in at a distance.
-> - Holding O while aiming with fists repeats very fast punches (not yet
->   checked against the original).
+> - Thin dark lines on some buildings flicker as the camera moves (two
+>   surfaces at the same depth).
 >
-> If the game crashes or freezes, please send the log.
+> If the game crashes or freezes, please send the log (it is only written
+> with an empty `USRDIR/logson.txt`, see [Troubleshooting](#troubleshooting)).
 
 **No game data is included.** You need a legally purchased copy of GTA
 Liberty City Stories for PS2, converted with the
@@ -158,8 +158,11 @@ and unconverted assets from other games or platforms don't.
 
 ## Troubleshooting
 
-- The log is `USRDIR/res-ps3.log` (the previous one: `res-ps3.old.log`).
-  Send it with any report: it says what the game was doing when it crashed.
+- **The log is off by default** (nothing is written to the disk while you
+  play). To turn it on, create an empty `USRDIR/logson.txt`; the log is then
+  `USRDIR/res-ps3.log` (the previous one: `res-ps3.old.log`). Send it with
+  any report: it says what the game was doing when it crashed. The tests
+  below need it on.
 - A black screen at start: create an empty `USRDIR/notiles.txt` (turns off
   the tiled buffers), and report it.
 - A texture that looks wrong: create an empty `USRDIR/nodxt.txt` (DXT
@@ -171,6 +174,13 @@ and unconverted assets from other games or platforms don't.
 - Buildings popping in or out: an empty `USRDIR/nolodpairs.txt` goes back
   to the game's own rule for the LOD buildings, `USRDIR/noocclusion.txt`
   turns off the occluders. Report which one changes it, with the log.
+- Something not loading, or loading late: an empty `USRDIR/nocdthread.txt`
+  reads the game data on the game's own thread again, and
+  `USRDIR/notxddirect.txt` converts the TXDs' true colour textures the old
+  way. Radio or music that misbehaves when changing stations:
+  `USRDIR/nostreamasync.txt` opens the streams on the game's thread again.
+  Collisions that look wrong: `USRDIR/novmxcol.txt` turns off the AltiVec
+  collision broadphase.
 - Sound or particles that look or sound wrong: an empty
   `USRDIR/nospuaudio.txt` mixes the audio on the PPU again,
   `USRDIR/nospuparticles.txt` builds the particles on the PPU again, and

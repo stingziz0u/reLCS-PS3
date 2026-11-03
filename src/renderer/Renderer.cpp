@@ -310,59 +310,6 @@ static int32 ps3BB[2][PS3BB_NUM];	// [0] this frame, [1] the last one
 #define PS3_BB(r) (ps3BB[0][r]++)
 bool gPS3NoOcclusion;	// USRDIR/noocclusion.txt (Occlusion.cpp)
 
-// patch 35: textures fighting on the road in Harwood (Ren's video): from the
-// last frame's visible list, near the camera, two instances of the same model
-// at the same place (loaded twice) and a LOD drawn with its detailed
-// instance over it. "[overlap]" lines with every "[lod]" report.
-void
-PS3_OverlapReport(void)
-{
-	static CEntity *near[512];
-	int32 n = 0;
-	CVector cam = TheCamera.GetPosition();
-	for(int32 i = 0; i < CRenderer::ms_nNoOfVisibleEntities && n < 512; i++){
-		CEntity *e = CRenderer::ms_aVisibleEntityPtrs[i];
-		if(e && (e->IsBuilding() || e->IsDummy() || e->IsObject()) && (e->GetPosition() - cam).MagnitudeSqr2D() < 150.0f*150.0f)
-			near[n++] = e;
-	}
-	int32 dups = 0, lods = 0;
-	for(int32 i = 0; i < n; i++)
-		for(int32 j = i+1; j < n; j++){
-			CEntity *a = near[i], *b = near[j];
-			int32 ma = a->GetModelIndex(), mb = b->GetModelIndex();
-			const char *what = nil;
-			if(ma == mb){
-				if((a->GetPosition() - b->GetPosition()).MagnitudeSqr() < 0.1f*0.1f){
-					what = "same model at the same place (twice in the world)";
-					dups++;
-				}
-			}else if(ps3LodPairsBuilt && ma >= 0 && mb >= 0 && ma < MODELINFOSIZE && mb < MODELINFOSIZE &&
-			         (ps3LodHigh[ma] == mb || ps3LodHigh[mb] == ma) && a->GetIsTouching(b)){
-				what = "LOD drawn with its detailed model";
-				lods++;
-			}else if(ps3LodPairsBuilt && ma >= 0 && mb >= 0 && ma < MODELINFOSIZE && mb < MODELINFOSIZE){
-				// patch 38: a LOD over another detailed model of its block
-				CEntity *lod = ps3LodHigh[ma] >= 0 ? a : ps3LodHigh[mb] >= 0 ? b : nil;
-				CEntity *hi = lod == a ? b : a;
-				int32 mh = hi->GetModelIndex();
-				if(lod && !hi->bIsBIGBuilding && ps3HasLod[mh] &&
-				   (hi->GetBoundCentre() - lod->GetBoundCentre()).MagnitudeSqr() < lod->GetBoundRadius()*lod->GetBoundRadius()){
-					what = "LOD drawn over a detailed model of its block";
-					lods++;
-				}
-			}
-			if(what && dups + lods <= 8)
-				PS3_Logf("[overlap] %s: %d %s (%s%s) at %.1f %.1f %.1f and %d %s (%s%s) at %.1f %.1f %.1f, %.0f m from the camera",
-				         what, ma, CModelInfo::GetModelInfo(ma)->GetModelName(), a->bIsBIGBuilding ? "big building" : "sector",
-				         a->bDistanceFade ? ", fading" : "", a->GetPosition().x, a->GetPosition().y, a->GetPosition().z,
-				         mb, CModelInfo::GetModelInfo(mb)->GetModelName(), b->bIsBIGBuilding ? "big building" : "sector",
-				         b->bDistanceFade ? ", fading" : "", b->GetPosition().x, b->GetPosition().y, b->GetPosition().z,
-				         (a->GetPosition() - cam).Magnitude2D());
-		}
-	PS3_Logf("[overlap] %d entities drawn within 150 m: %d twice at the same place, %d LODs with their detailed model",
-	         n, dups, lods);
-}
-
 void
 PS3_LodReport(void)
 {
@@ -380,7 +327,6 @@ PS3_LodReport(void)
 	         TheCamera.LODDistMultiplier, CRenderer::ms_lodDistScale,
 	         TheCamera.GetPosition().x, TheCamera.GetPosition().y, TheCamera.GetPosition().z,
 	         gPS3LodPairs ? "" : ", pairs OFF", gPS3NoOcclusion ? ", occlusion OFF" : "");
-	PS3_OverlapReport();
 }
 #define PS3_HI(r) do { if(ps3HasLod[ent->GetModelIndex()]) ps3BB[0][r]++; } while(0)
 #else
@@ -566,18 +512,6 @@ inline bool PutIntoSortedVehicleList(CVehicle *veh)
 }
 
 // this only renders objects in LCS
-#ifdef __PS3__
-bool gPS3SortOpaque;	// patch 46: off until perf.txt shows it worth it
-static int
-PS3_CmpEntityModel(const void *a, const void *b)
-{
-	const CEntity *ea = *(CEntity *const*)a, *eb = *(CEntity *const*)b;
-	int ma = ea->GetModelIndex(), mb = eb->GetModelIndex();
-	if(ma != mb)
-		return ma < mb ? -1 : 1;
-	return ea < eb ? -1 : ea > eb ? 1 : 0;
-}
-#endif
 
 void
 CRenderer::RenderEverythingBarRoads(void)
@@ -591,24 +525,8 @@ CRenderer::RenderEverythingBarRoads(void)
 	SetCullMode(rwCULLMODECULLBACK);
 //	gSortedVehiclesAndPeds.Clear();
 
-#ifdef __PS3__
-	// patch 46 (perf.txt, OPAQUE SORT): the list in model order, so the
-	// instances of a model, and their textures, are drawn one after the
-	// other (fewer texture and state changes). Depth sorts the picture;
-	// only coplanar faces of different models could change who wins.
-	static CEntity *ps3Sorted[NUMVISIBLEENTITIES];
-	CEntity **list = ms_aVisibleEntityPtrs;
-	if(gPS3SortOpaque){
-		memcpy(ps3Sorted, ms_aVisibleEntityPtrs, ms_nNoOfVisibleEntities * sizeof(CEntity*));
-		qsort(ps3Sorted, ms_nNoOfVisibleEntities, sizeof(CEntity*), PS3_CmpEntityModel);
-		list = ps3Sorted;
-	}
-	for(i = 0; i < ms_nNoOfVisibleEntities; i++){
-		e = list[i];
-#else
 	for(i = 0; i < ms_nNoOfVisibleEntities; i++){
 		e = ms_aVisibleEntityPtrs[i];
-#endif
 
 		if(IsRoad(e))
 			continue;

@@ -3127,24 +3127,11 @@ CPed::ProcessControl(void)
 			// (half under the street, the fire on the road) with
 			// SPRINT_TO_AREA ([fire]: state PED_DRIVING, out of the car).
 			// A ped out of its vehicle can't be driving: on foot as
-			// PedSetOutCarCB leaves it. "[state]" says how it got there.
+			// PedSetOutCarCB leaves it.
 			// (not while a vehicle animation runs: a passenger shuffling to
 			// the driver's seat is out of it for that animation)
 			if (!bInVehicle && (m_nPedState == PED_DRIVING || m_nPedState == PED_PASSENGER) && !m_attachedTo &&
 			    !m_pVehicleAnim) {
-				static int stateLogs;
-				if (stateLogs++ < 20) {
-					CVehicle *v = m_pMyVehicle;
-					PS3_Logf("[state] ped %d (%s, created by %d) out of its vehicle but in state %d (last %d), objective %d, "
-					         "on fire %d, at %.1f %.1f %.1f; vehicle %d %s, driver %d, health %.0f, fire %d, status %d, at %.1f %.1f %.1f",
-					         GetModelIndex(), CModelInfo::GetModelInfo(GetModelIndex())->GetModelName(), CharCreatedBy,
-					         m_nPedState, m_nLastPedState, m_objective, m_pFire != nil,
-					         GetPosition().x, GetPosition().y, GetPosition().z,
-					         v ? v->GetModelIndex() : -1, v ? (v->pDriver == this ? "(its driver)" : v->IsPassenger(this) ? "(a passenger)" : "(not in it)") : "none",
-					         v && v->pDriver ? v->pDriver->GetModelIndex() : -1, v ? v->m_fHealth : 0.0f,
-					         v ? v->m_pCarFire != nil : 0, v ? v->GetStatus() : -1,
-					         v ? v->GetPosition().x : 0.0f, v ? v->GetPosition().y : 0.0f, v ? v->GetPosition().z : 0.0f);
-				}
 				m_nPedState = PED_IDLE;
 				m_nLastPedState = PED_NONE;
 				CAnimManager::BlendAnimation(GetClump(), ASSOCGRP_STD, ANIM_STD_IDLE, 1000.0f);
@@ -4317,10 +4304,6 @@ CPed::PedSetOutCarCB(CAnimBlendAssociation *animAssoc, void *arg)
 	}
 
 	ped->bInVehicle = false;
-#ifdef __PS3__
-	CVector ps3Before = ped->GetPosition();
-	bool ps3Moved = false;
-#endif
 	if (veh && (veh->IsCar() || veh->IsBike())) {
 		CWorld::pIgnoreEntity = veh;
 		if (CWorld::TestSphereAgainstWorld(ped->GetPosition() - CVector(0.f, 0.f, 0.2f),
@@ -4330,33 +4313,9 @@ CPed::PedSetOutCarCB(CAnimBlendAssociation *animAssoc, void *arg)
 			|| !CWorld::GetIsLineOfSightClear(veh->GetPosition(), ped->GetPosition(), true, false, false, true, false, false, false)) {
 			CWorld::pIgnoreEntity = nil;
 			ped->PositionPedOutOfCollision();
-#ifdef __PS3__
-			ps3Moved = true;
-#endif
 		}
 		CWorld::pIgnoreEntity = nil;
 	}
-#ifdef __PS3__
-	// patch 44: firefighter: peds that get out of the burning car end up
-	// under the street. Where a ped is put when it gets out, when that is
-	// under the ground ("[exit]" lines)
-	if (!ped->IsPlayer() && veh) {
-		static int exitLines;
-		CVector p = ped->GetPosition();
-		bool found = false;
-		float ground = CWorld::FindGroundZFor3DCoord(p.x, p.y, p.z + 2.0f, &found);
-		if (exitLines < 40 && (found && p.z < ground - 0.8f || ps3Moved && Abs(p.z - ps3Before.z) > 1.0f)) {
-			exitLines++;
-			PS3_Logf("[exit] ped %d (%s, created by %d) out of vehicle %d at %.1f %.1f %.1f (ground %s %.1f)%s from %.1f %.1f %.1f; "
-			         "vehicle at %.1f %.1f %.1f, speed %.3f, up %.2f, on fire %d, state %d",
-			         ped->GetModelIndex(), CModelInfo::GetModelInfo(ped->GetModelIndex())->GetModelName(), ped->CharCreatedBy,
-			         veh->GetModelIndex(), p.x, p.y, p.z, found ? "at" : "not found,", ground,
-			         ps3Moved ? ", moved out of collision" : "", ps3Before.x, ps3Before.y, ps3Before.z,
-			         veh->GetPosition().x, veh->GetPosition().y, veh->GetPosition().z, veh->GetMoveSpeed().Magnitude(),
-			         veh->GetUp().z, veh->m_pCarFire != nil, ped->m_nPedState);
-		}
-	}
-#endif
 
 	if (ped->m_nPedState == PED_EXIT_CAR) {
 		if (ped->m_nPedType == PEDTYPE_COP) {
