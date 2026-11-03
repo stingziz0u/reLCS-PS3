@@ -729,6 +729,11 @@ int8 CRunningScript::ProcessCommands300To399(int32 command)
 	case COMMAND_ADD_ONE_OFF_SOUND:
 	{
 		CollectParameters(&m_nIp, 4);
+#ifdef __PS3__
+		if (PS3_logsOn)	// patch 73: [sfx]
+			PS3_Logf("[sfx] script one-off sound %d (0x%X) at %.0f %.0f %.0f", GET_INTEGER_PARAM(3), GET_INTEGER_PARAM(3),
+				GET_FLOAT_PARAM(0), GET_FLOAT_PARAM(1), GET_FLOAT_PARAM(2));
+#endif
 		switch (GET_INTEGER_PARAM(3)) {
 		case SCRIPT_SOUND_PART_MISSION_COMPLETE:
 			DMAudio.PlayFrontEndSound(SOUND_PART_MISSION_COMPLETE, 0);

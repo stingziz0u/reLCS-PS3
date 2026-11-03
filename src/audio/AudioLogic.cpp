@@ -11882,6 +11882,12 @@ cAudioManager::PreloadMissionAudio(uint8 slot, Const char *name)
 {
 	if (m_bIsInitialised && slot < MISSION_AUDIO_SLOTS) {
 		uint32 missionAudioSfx = FindMissionAudioSfx(name);
+#ifdef __PS3__
+		if (PS3_logsOn)	// patch 73: [sfx]
+			PS3_Logf("[sfx] mission audio slot %u: \"%s\" = sample %u (%u bytes, %u Hz)", slot + 1, name, missionAudioSfx,
+				missionAudioSfx != NO_SAMPLE ? SampleManager.GetSampleLength(missionAudioSfx) * 2 : 0,
+				missionAudioSfx != NO_SAMPLE ? SampleManager.GetSampleBaseFrequency(missionAudioSfx) : 0);
+#endif
 		if (missionAudioSfx != NO_SAMPLE) {
 			m_nMissionAudioSampleIndex[slot] = missionAudioSfx;
 			m_nMissionAudioLoadingStatus[slot] = LOADING_STATUS_NOT_LOADED;

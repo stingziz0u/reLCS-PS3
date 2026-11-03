@@ -5,6 +5,10 @@
 #include "AudioManager.h"
 #include "AudioScriptObject.h"
 #include "sampman.h"
+#ifdef __PS3__
+#include "ps3_platform.h"	// PS3_Logf
+#include "Timer.h"
+#endif
 
 cDMAudio DMAudio;
 
@@ -252,6 +256,19 @@ cDMAudio::ReportCollision(CEntity *entityA, CEntity *entityB, uint8 surfaceTypeA
 void
 cDMAudio::PlayFrontEndSound(uint16 frontend, uint32 volume)
 {
+#ifdef __PS3__
+	// patch 73: [sfx] the sounds the game asks for (logson.txt), to find the
+	// one at the end of a race lap. The same one again within 1 s isn't written
+	if (PS3_logsOn) {
+		static uint16 last = 0xFFFF;
+		static uint32 lastTime;
+		uint32 now = CTimer::GetTimeInMilliseconds();
+		if (frontend != last || now - lastTime > 1000)
+			PS3_Logf("[sfx] frontend sound %u (0x%X)", frontend, frontend);
+		last = frontend;
+		lastTime = now;
+	}
+#endif
 	AudioManager.PlayOneShot(AudioManager.m_nFrontEndEntity, frontend, (float)volume);
 }
 
