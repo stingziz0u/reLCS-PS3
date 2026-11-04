@@ -3156,7 +3156,11 @@ int8 CRunningScript::ProcessCommands100To199(int32 command)
 		script_assert(car);
 		CVector pos = GET_VECTOR_PARAM(1);
 		if (pos.z <= MAP_Z_LOW_LIMIT)
+#ifdef __PS3__
+			PS3_PROF_CALL(PS3_PROF_VEHICLES, "path: ground z of a script's point", pos.z = CWorld::FindGroundZForCoord(pos.x, pos.y));	// patch 79
+#else
 			pos.z = CWorld::FindGroundZForCoord(pos.x, pos.y);
+#endif
 		pos.z += car->GetDistanceFromCentreOfMassToBaseOfModel();
 		uint8 nOldMission = car->AutoPilot.m_nCarMission;
 		if (CCarCtrl::JoinCarWithRoadSystemGotoCoors(car, pos, false))

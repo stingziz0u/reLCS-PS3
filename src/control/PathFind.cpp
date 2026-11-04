@@ -1265,6 +1265,38 @@ CPathFind::FindNodeClosestToCoors(CVector coors, uint8 type, float distLimit, bo
 		break;
 	}
 
+#ifdef __PS3__
+	// res-PS3 patch 79: the same search in the nodes' own units (1/8 m,
+	// int16). Each node's x/8.0f, y/8.0f, z/8.0f was three int -> float
+	// conversions, and the PPU has no direct move from an integer register
+	// to a float one: each goes through memory (a load-hit-store, ~40
+	// cycles). Over every car node, twice per path search, that was most of
+	// the ~0.65 ms of a CAR_GOTO_COORDINATES and the ~0.8 ms of a
+	// GET_CLOSEST_CAR_NODE (Ren's Avenging Angels log: 2000 of them in 10 s,
+	// 1.3 s of script time, frames of 19-22 ms). Only the query point is
+	// rounded to 1/8 m, so a node can win over another only when both are
+	// within 1/16 m of the same distance.
+	PS3_PROF_SCOPE(PS3_PROF_VEHICLES, "path: closest node (FindNodeClosestToCoors)");
+	(void)dist;
+	int32 cx = (int32)floorf(coors.x*8.0f + 0.5f);
+	int32 cy = (int32)floorf(coors.y*8.0f + 0.5f);
+	int32 cz = (int32)floorf(coors.z*8.0f + 0.5f);
+	int32 closestDist8 = 10000*8;
+	for(i = firstNode; i < lastNode; i++){
+		const CPathNode &n = m_pathNodes[i];
+		if(ignoreDisabled && n.bDisabled) continue;
+		if(ignoreBetweenLevels && n.bBetweenLevels) continue;
+		if(ignoreSelected && n.bSelected) continue;
+		if(bWaterPath != n.bWaterPath) continue;
+		int32 dx = n.x - cx, dy = n.y - cy, dz = n.z - cz;
+		int32 d = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy) + 3*(dz < 0 ? -dz : dz);
+		if(d < closestDist8){
+			closestDist8 = d;
+			closestNode = i;
+		}
+	}
+	closestDist = closestDist8 / 8.0f;
+#else
 	for(i = firstNode; i < lastNode; i++){
 		if(ignoreDisabled && m_pathNodes[i].bDisabled) continue;
 		if(ignoreBetweenLevels && m_pathNodes[i].bBetweenLevels) continue;
@@ -1278,6 +1310,7 @@ CPathFind::FindNodeClosestToCoors(CVector coors, uint8 type, float distLimit, bo
 			closestNode = i;
 		}
 	}
+#endif
 	return closestDist < distLimit ? closestNode : -1;
 }
 
@@ -1670,6 +1703,10 @@ void
 CPathFind::DoPathSearch(uint8 type, CVector start, int32 startNodeId, CVector target, CPathNode **nodes, int16 *pNumNodes, int16 maxNumNodes, CVehicle *vehicle, float *pDist, float distLimit, int32 targetNodeId)
 {
 	int i, j;
+#ifdef __PS3__
+	// patch 79: "[prof] vehicles" (includes its two closest-node searches)
+	PS3_PROF_SCOPE(PS3_PROF_VEHICLES, "path: search (DoPathSearch, whole)");
+#endif
 
 	// Find target
 	if(targetNodeId < 0)

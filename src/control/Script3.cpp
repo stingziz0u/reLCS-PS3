@@ -1626,7 +1626,11 @@ int8 CRunningScript::ProcessCommands700To799(int32 command)
 		CollectParameters(&m_nIp, 3);
 		CVector pos = GET_VECTOR_PARAM(0);
 		if (pos.z <= MAP_Z_LOW_LIMIT)
+#ifdef __PS3__
+			PS3_PROF_CALL(PS3_PROF_VEHICLES, "path: ground z of a script's point", pos.z = CWorld::FindGroundZForCoord(pos.x, pos.y));	// patch 79
+#else
 			pos.z = CWorld::FindGroundZForCoord(pos.x, pos.y);
+#endif
 		SET_VECTOR_PARAM(0, ThePaths.FindNodeCoorsForScript(ThePaths.FindNodeClosestToCoors(pos, 0, 800.0f, true, true)));
 		StoreParameters(&m_nIp, 3);
 		return 0;
