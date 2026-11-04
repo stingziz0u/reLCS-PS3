@@ -1,4 +1,5 @@
 #include "common.h"
+#include "Timer.h"
 
 #include "main.h"
 #include "General.h"
@@ -142,10 +143,23 @@ CSimpleModelInfo::SetLodDistances(float *dist)
 void
 CSimpleModelInfo::IncreaseAlpha(void)
 {
+#ifdef __PS3__
+	// patch 82: 16 a frame was LCS's fade at 30 fps (16 frames, ~0.5 s); at
+	// 60 fps it took half as long and models popped in harder. Now 16 per
+	// 30 fps frame (8 at 60).
+	int32 step = (int32)(16.0f*CTimer::GetTimeStepFix() + 0.5f);
+	if(step < 1)
+		step = 1;
+	if(m_alpha >= 0xFF - step)
+		m_alpha = 0xFF;
+	else
+		m_alpha += step;
+#else
 	if(m_alpha >= 0xEF)
 		m_alpha = 0xFF;
 	else
 		m_alpha += 0x10;
+#endif
 }
 
 float
