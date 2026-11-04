@@ -1647,12 +1647,24 @@ CAnimManager::LoadAnimFile(RwStream *stream, bool compress, char (*uncompressedA
 			bool hasTranslation = false;
 			READ_IFP_HEADER(info);
 			bool framesAllocated = false;
+#ifdef __PS3__
+			// patch 89: the phone animations (phone_in/out/talk) are kept
+			// as rotations only. Their bones other than the root carry
+			// LCS's own lengths (head 0.130, forearm 0.295, hand 0.260),
+			// which don't match Toni's skeleton: blending them in and out
+			// stretched and shrank his arm and neck (Ren: head and arm up
+			// and down answering the phone). The translations are read and
+			// dropped; the bones keep the skeleton's own lengths.
+			bool ps3RotOnly = strncasecmp(hier->name, "phone", 5) == 0;
+#else
+			const bool ps3RotOnly = false;
+#endif
 			if(strncmp(info.ident, "KRTS", 4) == 0){
 				hasScale = true;
-				framesAllocated = seq->SetNumFrames(numFrames, true, compressHier);
+				framesAllocated = seq->SetNumFrames(numFrames, !ps3RotOnly, compressHier);
 			}else if(strncmp(info.ident, "KRT0", 4) == 0){
 				hasTranslation = true;
-				framesAllocated = seq->SetNumFrames(numFrames, true, compressHier);
+				framesAllocated = seq->SetNumFrames(numFrames, !ps3RotOnly, compressHier);
 			}else if(strncmp(info.ident, "KR00", 4) == 0){
 				framesAllocated = seq->SetNumFrames(numFrames, false, compressHier);
 			}
@@ -1695,6 +1707,16 @@ CAnimManager::LoadAnimFile(RwStream *stream, bool compress, char (*uncompressedA
 
 					if(!framesAllocated){
 						continue;
+					}else if(ps3RotOnly){
+						if(compressHier){
+							KeyFrameCompressed *kf = (KeyFrameCompressed*)seq->GetKeyFrameCompressed(l);
+							kf->SetRotation(rot);
+							kf->SetTime(fbuf[10]);
+						}else{
+							KeyFrame *kf = (KeyFrame*)seq->GetKeyFrame(l);
+							kf->rotation = rot;
+							kf->deltaTime = fbuf[10];
+						}
 					}else if(compressHier){
 						KeyFrameTransCompressed *kf = (KeyFrameTransCompressed*)seq->GetKeyFrameCompressed(l);
 						kf->SetRotation(rot);
@@ -1717,6 +1739,16 @@ CAnimManager::LoadAnimFile(RwStream *stream, bool compress, char (*uncompressedA
 
 					if(!framesAllocated){
 						continue;
+					}else if(ps3RotOnly){
+						if(compressHier){
+							KeyFrameCompressed *kf = (KeyFrameCompressed*)seq->GetKeyFrameCompressed(l);
+							kf->SetRotation(rot);
+							kf->SetTime(fbuf[7]);
+						}else{
+							KeyFrame *kf = (KeyFrame*)seq->GetKeyFrame(l);
+							kf->rotation = rot;
+							kf->deltaTime = fbuf[7];
+						}
 					}else if(compressHier){
 						KeyFrameTransCompressed *kf = (KeyFrameTransCompressed*)seq->GetKeyFrameCompressed(l);
 						kf->SetRotation(rot);
@@ -1748,6 +1780,14 @@ CAnimManager::LoadAnimFile(RwStream *stream, bool compress, char (*uncompressedA
 				}
 			}
 #ifdef __PS3__
+			// patch 89: phone_in's head turns 20 degrees down and back while
+			// the arm comes up (Ren: not in the PS2 game, which cuts to Toni
+			// with the phone already in his hand). Not bound: the head
+			// stays with the animation under it.
+			if(ps3Phone && framesAllocated && strcasecmp(seq->name, "Head") == 0 && strcasecmp(hier->name, "phone_in") == 0){
+				PS3_Logf("[anim] %s: \"%s\" left out (the head stays still)", hier->name, seq->name);
+				seq->numFrames = 0;
+			}
 			if(ps3Phone && numFrames > 0){
 				ps3Note(numFrames - 1);	// the last frame
 				// the time of the last frame: KR00 has it at 4, the others at 7 / 10
