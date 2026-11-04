@@ -941,6 +941,16 @@ PS3_GameMain(void)
 		PS3_Logf("[5] LOD pairs: %s; occluders: %s", gPS3LodPairs ? "on (nolodpairs.txt turns them off)" : "OFF (nolodpairs.txt)",
 		         gPS3NoOcclusion ? "OFF (noocclusion.txt)" : "on (noocclusion.txt turns them off)");
 	}
+	// patch 90: USRDIR/norenderbounds.txt = visibility by the collision sphere only
+	{
+		extern bool gPS3RenderBounds;	// Entity.cpp
+		FILE *rb = fopen(PS3_USRDIR "/norenderbounds.txt", "rb");
+		if (rb) {
+			fclose(rb);
+			gPS3RenderBounds = false;
+		}
+		PS3_Logf("[5] buildings on screen by: %s", gPS3RenderBounds ? "their drawn geometry when it is bigger than their collision (norenderbounds.txt: collision only)" : "their collision sphere only (norenderbounds.txt)");
+	}
 	// patch 78: USRDIR/weather.txt = always that weather (0-5)
 	{
 		extern int32 gPS3ForceWeather;	// Weather.cpp

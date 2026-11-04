@@ -112,6 +112,16 @@ CSimpleModelInfo::SetAtomic(int n, RpAtomic *atomic)
 	if(GetAnimFileIndex() != -1)
 		CAnimManager::AddAnimBlockRef(GetAnimFileIndex());
 	RpGeometry *geo = RpAtomicGetGeometry(atomic);
+#ifdef __PS3__
+	// patch 90: the biggest of its atomics' geometry spheres
+	if(geo && geo->numMorphTargets > 0){
+		const rw::Sphere &sph = geo->morphTargets[0].boundingSphere;
+		if(sph.radius > m_ps3RenderRadius){
+			m_ps3RenderCentre = CVector(sph.center.x, sph.center.y, sph.center.z);
+			m_ps3RenderRadius = sph.radius;
+		}
+	}
+#endif
 	if(m_ignoreLight)
 		RpGeometrySetFlags(geo, RpGeometryGetFlags(geo) & ~rpGEOMETRYLIGHT);
 /*

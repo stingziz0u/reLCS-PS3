@@ -2171,6 +2171,7 @@ CVehicle::HeliDustGenerate(CEntity *heli, float radius, float ground, int rnd)
 		return;
 
 #ifdef __PS3__
+	PS3_PROF_SCOPE(PS3_PROF_SCENE, "prerender: HeliDustGenerate (heli downwash)");	// patch 90
 	// rnd = dust particles per frame, made for 30 fps (CHeli passes up to 14,
 	// more the shorter the frame). At 60 fps that is twice the particles per
 	// second, twice as many alive (the same lifetime) and twice the overdraw

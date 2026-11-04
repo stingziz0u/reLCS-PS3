@@ -39,6 +39,12 @@ public:
 	uint16  m_isArtistGlass    : 1;
 
 	CSimpleModelInfo *m_relatedModel;
+#ifdef __PS3__
+	// patch 90: the drawn geometry's bounding sphere (model space), for the
+	// visibility of models whose collision sphere doesn't cover it
+	CVector m_ps3RenderCentre = CVector(0.0f, 0.0f, 0.0f);
+	float m_ps3RenderRadius = 0.0f;
+#endif
 
 	static base::cRelocatableChunkClassInfo msClassInfo;
 	static CSimpleModelInfo msClassInstance;

@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"	// PS3_Logf (patch 90)
+#endif
 
 #include "General.h"
 #include "RwHelper.h"
@@ -541,9 +544,61 @@ CEntity::IsVisibleComplex(void)
 	return m_rwObject && bIsVisible && GetIsOnScreenComplex();
 }
 
+#ifdef __PS3__
+// patch 90: a building's collision sphere is what decides if it's on screen,
+// and some of LCS's models draw far outside theirs: the shadow models laid
+// on the roads (NewShad*, Staunton Island) have little or no collision, so
+// they vanished as soon as that small sphere left the screen while the
+// shadow itself was still in view (Ren: shadows that come and go with the
+// camera angle). When the drawn geometry's sphere isn't inside the
+// collision sphere, the geometry's is used. USRDIR/norenderbounds.txt:
+// the collision sphere only (ps3.cpp).
+bool gPS3RenderBounds = true;
+
+static bool
+PS3_RenderSphere(CEntity *e, CVector *centre, float *radius)
+{
+	if(!gPS3RenderBounds || !e->IsBuilding())
+		return false;
+	CBaseModelInfo *bmi = CModelInfo::GetModelInfo(e->GetModelIndex());
+	if(bmi == nil || !bmi->IsSimple())
+		return false;
+	CSimpleModelInfo *mi = (CSimpleModelInfo*)bmi;
+	if(mi->m_ps3RenderRadius <= 0.0f)
+		return false;
+	CColModel *col = bmi->GetColModel();
+	CVector rc = e->GetMatrix() * mi->m_ps3RenderCentre;
+	if(col){
+		CVector cc = e->GetBoundCentre();
+		float cr = col->boundingSphere.radius;
+		if((rc - cc).Magnitude() + mi->m_ps3RenderRadius <= cr + 0.25f)
+			return false;	// inside its collision sphere: as the game
+	}
+	static uint8 logged[MODELINFOSIZE];
+	static int32 numLogged;
+	int32 id = e->GetModelIndex();
+	if(PS3_logsOn && id >= 0 && id < MODELINFOSIZE && !logged[id] && numLogged < 40){
+		logged[id] = 1;
+		numLogged++;
+		PS3_Logf("[bound] %s: drawn %.1f m around (%.1f %.1f %.1f), collision sphere %.1f m: on screen by the drawn one",
+		         bmi->GetModelName(), mi->m_ps3RenderRadius, mi->m_ps3RenderCentre.x, mi->m_ps3RenderCentre.y,
+		         mi->m_ps3RenderCentre.z, col ? col->boundingSphere.radius : -1.0f);
+	}
+	*centre = rc;
+	*radius = mi->m_ps3RenderRadius;
+	return true;
+}
+#endif
+
 bool
 CEntity::GetIsOnScreen(void)
 {
+#ifdef __PS3__
+	CVector c;
+	float r;
+	if(PS3_RenderSphere(this, &c, &r))
+		return TheCamera.IsSphereVisible(c, r);
+#endif
 	return TheCamera.IsSphereVisible(GetBoundCentre(), GetBoundRadius());
 }
 
@@ -556,6 +611,15 @@ CEntity::GetIsOnScreenComplex(void)
 	CVector boundBox[8];
 #endif
 
+#ifdef __PS3__
+	{
+		// patch 90: the drawn geometry's sphere (see GetIsOnScreen)
+		CVector c;
+		float r;
+		if(PS3_RenderSphere(this, &c, &r))
+			return TheCamera.IsSphereVisible(c, r);
+	}
+#endif
 	if(TheCamera.IsPointVisible(GetBoundCentre(), &TheCamera.GetCameraMatrix()))
 		return true;
 
