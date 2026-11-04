@@ -705,6 +705,16 @@ int8 CRunningScript::ProcessCommands1400To1499(int32 command)
 		}
 		SET_INTEGER_PARAM(0, model);
 		StoreParameters(&m_nIp, 1);
+#ifdef __PS3__
+		// patch 77: the return was missing: the command went on into
+		// IS_PLAYER_USING_FIRST_PERSON_WEAPON_CAMERA, which read the next
+		// command's first byte as its parameter. The script then read the
+		// bytes from there as commands (wrong ones, "invalid bytes") and was
+		// stopped: Avenging Angels' gang member script ("ang", main.scm 237344:
+		// what weapon is on the ground where a gang member stands) stopped
+		// and the mission couldn't go on (the kills weren't counted any more)
+		return 0;
+#endif
 	}
 	case COMMAND_IS_PLAYER_USING_FIRST_PERSON_WEAPON_CAMERA:
 		CollectParameters(&m_nIp, 1);

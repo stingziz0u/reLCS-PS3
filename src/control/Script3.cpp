@@ -889,6 +889,9 @@ int8 CRunningScript::ProcessCommands500To599(int32 command)
 		return 0;
 	case COMMAND_RESTORE_WEATHER:
 		CWeather::RestoreWeatherState();
+#ifdef __PS3__
+		return 0;	// patch 77: it went on into STORE_CLOCK (the clock stored again)
+#endif
 	case COMMAND_STORE_CLOCK:
 		CClock::StoreClock();
 		return 0;
