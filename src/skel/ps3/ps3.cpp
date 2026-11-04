@@ -941,6 +941,18 @@ PS3_GameMain(void)
 		PS3_Logf("[5] LOD pairs: %s; occluders: %s", gPS3LodPairs ? "on (nolodpairs.txt turns them off)" : "OFF (nolodpairs.txt)",
 		         gPS3NoOcclusion ? "OFF (noocclusion.txt)" : "on (noocclusion.txt turns them off)");
 	}
+	// patch 78: USRDIR/weather.txt = always that weather (0-5)
+	{
+		extern int32 gPS3ForceWeather;	// Weather.cpp
+		FILE *wf = fopen(PS3_USRDIR "/weather.txt", "rb");
+		if (wf) {
+			int w = -1;
+			if (fscanf(wf, "%d", &w) == 1 && w >= 0 && w <= 5)	// WEATHER_SUNNY..WEATHER_HURRICANE
+				gPS3ForceWeather = w;
+			fclose(wf);
+		}
+		PS3_Logf("[5] weather: %s%d", gPS3ForceWeather >= 0 ? "always " : "the game's (weather.txt with 0-5 forces one) ", gPS3ForceWeather);
+	}
 #endif
 
 	openParams.width = PS3_SCREEN_WIDTH;

@@ -9,6 +9,9 @@
 #include "CutsceneMgr.h"
 #include "FileMgr.h"
 #include "Timecycle.h"
+#ifdef __PS3__
+#include "ps3_platform.h"	// PS3_Logf (patch 78)
+#endif
 
 uint8 CTimeCycle::m_nAmbientRed[NUMHOURS][NUMWEATHERS];
 uint8 CTimeCycle::m_nAmbientGreen[NUMHOURS][NUMWEATHERS];
@@ -222,6 +225,15 @@ CTimeCycle::Initialise(void)
 
 	line[0] = '\0';
 	bi = 0;
+#ifdef __PS3__
+	// patch 78: how TIMECYC.DAT read, per weather ("[tcyc]"): buildings went
+	// black in some weathers, and that colour comes from here (the Leeds
+	// pipeline multiplies the prelight by this ambient)
+	int ps3BadLines[NUMWEATHERS] = { 0 }, ps3FirstBad[NUMWEATHERS];
+	int ps3LastGood = 0;
+	for(w = 0; w < NUMWEATHERS; w++)
+		ps3FirstBad[w] = -1;
+#endif
 	for(w = 0; w < NUMWEATHERS; w++)
 		for(h = 0; h < NUMHOURS; h++){
 			li = 0;
@@ -240,6 +252,9 @@ CTimeCycle::Initialise(void)
 			line[li] = '\0';
 			bi++;
 
+#ifdef __PS3__
+			int ps3Read =
+#endif
 			sscanf(line, "%d %d %d  %d %d %d  %d %d %d  %d %d %d "
 			             "%d %d %d  %d %d %d  %d %d %d "
 			             "%d %d %d  %d %d %d  %f %f %f %d %d %d %f %f %f "
@@ -261,6 +276,13 @@ CTimeCycle::Initialise(void)
 				 &fluffyBotR, &fluffyBotG, &fluffyBotB,
 				 &blurR, &blurG, &blurB,
 				 &waterR, &waterG, &waterB, &waterA);
+#ifdef __PS3__
+			if(ps3Read != 52){
+				if(ps3BadLines[w]++ == 0)
+					ps3FirstBad[w] = h;
+			}else
+				ps3LastGood = w*NUMHOURS + h + 1;
+#endif
 
 			tmp_nAmbientRed[h][w] = ambR;
 			tmp_nAmbientGreen[h][w] = ambG;
@@ -329,6 +351,26 @@ CTimeCycle::Initialise(void)
 		}
 
 	UpdateArrays();
+
+#ifdef __PS3__
+	PS3_Logf("[tcyc] TIMECYC.DAT: %d of %d lines read whole (52 values)", ps3LastGood, NUMWEATHERS*NUMHOURS);
+	for(w = 0; w < NUMWEATHERS; w++){
+		if(ps3BadLines[w])
+			PS3_Logf("[tcyc]   weather %d: %d lines short (first at hour %d): they keep the values of the line before", w, ps3BadLines[w], ps3FirstBad[w]);
+		// what the buildings get: ambient (Leeds), ambient of objects, far clip, fog start
+		PS3_Logf("[tcyc]   weather %d at 0/6/12/18 h: amb %d,%d,%d %d,%d,%d %d,%d,%d %d,%d,%d; obj %d,%d,%d %d,%d,%d; dir %d,%d,%d; far %d %d %d %d, fog %d %d %d %d",
+		         w,
+		         m_nAmbientRed[0][w], m_nAmbientGreen[0][w], m_nAmbientBlue[0][w],
+		         m_nAmbientRed[6][w], m_nAmbientGreen[6][w], m_nAmbientBlue[6][w],
+		         m_nAmbientRed[12][w], m_nAmbientGreen[12][w], m_nAmbientBlue[12][w],
+		         m_nAmbientRed[18][w], m_nAmbientGreen[18][w], m_nAmbientBlue[18][w],
+		         m_nAmbientRed_Obj[12][w], m_nAmbientGreen_Obj[12][w], m_nAmbientBlue_Obj[12][w],
+		         m_nAmbientRed_Obj[0][w], m_nAmbientGreen_Obj[0][w], m_nAmbientBlue_Obj[0][w],
+		         m_nDirectionalRed[12][w], m_nDirectionalGreen[12][w], m_nDirectionalBlue[12][w],
+		         m_fFarClip[0][w], m_fFarClip[6][w], m_fFarClip[12][w], m_fFarClip[18][w],
+		         m_fFogStart[0][w], m_fFogStart[6][w], m_fFogStart[12][w], m_fFogStart[18][w]);
+	}
+#endif
 
 	m_FogReduction = 0;
 

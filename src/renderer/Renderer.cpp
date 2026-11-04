@@ -19,6 +19,7 @@
 #include "Collision.h"
 #include "VisibilityPlugins.h"
 #include "Clock.h"
+#include "Weather.h"
 #include "World.h"
 #include "Camera.h"
 #include "ModelIndices.h"
@@ -273,6 +274,19 @@ PS3_MarkHighDrawn(CEntity *ent)
 	v.n++;
 }
 
+// What the LOD buildings did on the last frame, for "[lod]" every 10 s
+// (patch 78: and why the ones that hid for their detailed model did)
+enum {
+	PS3BB_VISIBLE, PS3BB_FADING, PS3BB_DRAWLAST, PS3BB_HIGH_DRAWN, PS3BB_KEPT,
+	PS3BB_OFFSCREEN, PS3BB_OCCLUDED, PS3BB_HIDDEN, PS3BB_TOOFAR, PS3BB_STREAM,
+	PS3BB_TIME, PS3BB_AREA, PS3BB_PLANE,
+	PS3HI_VISIBLE, PS3HI_FADING, PS3HI_OFFSCREEN, PS3HI_OCCLUDED, PS3HI_NOTLOADED,
+	PS3BB_HIDE_UNPAIRED, PS3BB_HIDE_MANY,
+	PS3BB_NUM
+};
+static int32 ps3BB[2][PS3BB_NUM];	// [0] this frame, [1] the last one
+#define PS3_BB(r) (ps3BB[0][r]++)
+
 // may this LOD hide? (its detailed model is loaded and faded in)
 static bool
 PS3_LodMayHide(CEntity *lod)
@@ -280,13 +294,17 @@ PS3_LodMayHide(CEntity *lod)
 	if(!gPS3LodPairs || !ps3LodPairsBuilt)
 		return true;
 	int32 id = lod->GetModelIndex();
-	if(id < 0 || id >= MODELINFOSIZE || ps3LodHigh[id] < 0)
+	if(id < 0 || id >= MODELINFOSIZE || ps3LodHigh[id] < 0){
+		ps3BB[0][PS3BB_HIDE_UNPAIRED]++;	// patch 78
 		return true;	// not paired: the game's rule
+	}
 	PS3VisibleHigh &v = ps3VisHigh[ps3LodHigh[id]];
 	if(v.frame != ps3VisFrame || v.n == 0)
 		return PS3_HighDrawnInside(lod);
-	if(v.n > 4)
+	if(v.n > 4){
+		ps3BB[0][PS3BB_HIDE_MANY]++;	// patch 78
 		return true;	// many instances of the model: as the game
+	}
 	for(int32 i = 0; i < v.n; i++){
 		CEntity *e = v.ent[i];
 		// LOD and detailed instance often have different pivots: their
@@ -298,17 +316,110 @@ PS3_LodMayHide(CEntity *lod)
 	return PS3_HighDrawnInside(lod);
 }
 
-// What the LOD buildings did on the last frame, for "[lod]" every 10 s
-enum {
-	PS3BB_VISIBLE, PS3BB_FADING, PS3BB_DRAWLAST, PS3BB_HIGH_DRAWN, PS3BB_KEPT,
-	PS3BB_OFFSCREEN, PS3BB_OCCLUDED, PS3BB_HIDDEN, PS3BB_TOOFAR, PS3BB_STREAM,
-	PS3BB_TIME, PS3BB_AREA, PS3BB_PLANE,
-	PS3HI_VISIBLE, PS3HI_FADING, PS3HI_OFFSCREEN, PS3HI_OCCLUDED, PS3HI_NOTLOADED,
-	PS3BB_NUM
-};
-static int32 ps3BB[2][PS3BB_NUM];	// [0] this frame, [1] the last one
-#define PS3_BB(r) (ps3BB[0][r]++)
 bool gPS3NoOcclusion;	// USRDIR/noocclusion.txt (Occlusion.cpp)
+
+// ---- patch 78: buildings black in some weathers (diagnostic) ----------------------
+//
+// Ren: in some weathers some buildings go completely black; his rain video
+// has a flat dark shape where a block of buildings later pops in. What a
+// building is drawn with depends on the weather only through the time cycle
+// (ambient, far clip, fog), so "[weather]" says what the time cycle gives
+// right now, and "[dark]" names the buildings drawn in the last 10 s that
+// can only come out black: prelight (nearly) black, no prelight and no
+// normals or lighting, or a textured mesh without its texture.
+
+void
+PS3_WeatherReport(void)
+{
+	PS3_Logf("[weather] %d -> %d (%.2f), %02d:%02d, rain %.2f, fog %.2f, extra colour %s%d (%.2f); "
+	         "ambient %.2f %.2f %.2f, objects %.2f %.2f %.2f, directional %.2f %.2f %.2f; "
+	         "sky %d %d %d / %d %d %d, fog colour %d %d %d, far clip %.0f, fog start %.0f",
+	         CWeather::OldWeatherType, CWeather::NewWeatherType, CWeather::InterpolationValue,
+	         CClock::GetHours(), CClock::GetMinutes(), CWeather::Rain, CWeather::Foggyness,
+	         CTimeCycle::m_bExtraColourOn ? "on " : "off ", CTimeCycle::m_ExtraColour, CTimeCycle::m_ExtraColourInter,
+	         CTimeCycle::GetAmbientRed(), CTimeCycle::GetAmbientGreen(), CTimeCycle::GetAmbientBlue(),
+	         CTimeCycle::GetAmbientRed_Obj(), CTimeCycle::GetAmbientGreen_Obj(), CTimeCycle::GetAmbientBlue_Obj(),
+	         CTimeCycle::GetDirectionalRed(), CTimeCycle::GetDirectionalGreen(), CTimeCycle::GetDirectionalBlue(),
+	         CTimeCycle::GetSkyTopRed(), CTimeCycle::GetSkyTopGreen(), CTimeCycle::GetSkyTopBlue(),
+	         CTimeCycle::GetSkyBottomRed(), CTimeCycle::GetSkyBottomGreen(), CTimeCycle::GetSkyBottomBlue(),
+	         CTimeCycle::GetFogRed(), CTimeCycle::GetFogGreen(), CTimeCycle::GetFogBlue(),
+	         CTimeCycle::GetFarClip(), CTimeCycle::GetFogStart());
+}
+
+enum { PS3DARK_UNKNOWN, PS3DARK_OK, PS3DARK_PRELIT, PS3DARK_UNLIT, PS3DARK_NOTEX };
+static const char *ps3DarkWhy[] = { "?", "ok", "prelight nearly black", "no prelight, no normals or lighting", "textured mesh without its texture" };
+struct PS3DarkSeen { int16 model; uint8 why; uint8 lod; int16 prelit; float dist; };
+static PS3DarkSeen ps3DarkSeen[16];
+static int32 ps3NumDarkSeen, ps3DarkDrawn, ps3BuildingsDrawn;
+static uint8 ps3DarkClass[MODELINFOSIZE];	// 0 = not looked at yet
+
+// what this building's geometry can give, worked out once per model
+static int32
+PS3_ClassifyBuilding(RpAtomic *atomic, int32 *prelitAvg)
+{
+	rw::Geometry *g = atomic->geometry;
+	*prelitAvg = -1;
+	if(g == nil)
+		return PS3DARK_UNKNOWN;
+	for(int32 i = 0; i < g->matList.numMaterials; i++){
+		rw::Material *m = g->matList.materials[i];
+		if((g->flags & rw::Geometry::TEXTURED) && m && (m->texture == nil || m->texture->raster == nil))
+			return PS3DARK_NOTEX;
+	}
+	if(g->flags & rw::Geometry::PRELIT){
+		if(g->colors == nil || g->numVertices == 0)
+			return PS3DARK_UNKNOWN;
+		uint32 sum = 0;
+		for(int32 i = 0; i < g->numVertices; i++)
+			sum += g->colors[i].red + g->colors[i].green + g->colors[i].blue;
+		*prelitAvg = sum / (3*g->numVertices);
+		return *prelitAvg < 12 ? PS3DARK_PRELIT : PS3DARK_OK;
+	}
+	if(!(g->flags & rw::Geometry::NORMALS) || !(g->flags & rw::Geometry::LIGHT))
+		return PS3DARK_UNLIT;
+	return PS3DARK_OK;
+}
+
+static void
+PS3_NoteBuildingDrawn(CEntity *e)
+{
+	int32 id = e->GetModelIndex();
+	if(id < 0 || id >= MODELINFOSIZE || e->m_rwObject == nil)
+		return;
+	ps3BuildingsDrawn++;
+	int32 prelit = -1;
+	if(ps3DarkClass[id] == 0)
+		ps3DarkClass[id] = 1 + PS3_ClassifyBuilding((RpAtomic*)e->m_rwObject, &prelit);
+	int32 why = ps3DarkClass[id] - 1;
+	if(why == PS3DARK_OK || why == PS3DARK_UNKNOWN)
+		return;
+	ps3DarkDrawn++;
+	for(int32 i = 0; i < ps3NumDarkSeen; i++)
+		if(ps3DarkSeen[i].model == id)
+			return;
+	if(ps3NumDarkSeen < (int32)ARRAY_SIZE(ps3DarkSeen)){
+		PS3DarkSeen &d = ps3DarkSeen[ps3NumDarkSeen++];
+		d.model = id;
+		d.why = why;
+		d.lod = e->bIsBIGBuilding;
+		d.prelit = prelit;
+		d.dist = (e->GetPosition() - TheCamera.GetPosition()).Magnitude();
+	}
+}
+
+void
+PS3_DarkReport(void)
+{
+	PS3_Logf("[dark] in 10 s: %d building draws, %d of them of a model that can only come out dark; %d models%s",
+	         ps3BuildingsDrawn, ps3DarkDrawn, ps3NumDarkSeen, ps3NumDarkSeen ? ":" : "");
+	for(int32 i = 0; i < ps3NumDarkSeen; i++){
+		PS3DarkSeen &d = ps3DarkSeen[i];
+		CBaseModelInfo *mi = CModelInfo::GetModelInfo(d.model);
+		PS3_Logf("[dark]   %d %s (%s) at %.0f m: %s%s", d.model, mi ? mi->GetModelName() : "?", d.lod ? "LOD" : "detailed",
+		         d.dist, ps3DarkWhy[d.why], d.why == PS3DARK_PRELIT ? (d.prelit == 0 ? " (all 0)" : " (average under 12)") : "");
+	}
+	ps3NumDarkSeen = ps3DarkDrawn = ps3BuildingsDrawn = 0;
+}
 
 void
 PS3_LodReport(void)
@@ -327,6 +438,10 @@ PS3_LodReport(void)
 	         TheCamera.LODDistMultiplier, CRenderer::ms_lodDistScale,
 	         TheCamera.GetPosition().x, TheCamera.GetPosition().y, TheCamera.GetPosition().z,
 	         gPS3LodPairs ? "" : ", pairs OFF", gPS3NoOcclusion ? ", occlusion OFF" : "");
+	PS3_Logf("[lod]   hidden for their detailed model by the game's rule: not paired %d, model with more than 4 instances drawn %d",
+	         c[PS3BB_HIDE_UNPAIRED], c[PS3BB_HIDE_MANY]);
+	PS3_WeatherReport();
+	PS3_DarkReport();
 }
 #define PS3_HI(r) do { if(ps3HasLod[ent->GetModelIndex()]) ps3BB[0][r]++; } while(0)
 #else
@@ -348,6 +463,10 @@ CRenderer::RenderOneRoad(CEntity *e)
 	{
 		PUSH_RENDERGROUP(CModelInfo::GetModelInfo(e->GetModelIndex())->GetModelName());
 
+#ifdef __PS3__
+		if(PS3_logsOn)
+			PS3_NoteBuildingDrawn(e);	// patch 78: "[dark]"
+#endif
 		e->Render();
 
 		POP_RENDERGROUP();
@@ -444,6 +563,10 @@ CRenderer::RenderOneNonRoad(CEntity *e)
 		SetCullMode(rwCULLMODECULLNONE);
 		PS3_CRUMB("render vehicle: the vehicle", e->GetModelIndex());
 	}
+#ifdef __PS3__
+	if(PS3_logsOn && e->IsBuilding())
+		PS3_NoteBuildingDrawn(e);	// patch 78: "[dark]"
+#endif
 	e->Render();
 
 	if(e->IsVehicle()){

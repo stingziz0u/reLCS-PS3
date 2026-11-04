@@ -3,6 +3,10 @@
 #include "Weather.h"
 #ifdef __PS3__
 int32 gPS3FxOff;	// autotest rain mode: 1 streaks, 2 drops on the screen, 4 splashes, 8 particles, 16 blur
+// patch 78: USRDIR/weather.txt with a number (0 sunny, 1 cloudy, 2 rainy,
+// 3 foggy, 4 extra sunny, 5 hurricane): always that weather, to look at the
+// black buildings without waiting for it (ps3.cpp reads it)
+int32 gPS3ForceWeather = -1;
 #endif
 
 
@@ -165,6 +169,12 @@ void CWeather::Update(void)
 		}
 		InterpolationValue = fNewInterpolation;
 	}
+#ifdef __PS3__
+	if(gPS3ForceWeather >= 0){
+		ForcedWeatherType = gPS3ForceWeather;
+		OldWeatherType = NewWeatherType = gPS3ForceWeather;
+	}
+#endif
 
 #ifndef FINAL
 	if (CPad::GetPad(1)->GetRightShockJustDown()) {
