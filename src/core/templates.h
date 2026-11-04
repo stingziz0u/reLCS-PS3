@@ -292,6 +292,16 @@ public:
 	}
 	CLink<T> *InsertSorted(T const &item){
 		CLink<T> *sort;
+#ifdef __PS3__
+		// patch 92: the same order, walked from the closer end (the alpha
+		// building list is now 800 long)
+		if(tail.prev != &head && item.sort > 0.5f*(head.next->item.sort + tail.prev->item.sort)){
+			for(sort = tail.prev; sort != &head; sort = sort->prev)
+				if(sort->item.sort < item.sort)
+					break;
+			sort = sort->next;
+		}else
+#endif
 		for(sort = head.next; sort != &tail; sort = sort->next)
 			if(sort->item.sort >= item.sort)
 				break;

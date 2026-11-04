@@ -357,20 +357,33 @@ enum Visbility
 	VIS_STREAMME
 };
 
-// ---- patch 91: the road shadows of Staunton (NewShad*) that come and go -------------
+// ---- patch 91/92: the road shadows of Staunton that come and go -------------
 //
-// Patch 90 wasn't it: no NewShad model drew outside its collision sphere
-// ([bound]). "[shad]" says, per frame, what happened to the NewShad*
-// buildings within 80 m of the camera: drawn, not scanned at all (their
-// sector outside the scan), off screen, occluded (COcclusion), invisible,
-// or not loaded. USRDIR/noocclusion.txt is the A/B for the occluders.
-#define PS3_MAX_SHAD 160
+// "[shad]" says, per frame, what happened to the shadow buildings (model
+// name with "shad" in it: NewShad*, pm_treeshad_*, ...) within 80 m of the
+// camera: drawn, not scanned at all (their sector outside the scan), off
+// screen, occluded (COcclusion), invisible, not loaded, or dropped because
+// the sorted alpha list was full (patch 92). Patch 91 looked for NewShad*
+// only, and none of those was near: Ren's are pm_treeshad_* ([dark]).
+#define PS3_MAX_SHAD 512
 static CEntity *ps3Shad[PS3_MAX_SHAD];
 static int32 ps3NumShad = -1;	// -1: not looked for yet
 static uint8 ps3IsShadModel[MODELINFOSIZE];
 static uint32 ps3ShadFrame[PS3_MAX_SHAD];
 static uint8 ps3ShadWhy[PS3_MAX_SHAD];
-enum { PS3SH_DRAWN, PS3SH_NOTSCANNED, PS3SH_OFFSCREEN, PS3SH_OCCLUDED, PS3SH_INVISIBLE, PS3SH_NOTLOADED, PS3SH_NUM };
+enum { PS3SH_DRAWN, PS3SH_NOTSCANNED, PS3SH_OFFSCREEN, PS3SH_OCCLUDED, PS3SH_INVISIBLE, PS3SH_NOTLOADED, PS3SH_ALPHALOST, PS3SH_NUM };
+extern int32 gPS3AlphaBldUsed, gPS3AlphaBldPeak, gPS3AlphaBldLost, gPS3AlphaEntUsed, gPS3AlphaEntPeak, gPS3AlphaEntLost;	// VisibilityPlugins.cpp
+extern CEntity *gPS3AlphaLastLost;
+static uint32 ps3AlphaFrames, ps3AlphaFullFrames, ps3AlphaLastBldLost;
+
+static bool
+PS3_IsShadName(const char *n)
+{
+	for(; *n; n++)
+		if(strncasecmp(n, "shad", 4) == 0)
+			return true;
+	return false;
+}
 static uint32 ps3ShadCount[PS3SH_NUM], ps3ShadFrames;
 
 static void
@@ -379,7 +392,7 @@ PS3_ShadFind(void)
 	ps3NumShad = 0;
 	for(int32 i = 0; i < MODELINFOSIZE; i++){
 		CBaseModelInfo *mi = CModelInfo::GetModelInfo(i);
-		ps3IsShadModel[i] = mi && strncasecmp(mi->GetModelName(), "newshad", 7) == 0;
+		ps3IsShadModel[i] = mi && PS3_IsShadName(mi->GetModelName());
 	}
 	CBuildingPool *pool = CPools::GetBuildingPool();
 	for(int32 i = 0; pool && i < pool->GetSize() && ps3NumShad < PS3_MAX_SHAD; i++){
@@ -387,7 +400,10 @@ PS3_ShadFind(void)
 		if(b && ps3IsShadModel[b->GetModelIndex()])
 			ps3Shad[ps3NumShad++] = b;
 	}
-	PS3_Logf("[shad] %d NewShad* buildings", ps3NumShad);
+	int32 nm = 0;
+	for(int32 i = 0; i < MODELINFOSIZE; i++)
+		nm += ps3IsShadModel[i];
+	PS3_Logf("[shad] %d shadow buildings (%d models with \"shad\" in the name)", ps3NumShad, nm);
 }
 
 // after SetupEntityVisibility in the sector scans
@@ -399,7 +415,10 @@ PS3_ShadNoteVis(CEntity *ent, int vis)
 	for(int32 i = 0; i < ps3NumShad; i++)
 		if(ps3Shad[i] == ent){
 			ps3ShadFrame[i] = ps3VisFrame;
-			if(vis == VIS_VISIBLE)
+			if(gPS3AlphaLastLost == ent){
+				ps3ShadWhy[i] = PS3SH_ALPHALOST;
+				gPS3AlphaLastLost = nil;
+			}else if(vis == VIS_VISIBLE)
 				ps3ShadWhy[i] = PS3SH_DRAWN;
 			else if(vis == VIS_STREAMME)
 				ps3ShadWhy[i] = PS3SH_NOTLOADED;
@@ -419,6 +438,10 @@ PS3_ShadEndFrame(void)
 {
 	if(!PS3_logsOn)
 		return;
+	ps3AlphaFrames++;
+	if(gPS3AlphaBldLost != ps3AlphaLastBldLost)
+		ps3AlphaFullFrames++;
+	ps3AlphaLastBldLost = gPS3AlphaBldLost;
 	if(ps3NumShad < 0){
 		if(CPools::GetBuildingPool())
 			PS3_ShadFind();
@@ -439,12 +462,20 @@ PS3_ShadEndFrame(void)
 static void
 PS3_ShadReport(void)
 {
+	if(ps3AlphaFrames){
+		PS3_Logf("[alpha] sorted lists in %u frames: buildings peak %d of %d, full in %u frames, %.1f dropped per frame | others peak %d of %d, %.1f dropped per frame",
+		         ps3AlphaFrames, gPS3AlphaBldPeak, NUMALPHAENTITYLIST*4, ps3AlphaFullFrames, gPS3AlphaBldLost/(float)ps3AlphaFrames,
+		         gPS3AlphaEntPeak, NUMALPHAENTITYLIST*3, gPS3AlphaEntLost/(float)ps3AlphaFrames);
+		gPS3AlphaBldPeak = gPS3AlphaEntPeak = gPS3AlphaBldLost = gPS3AlphaEntLost = 0;
+		ps3AlphaLastBldLost = 0;
+		ps3AlphaFrames = ps3AlphaFullFrames = 0;
+	}
 	if(ps3ShadFrames == 0)
 		return;
 	float f = (float)ps3ShadFrames;
-	PS3_Logf("[shad] NewShad* within 80 m, per frame (%u frames): drawn %.1f, not scanned %.1f, off screen %.1f, occluded %.1f, invisible %.1f, not loaded %.1f",
+	PS3_Logf("[shad] shadow buildings within 80 m, per frame (%u frames): drawn %.1f, not scanned %.1f, off screen %.1f, occluded %.1f, invisible %.1f, not loaded %.1f, alpha list full %.1f",
 	         ps3ShadFrames, ps3ShadCount[PS3SH_DRAWN]/f, ps3ShadCount[PS3SH_NOTSCANNED]/f, ps3ShadCount[PS3SH_OFFSCREEN]/f,
-	         ps3ShadCount[PS3SH_OCCLUDED]/f, ps3ShadCount[PS3SH_INVISIBLE]/f, ps3ShadCount[PS3SH_NOTLOADED]/f);
+	         ps3ShadCount[PS3SH_OCCLUDED]/f, ps3ShadCount[PS3SH_INVISIBLE]/f, ps3ShadCount[PS3SH_NOTLOADED]/f, ps3ShadCount[PS3SH_ALPHALOST]/f);
 	memset(ps3ShadCount, 0, sizeof(ps3ShadCount));
 	ps3ShadFrames = 0;
 }

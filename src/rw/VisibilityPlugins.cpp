@@ -81,7 +81,18 @@ CVisibilityPlugins::Initialise(void)
 //	m_alphaUnderwaterEntityList.tail.item.sort = 100000000.0f;
 
 #ifdef NEW_RENDERER
+#ifdef __PS3__
+	// patch 92: 200 like the PC default, but the entity list above already
+	// got x3 for wide FOVs and the PS3 draws further (LOD x1.36). In a park
+	// (trees, fences, the road shadows pm_treeshad_*) or from a heli the
+	// list fills up; a building that doesn't fit is silently dropped: a
+	// drawLast one (the road shadows) vanishes, a fading one pops in when
+	// its fade ends. The order it's filled in is the sector scan order, so
+	// what gets dropped depends on the camera angle.
+	m_alphaBuildingList.Init(NUMALPHAENTITYLIST * 4);
+#else
 	m_alphaBuildingList.Init(NUMALPHAENTITYLIST);
+#endif
 	m_alphaBuildingList.head.item.sort = 0.0f;
 	m_alphaBuildingList.tail.item.sort = 100000000.0f;
 #endif
@@ -119,9 +130,18 @@ CVisibilityPlugins::Shutdown(void)
 #endif
 }
 
+#ifdef __PS3__
+// patch 92: fill of the sorted lists, for the "[alpha]" log line
+int32 gPS3AlphaBldUsed, gPS3AlphaBldPeak, gPS3AlphaBldLost, gPS3AlphaEntUsed, gPS3AlphaEntPeak, gPS3AlphaEntLost;
+CEntity *gPS3AlphaLastLost;
+#endif
+
 void
 CVisibilityPlugins::InitAlphaEntityList(void)
 {
+#ifdef __PS3__
+	gPS3AlphaBldUsed = gPS3AlphaEntUsed = 0;
+#endif
 	m_alphaEntityList.Clear();
 //	m_alphaBoatAtomicList.Clear();
 //	m_alphaUnderwaterEntityList.Clear();
@@ -140,6 +160,26 @@ CVisibilityPlugins::InsertEntityIntoSortedList(CEntity *e, float dist)
 	AlphaObjectInfo item;
 	item.entity = e;
 	item.sort = dist;
+#ifdef __PS3__
+	bool ps3Bld = false;
+	CLink<AlphaObjectInfo> *ps3Node;
+#ifdef NEW_RENDERER
+	if(!gbPreviewCity && e->IsBuilding()){
+		ps3Bld = true;
+		ps3Node = m_alphaBuildingList.InsertSorted(item);
+	}else
+#endif
+		ps3Node = m_alphaEntityList.InsertSorted(item);
+	if(ps3Node == nil){
+		if(ps3Bld) gPS3AlphaBldLost++; else gPS3AlphaEntLost++;
+		gPS3AlphaLastLost = e;
+	}else if(ps3Bld){
+		if(++gPS3AlphaBldUsed > gPS3AlphaBldPeak) gPS3AlphaBldPeak = gPS3AlphaBldUsed;
+	}else{
+		if(++gPS3AlphaEntUsed > gPS3AlphaEntPeak) gPS3AlphaEntPeak = gPS3AlphaEntUsed;
+	}
+	return ps3Node != nil;
+#else
 #ifdef NEW_RENDERER
 	if(!gbPreviewCity && e->IsBuilding())
 		return !!m_alphaBuildingList.InsertSorted(item);
@@ -147,6 +187,7 @@ CVisibilityPlugins::InsertEntityIntoSortedList(CEntity *e, float dist)
 //	if(e->bUnderwater && m_alphaUnderwaterEntityList.InsertSorted(item))
 //		return true;
 	return !!m_alphaEntityList.InsertSorted(item);
+#endif
 }
 
 void
