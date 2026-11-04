@@ -131,12 +131,50 @@ int gameTxdSlot;
 static rw::TexDictionary *ps3GenericTxd;
 static rw::Texture *(*ps3DefaultFindCB)(const char *name);
 
+// patch 80: a model's texture that is in neither its TXD nor GENERIC:
+// patch 78's "[dark]" found LODs and buildings drawn with a mesh without
+// its texture (LODnabuilds06, IslandLODcomIND, LOD_land131...): flat
+// colour, nearly black in the rain. "[tex] missing" names the texture, the
+// TXD it was looked for in, and a loaded TXD that does have it (where LCS
+// expects to find it); the first 48 different ones.
+#include "ps3_platform.h"	// PS3_Logf
+#include "KeyGen.h"
+static void
+PS3_LogMissingTexture(const char *name)
+{
+	static uint32 seen[48];
+	static int32 numSeen;
+	if(!PS3_logsOn || numSeen >= (int32)ARRAY_SIZE(seen))
+		return;
+	rw::TexDictionary *cur = rw::TexDictionary::getCurrent();
+	uint32 h = CKeyGen::GetUppercaseKey(name) ^ (uint32)(uintptr)cur;
+	for(int32 i = 0; i < numSeen; i++)
+		if(seen[i] == h)
+			return;
+	seen[numSeen++] = h;
+	const char *curName = "?";
+	const char *where = nil;
+	for(int32 i = 0; i < TXDSTORESIZE; i++){
+		TxdDef *def = CTxdStore::GetSlot(i);
+		if(def == nil || def->texDict == nil)
+			continue;
+		if(def->texDict == cur)
+			curName = def->name;
+		else if(where == nil && def->texDict->find(name))
+			where = def->name;
+	}
+	PS3_Logf("[tex] missing: \"%s\" (looked for in TXD \"%s\" and generic); %s%s%s", name, curName,
+	         where ? "a loaded TXD has it: \"" : "no loaded TXD has it", where ? where : "", where ? "\"" : "");
+}
+
 static rw::Texture*
 PS3_GenericFindCB(const char *name)
 {
 	rw::Texture *tex = ps3DefaultFindCB(name);
 	if(tex == nil && ps3GenericTxd)
 		tex = ps3GenericTxd->find(name);
+	if(tex == nil)
+		PS3_LogMissingTexture(name);
 	return tex;
 }
 
