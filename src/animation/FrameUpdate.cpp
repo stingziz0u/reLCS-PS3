@@ -260,7 +260,12 @@ FrameUpdateCallBackSkinned(AnimBlendFrameData *frame, void *arg)
 			(*node)->Update(vec, q, 1.0f-totalBlendAmount);
 			if((*node)->sequence->HasTranslation()){
 				pos += vec;
+#ifdef __PS3__
+				// patch 88: the weight vec already has (see below)
+				transBlendAmount += (*node)->association->GetBlendAmount(1.0f-totalBlendAmount);
+#else
 				transBlendAmount += (*node)->association->blendAmount;
+#endif
 			}
 			if(DotProduct(rot, q) < 0.0f)
 				rot -= q;
@@ -279,12 +284,34 @@ FrameUpdateCallBackSkinned(AnimBlendFrameData *frame, void *arg)
 	}
 
 	if((frame->flag & AnimBlendFrameData::IGNORE_TRANSLATION) == 0){
+#ifdef __PS3__
+		// patch 88: each node's vec already comes weighted by its blend
+		// (CAnimBlendNode::Update: trans *= blend), and the sum of raw blend
+		// amounts counted a non-partial animation at full weight even when
+		// the partial ones take all of it. Multiplying pos by that sum
+		// weighted every translation twice: a bone moved by a partial
+		// animation shrank towards its parent while it blended in or out
+		// (b*b*T + (1-b)*rest: 75% at half way), and with a partial
+		// animation at full weight over one with translations it went to 0.
+		// LCS's animations move bones other than the root (phone_in: the
+		// head 0.13, the forearm 0.295, the hand 0.26): Toni's head and arm
+		// went down and up answering the phone. Now the weighted sum plus the
+		// rest pose for the weight that is left (normalised if over 1).
+		if(transBlendAmount > 1.0f){
+			pos *= 1.0f/transBlendAmount;
+			transBlendAmount = 1.0f;
+		}
+		xform->t.x = pos.x + (1.0f-transBlendAmount)*frame->resetPos.x;
+		xform->t.y = pos.y + (1.0f-transBlendAmount)*frame->resetPos.y;
+		xform->t.z = pos.z + (1.0f-transBlendAmount)*frame->resetPos.z;
+#else
 		xform->t.x = transBlendAmount*pos.x;
 		xform->t.y = transBlendAmount*pos.y;
 		xform->t.z = transBlendAmount*pos.z;
 		xform->t.x += (1.0f-transBlendAmount)*frame->resetPos.x;
 		xform->t.y += (1.0f-transBlendAmount)*frame->resetPos.y;
 		xform->t.z += (1.0f-transBlendAmount)*frame->resetPos.z;
+#endif
 	}
 }
 
@@ -638,7 +665,12 @@ FrameUpdateCallBackSkinnedCompressed(AnimBlendFrameData *frame, void *arg)
 				(*node)->UpdateCompressed(vec, q, 1.0f-totalBlendAmount);
 				if((*node)->sequence->HasTranslation()){
 					pos += vec;
+#ifdef __PS3__
+					// patch 88: the weight vec already has (see below)
+					transBlendAmount += (*node)->association->GetBlendAmount(1.0f-totalBlendAmount);
+#else
 					transBlendAmount += (*node)->association->blendAmount;
+#endif
 				}
 				if(DotProduct(rot, q) < 0.0f)
 					rot -= q;
@@ -657,12 +689,34 @@ FrameUpdateCallBackSkinnedCompressed(AnimBlendFrameData *frame, void *arg)
 		}
 
 		if((frame->flag & AnimBlendFrameData::IGNORE_TRANSLATION) == 0){
+#ifdef __PS3__
+			// patch 88: each node's vec already comes weighted by its blend
+			// (CAnimBlendNode::Update: trans *= blend), and the sum of raw blend
+			// amounts counted a non-partial animation at full weight even when
+			// the partial ones take all of it. Multiplying pos by that sum
+			// weighted every translation twice: a bone moved by a partial
+			// animation shrank towards its parent while it blended in or out
+			// (b*b*T + (1-b)*rest: 75% at half way), and with a partial
+			// animation at full weight over one with translations it went to 0.
+			// LCS's animations move bones other than the root (phone_in: the
+			// head 0.13, the forearm 0.295, the hand 0.26): Toni's head and arm
+			// went down and up answering the phone. Now the weighted sum plus the
+			// rest pose for the weight that is left (normalised if over 1).
+			if(transBlendAmount > 1.0f){
+				pos *= 1.0f/transBlendAmount;
+				transBlendAmount = 1.0f;
+			}
+			xform->t.x = pos.x + (1.0f-transBlendAmount)*frame->resetPos.x;
+			xform->t.y = pos.y + (1.0f-transBlendAmount)*frame->resetPos.y;
+			xform->t.z = pos.z + (1.0f-transBlendAmount)*frame->resetPos.z;
+#else
 			xform->t.x = transBlendAmount*pos.x;
 			xform->t.y = transBlendAmount*pos.y;
 			xform->t.z = transBlendAmount*pos.z;
 			xform->t.x += (1.0f-transBlendAmount)*frame->resetPos.x;
 			xform->t.y += (1.0f-transBlendAmount)*frame->resetPos.y;
 			xform->t.z += (1.0f-transBlendAmount)*frame->resetPos.z;
+#endif
 		}
 	}
 }
