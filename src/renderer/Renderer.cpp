@@ -643,7 +643,19 @@ CRenderer::RenderEverythingBarRoads(void)
 	CEntity *e;
 
 	PUSH_RENDERGROUP("CRenderer::RenderEverythingBarRoads");
+#ifdef __PS3__
+	// patch 80: reLCS had this commented out ("this only renders objects in
+	// LCS"), but every building that isn't a wet road, and every LOD, is
+	// drawn here. Fog stayed on from RenderRoads, except in the rain:
+	// CCoronas::RenderReflections (only with WetRoads) turns it off and
+	// doesn't turn it back on. So in the rain the world had no fog: the far
+	// clip (650 m) cut buildings in the open (Ren: pop-in at the draw
+	// distance only with weather 2) and dark LODs stayed black instead of
+	// fading into the fog. reVC turns it on here.
+	RwRenderStateSet(rwRENDERSTATEFOGENABLE, (void*)TRUE);
+#else
 //	RwRenderStateSet(rwRENDERSTATEFOGENABLE, (void*)TRUE);
+#endif
 //	RwRenderStateSet(rwRENDERSTATEVERTEXALPHAENABLE, (void*)TRUE);
 	SetCullMode(rwCULLMODECULLBACK);
 //	gSortedVehiclesAndPeds.Clear();
