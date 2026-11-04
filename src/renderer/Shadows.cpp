@@ -234,6 +234,44 @@ CShadows::AddPermanentShadow(uint8 ShadowType, RwTexture *pTexture, CVector *pPo
 	}
 }
 
+#ifdef __PS3__
+// patch 87: shadows that cast nothing, not cast again at the same place for a second
+struct PS3FailedShadow { uint32 id; CVector pos; uint32 time; };
+static PS3FailedShadow ps3FailedShadows[32];
+static int32 ps3NextFailed;
+
+static bool
+PS3_StaticShadowFailedRecently(uint32 id, const CVector *pos)
+{
+	uint32 now = CTimer::GetTimeInMilliseconds();
+	for ( int32 i = 0; i < (int32)ARRAY_SIZE(ps3FailedShadows); i++ ) {
+		PS3FailedShadow &f = ps3FailedShadows[i];
+		if ( f.id == id && f.time != 0 && now - f.time < 1000
+		     && Abs(f.pos.x - pos->x) < 0.05f && Abs(f.pos.y - pos->y) < 0.05f && Abs(f.pos.z - pos->z) < 2.0f ) {
+			PS3_ProfAdd(PS3_PROF_GAME, "shadow: not cast again (cast nothing less than 1 s ago)", 0);
+			return true;
+		}
+	}
+	return false;
+}
+
+static void
+PS3_StaticShadowFailed(uint32 id, const CVector *pos)
+{
+	for ( int32 i = 0; i < (int32)ARRAY_SIZE(ps3FailedShadows); i++ )
+		if ( ps3FailedShadows[i].id == id ) {
+			ps3FailedShadows[i].pos = *pos;
+			ps3FailedShadows[i].time = Max(CTimer::GetTimeInMilliseconds(), 1u);
+			return;
+		}
+	PS3FailedShadow &f = ps3FailedShadows[ps3NextFailed];
+	ps3NextFailed = (ps3NextFailed + 1) % ARRAY_SIZE(ps3FailedShadows);
+	f.id = id;
+	f.pos = *pos;
+	f.time = Max(CTimer::GetTimeInMilliseconds(), 1u);
+}
+#endif
+
 bool
 CShadows::StoreStaticShadow(uint32 nID, uint8 ShadowType, RwTexture *pTexture, Const CVector *pPosn,
 							float fFrontX, float fFrontY, float fSideX, float fSideY,
@@ -265,6 +303,16 @@ CShadows::StoreStaticShadow(uint32 nID, uint8 ShadowType, RwTexture *pTexture, C
 
 		int32 nSlot;
 
+#ifdef __PS3__
+		// patch 87: a shadow that cast no polygons (nothing under it, or the
+		// poly bunches ran out) leaves no slot, so every frame looked for it,
+		// didn't find it and cast it again: 0.11 ms each. The Trouble with
+		// Triads' 15 script fires: 1.7 ms a frame in StoreStaticShadow, and
+		// the pickups (DoPickUpEffects) the same. Now not tried again at the
+		// same place for a second.
+		if ( PS3_StaticShadowFailedRecently(nID, pPosn) )
+			return false;
+#endif
 		nSlot = 0;
 		while ( nSlot < MAX_STATICSHADOWS && !(nID == aStaticShadows[nSlot].m_nId && aStaticShadows[nSlot].m_pPolyBunch != nil) )
 			nSlot++;
@@ -333,7 +381,13 @@ CShadows::StoreStaticShadow(uint32 nID, uint8 ShadowType, RwTexture *pTexture, C
 				aStaticShadows[nSlot].m_bTemp            = bTempShadow;
 				aStaticShadows[nSlot].m_nTimeCreated     = CTimer::GetTimeInMilliseconds();
 
+#ifdef __PS3__
+				PS3_PROF_CALL(PS3_PROF_GAME, "shadow: static shadow cast (GeneratePolysForStaticShadow)", GeneratePolysForStaticShadow(nSlot));
+				if ( aStaticShadows[nSlot].m_pPolyBunch == nil )
+					PS3_StaticShadowFailed(nID, pPosn);
+#else
 				GeneratePolysForStaticShadow(nSlot);
+#endif
 				
 				return aStaticShadows[nSlot].m_pPolyBunch != nil;
 			}
@@ -364,7 +418,13 @@ CShadows::StoreStaticShadow(uint32 nID, uint8 ShadowType, RwTexture *pTexture, C
 				aStaticShadows[nSlot].m_bTemp            = bTempShadow;
 				aStaticShadows[nSlot].m_nTimeCreated     = CTimer::GetTimeInMilliseconds();
 
+#ifdef __PS3__
+				PS3_PROF_CALL(PS3_PROF_GAME, "shadow: static shadow cast (GeneratePolysForStaticShadow)", GeneratePolysForStaticShadow(nSlot));
+				if ( aStaticShadows[nSlot].m_pPolyBunch == nil )
+					PS3_StaticShadowFailed(nID, pPosn);
+#else
 				GeneratePolysForStaticShadow(nSlot);
+#endif
 				
 				return aStaticShadows[nSlot].m_pPolyBunch != nil;
 			}

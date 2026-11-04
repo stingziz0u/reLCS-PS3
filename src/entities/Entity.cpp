@@ -399,9 +399,17 @@ CEntity::PreRender(void)
 				CCoronas::FLARE_NONE, CCoronas::REFLECTION_ON,
 				CCoronas::LOSCHECK_OFF, CCoronas::STREAK_OFF, 0.0f);
 		}else if(IsGlass(GetModelIndex())){
+#ifdef __PS3__
+			PS3_PROF_CALL(PS3_PROF_SCENE, "prerender:   (in objects) glass", PreRenderForGlassWindow());	// patch 87
+#else
 			PreRenderForGlassWindow();
+#endif
 		}else if (((CObject*)this)->bIsPickup) {
+#ifdef __PS3__
+			PS3_PROF_CALL(PS3_PROF_SCENE, "prerender:   (in objects) pickups (DoPickUpEffects)", CPickups::DoPickUpEffects(this));	// patch 87
+#else
 			CPickups::DoPickUpEffects(this);
+#endif
 			GetMatrix().UpdateRW();
 			UpdateRwFrame();
 		} else if (GetModelIndex() == MI_GRENADE) {

@@ -1663,14 +1663,28 @@ CAnimManager::LoadAnimFile(RwStream *stream, bool compress, char (*uncompressedA
 			// patch 85: what the phone animations move (Toni's head bobbing)
 			bool ps3Phone = strncasecmp(hier->name, "phone", 5) == 0;
 			CVector ps3Min(1e9f, 1e9f, 1e9f), ps3Max(-1e9f, -1e9f, -1e9f);
-#endif
-			for(l = 0; l < numFrames; l++){
-#ifdef __PS3__
-				if(ps3Phone && l > 0 && (hasScale || hasTranslation)){
-					CVector t(fbuf[4], fbuf[5], fbuf[6]);	// the frame before (buf keeps it)
+			// patch 87: and how far each bone turns away from its first
+			// frame (degrees), and the biggest turn between two frames
+			float ps3Q0[4] = { 0, 0, 0, 1 }, ps3Qp[4] = { 0, 0, 0, 1 }, ps3MaxAng = 0.0f, ps3MaxStep = 0.0f;
+			auto ps3Note = [&](int frame) {
+				if(hasScale || hasTranslation){
+					CVector t(fbuf[4], fbuf[5], fbuf[6]);
 					ps3Min.x = Min(ps3Min.x, t.x); ps3Min.y = Min(ps3Min.y, t.y); ps3Min.z = Min(ps3Min.z, t.z);
 					ps3Max.x = Max(ps3Max.x, t.x); ps3Max.y = Max(ps3Max.y, t.y); ps3Max.z = Max(ps3Max.z, t.z);
 				}
+				if(frame == 0)
+					for(int c = 0; c < 4; c++) ps3Q0[c] = ps3Qp[c] = fbuf[c];
+				float d0 = Abs(ps3Q0[0]*fbuf[0] + ps3Q0[1]*fbuf[1] + ps3Q0[2]*fbuf[2] + ps3Q0[3]*fbuf[3]);
+				float dp = Abs(ps3Qp[0]*fbuf[0] + ps3Qp[1]*fbuf[1] + ps3Qp[2]*fbuf[2] + ps3Qp[3]*fbuf[3]);
+				ps3MaxAng = Max(ps3MaxAng, RADTODEG(2.0f*acosf(Min(d0, 1.0f))));
+				ps3MaxStep = Max(ps3MaxStep, RADTODEG(2.0f*acosf(Min(dp, 1.0f))));
+				for(int c = 0; c < 4; c++) ps3Qp[c] = fbuf[c];
+			};
+#endif
+			for(l = 0; l < numFrames; l++){
+#ifdef __PS3__
+				if(ps3Phone && l > 0)
+					ps3Note(l - 1);	// the frame before (buf keeps it)
 #endif
 				if(hasScale){
 					RwStreamRead(stream, buf, 0x2C);
@@ -1734,15 +1748,17 @@ CAnimManager::LoadAnimFile(RwStream *stream, bool compress, char (*uncompressedA
 				}
 			}
 #ifdef __PS3__
-			if(ps3Phone){
-				if(hasScale || hasTranslation){
-					CVector t(fbuf[4], fbuf[5], fbuf[6]);	// the last frame
-					ps3Min.x = Min(ps3Min.x, t.x); ps3Min.y = Min(ps3Min.y, t.y); ps3Min.z = Min(ps3Min.z, t.z);
-					ps3Max.x = Max(ps3Max.x, t.x); ps3Max.y = Max(ps3Max.y, t.y); ps3Max.z = Max(ps3Max.z, t.z);
-					PS3_Logf("[anim] %s: \"%s\" (tag %d) %d frames, moves x %.3f..%.3f y %.3f..%.3f z %.3f..%.3f",
-					         hier->name, seq->name, seq->boneTag, numFrames, ps3Min.x, ps3Max.x, ps3Min.y, ps3Max.y, ps3Min.z, ps3Max.z);
-				}else
-					PS3_Logf("[anim] %s: \"%s\" (tag %d) %d frames, rotation only", hier->name, seq->name, seq->boneTag, numFrames);
+			if(ps3Phone && numFrames > 0){
+				ps3Note(numFrames - 1);	// the last frame
+				// the time of the last frame: KR00 has it at 4, the others at 7 / 10
+				float tEnd = hasScale ? fbuf[10] : hasTranslation ? fbuf[7] : fbuf[4];
+				if(hasScale || hasTranslation)
+					PS3_Logf("[anim] %s: \"%s\" (tag %d) %d frames to %.2f s, turns up to %.1f deg (%.1f in one step), moves x %.3f..%.3f y %.3f..%.3f z %.3f..%.3f",
+					         hier->name, seq->name, seq->boneTag, numFrames, tEnd, ps3MaxAng, ps3MaxStep,
+					         ps3Min.x, ps3Max.x, ps3Min.y, ps3Max.y, ps3Min.z, ps3Max.z);
+				else
+					PS3_Logf("[anim] %s: \"%s\" (tag %d) %d frames to %.2f s, turns up to %.1f deg (%.1f in one step), rotation only",
+					         hier->name, seq->name, seq->boneTag, numFrames, tEnd, ps3MaxAng, ps3MaxStep);
 			}
 #endif
 		}
