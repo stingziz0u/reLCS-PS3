@@ -1,5 +1,8 @@
 #define WITHWINDOWS
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"	// PS3_Logf (patch 84)
+#endif
 #include "crossplatform.h"
 #include "main.h"
 
@@ -463,6 +466,17 @@ GenericLoad()
 	ReadDataFromBufferPointer(buf, CWeather::OldWeatherType);
 	ReadDataFromBufferPointer(buf, CWeather::NewWeatherType);
 	ReadDataFromBufferPointer(buf, CWeather::ForcedWeatherType);
+#ifdef __PS3__
+	// patch 84: patch 78's weather.txt also set ForcedWeatherType, which the
+	// save keeps: a game saved with it rained forever after taking the file
+	// away (Ren). A game is saved outside missions, where the scripts
+	// normally don't force the weather, so a forced weather in a save is
+	// taken for that one: released.
+	if(CWeather::ForcedWeatherType >= 0){
+		PS3_Logf("[weather] the save had weather %d forced (weather.txt of patch 78): released", CWeather::ForcedWeatherType);
+		CWeather::ForcedWeatherType = -1;
+	}
+#endif
 #ifdef SECUROM
 	if (CTimer::m_FrameCounter > 72000){
 		buf += align4bytes(4);

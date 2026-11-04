@@ -170,10 +170,10 @@ void CWeather::Update(void)
 		InterpolationValue = fNewInterpolation;
 	}
 #ifdef __PS3__
-	if(gPS3ForceWeather >= 0){
-		ForcedWeatherType = gPS3ForceWeather;
+	// patch 84: only the weather in use, not ForcedWeatherType (the save
+	// keeps that one, and the game went on with it without weather.txt)
+	if(gPS3ForceWeather >= 0)
 		OldWeatherType = NewWeatherType = gPS3ForceWeather;
-	}
 #endif
 
 #ifndef FINAL
