@@ -34,6 +34,7 @@
 #include "Ferry.h"
 #include "Plane.h"
 #include "WaterLevel.h"
+#include "Pools.h"	// patch 91: NewShad* tracker
 #ifdef __PS3__
 #include <stdlib.h>	// qsort, bsearch (patch 28)
 #include "Timecycle.h"
@@ -348,6 +349,106 @@ bool gPS3NoOcclusion;	// USRDIR/noocclusion.txt (Occlusion.cpp)
 // can only come out black: prelight (nearly) black, no prelight and no
 // normals or lighting, or a textured mesh without its texture.
 
+enum Visbility
+{
+	VIS_INVISIBLE,
+	VIS_VISIBLE,
+	VIS_OFFSCREEN,
+	VIS_STREAMME
+};
+
+// ---- patch 91: the road shadows of Staunton (NewShad*) that come and go -------------
+//
+// Patch 90 wasn't it: no NewShad model drew outside its collision sphere
+// ([bound]). "[shad]" says, per frame, what happened to the NewShad*
+// buildings within 80 m of the camera: drawn, not scanned at all (their
+// sector outside the scan), off screen, occluded (COcclusion), invisible,
+// or not loaded. USRDIR/noocclusion.txt is the A/B for the occluders.
+#define PS3_MAX_SHAD 160
+static CEntity *ps3Shad[PS3_MAX_SHAD];
+static int32 ps3NumShad = -1;	// -1: not looked for yet
+static uint8 ps3IsShadModel[MODELINFOSIZE];
+static uint32 ps3ShadFrame[PS3_MAX_SHAD];
+static uint8 ps3ShadWhy[PS3_MAX_SHAD];
+enum { PS3SH_DRAWN, PS3SH_NOTSCANNED, PS3SH_OFFSCREEN, PS3SH_OCCLUDED, PS3SH_INVISIBLE, PS3SH_NOTLOADED, PS3SH_NUM };
+static uint32 ps3ShadCount[PS3SH_NUM], ps3ShadFrames;
+
+static void
+PS3_ShadFind(void)
+{
+	ps3NumShad = 0;
+	for(int32 i = 0; i < MODELINFOSIZE; i++){
+		CBaseModelInfo *mi = CModelInfo::GetModelInfo(i);
+		ps3IsShadModel[i] = mi && strncasecmp(mi->GetModelName(), "newshad", 7) == 0;
+	}
+	CBuildingPool *pool = CPools::GetBuildingPool();
+	for(int32 i = 0; pool && i < pool->GetSize() && ps3NumShad < PS3_MAX_SHAD; i++){
+		CBuilding *b = pool->GetSlot(i);
+		if(b && ps3IsShadModel[b->GetModelIndex()])
+			ps3Shad[ps3NumShad++] = b;
+	}
+	PS3_Logf("[shad] %d NewShad* buildings", ps3NumShad);
+}
+
+// after SetupEntityVisibility in the sector scans
+static void
+PS3_ShadNoteVis(CEntity *ent, int vis)
+{
+	if(ps3NumShad <= 0 || !ps3IsShadModel[ent->GetModelIndex()])
+		return;
+	for(int32 i = 0; i < ps3NumShad; i++)
+		if(ps3Shad[i] == ent){
+			ps3ShadFrame[i] = ps3VisFrame;
+			if(vis == VIS_VISIBLE)
+				ps3ShadWhy[i] = PS3SH_DRAWN;
+			else if(vis == VIS_STREAMME)
+				ps3ShadWhy[i] = PS3SH_NOTLOADED;
+			else if(vis == VIS_OFFSCREEN)
+				// VIS_OFFSCREEN is also what a fading entity returns (drawn from the sorted list)
+				ps3ShadWhy[i] = !ent->GetIsOnScreen() ? PS3SH_OFFSCREEN :
+				                ent->IsEntityOccluded() ? PS3SH_OCCLUDED : PS3SH_DRAWN;
+			else
+				ps3ShadWhy[i] = ent->m_rwObject == nil ? PS3SH_NOTLOADED : PS3SH_INVISIBLE;
+			return;
+		}
+}
+
+// the frame that just ended (ClearForFrame)
+static void
+PS3_ShadEndFrame(void)
+{
+	if(!PS3_logsOn)
+		return;
+	if(ps3NumShad < 0){
+		if(CPools::GetBuildingPool())
+			PS3_ShadFind();
+		return;
+	}
+	CVector cam = TheCamera.GetPosition();
+	bool any = false;
+	for(int32 i = 0; i < ps3NumShad; i++){
+		if((ps3Shad[i]->GetPosition() - cam).MagnitudeSqr2D() > 80.0f*80.0f)
+			continue;
+		any = true;
+		ps3ShadCount[ps3ShadFrame[i] == ps3VisFrame ? ps3ShadWhy[i] : PS3SH_NOTSCANNED]++;
+	}
+	if(any)
+		ps3ShadFrames++;
+}
+
+static void
+PS3_ShadReport(void)
+{
+	if(ps3ShadFrames == 0)
+		return;
+	float f = (float)ps3ShadFrames;
+	PS3_Logf("[shad] NewShad* within 80 m, per frame (%u frames): drawn %.1f, not scanned %.1f, off screen %.1f, occluded %.1f, invisible %.1f, not loaded %.1f",
+	         ps3ShadFrames, ps3ShadCount[PS3SH_DRAWN]/f, ps3ShadCount[PS3SH_NOTSCANNED]/f, ps3ShadCount[PS3SH_OFFSCREEN]/f,
+	         ps3ShadCount[PS3SH_OCCLUDED]/f, ps3ShadCount[PS3SH_INVISIBLE]/f, ps3ShadCount[PS3SH_NOTLOADED]/f);
+	memset(ps3ShadCount, 0, sizeof(ps3ShadCount));
+	ps3ShadFrames = 0;
+}
+
 void
 PS3_WeatherReport(void)
 {
@@ -462,6 +563,7 @@ PS3_LodReport(void)
 	         c[PS3BB_HIDE_UNPAIRED], c[PS3BB_HIDE_MANY]);
 	PS3_WeatherReport();
 	PS3_DarkReport();
+	PS3_ShadReport();
 }
 #define PS3_HI(r) do { if(ps3HasLod[ent->GetModelIndex()]) ps3BB[0][r]++; } while(0)
 #else
@@ -1016,6 +1118,7 @@ CRenderer::ClearForFrame(void)
 #ifdef __PS3__
 	if(!ps3LodPairsBuilt)
 		PS3_BuildLodPairs();
+	PS3_ShadEndFrame();	// patch 91
 	ps3VisFrame++;
 	memcpy(ps3BB[1], ps3BB[0], sizeof(ps3BB[0]));
 	memset(ps3BB[0], 0, sizeof(ps3BB[0]));
@@ -1074,13 +1177,7 @@ CRenderer::RenderCollisionLines(void)
 	}
 }
 
-enum Visbility
-{
-	VIS_INVISIBLE,
-	VIS_VISIBLE,
-	VIS_OFFSCREEN,
-	VIS_STREAMME
-};
+// enum Visbility: moved up (patch 91)
 
 // Time Objects can be time culled if
 //   other == -1 || CModelInfo::GetModelInfo(other)->GetRwObject()
@@ -2029,6 +2126,9 @@ CRenderer::ScanBigBuildingList(CPtrList &list)
 			vis = SetupBigBuildingVisibility(ent);
 		}else
 			vis = ent->bOffscreen ? VIS_INVISIBLE : VIS_VISIBLE;
+#ifdef __PS3__
+		PS3_ShadNoteVis(ent, vis);	// patch 91 (big buildings too)
+#endif
 		if(ent->bMakeVisible){
 			ent->bMakeVisible = false;
 			ent->bIsVisible = true;
@@ -2072,6 +2172,9 @@ CRenderer::ScanSectorList(CPtrList *lists)
 			ent->bOffscreen = false;
 
 			int vis = SetupEntityVisibility(ent);
+#ifdef __PS3__
+			PS3_ShadNoteVis(ent, vis);	// patch 91
+#endif
 			if(ent->bMakeVisible){
 				ent->bMakeVisible = false;
 				ent->bIsVisible = true;
@@ -2130,6 +2233,9 @@ CRenderer::ScanSectorList_Priority(CPtrList *lists)
 			ent->bOffscreen = false;
 
 			int vis = SetupEntityVisibility(ent);
+#ifdef __PS3__
+			PS3_ShadNoteVis(ent, vis);	// patch 91
+#endif
 			if(ent->bMakeVisible){
 				ent->bMakeVisible = false;
 				ent->bIsVisible = true;
@@ -2189,7 +2295,11 @@ CRenderer::ScanSectorList_Subway(CPtrList *lists)
 				continue;	// already seen
 			ent->m_scanCode = CWorld::GetCurrentScanCode();
 			ent->bOffscreen = false;
-			switch(SetupEntityVisibility(ent)){
+			int ps3Vis = SetupEntityVisibility(ent);
+#ifdef __PS3__
+			PS3_ShadNoteVis(ent, ps3Vis);	// patch 91
+#endif
+			switch(ps3Vis){
 			case VIS_VISIBLE:
 				InsertEntityIntoList(ent);
 				break;

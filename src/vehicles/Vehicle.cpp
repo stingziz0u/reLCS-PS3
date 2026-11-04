@@ -28,6 +28,7 @@
 #include "Wanted.h"
 #include "SurfaceTable.h"
 #include "Particle.h"
+#include "ParticleMgr.h"	// patch 91
 #include "WaterLevel.h"
 #include "Timecycle.h"
 #include "Weather.h"
@@ -2179,6 +2180,15 @@ CVehicle::HeliDustGenerate(CEntity *heli, float radius, float ground, int rnd)
 	// the ground (Demolition Man). Keep the 30 fps rate.
 	if(CTimer::GetTimeStep() < 1.0f)
 		rnd = Max(1, (int)(rnd * CTimer::GetTimeStep() + 0.5f));
+	// patch 91: even at the 30 fps rate the downwash keeps 350-430 big
+	// HELI_DUST sprites alive near the ground, 19-22 screens of overdraw per
+	// frame ([fx] fill) and the RSX is the bottleneck (~9 ms in Present).
+	// No new dust while too many are alive; the ring keeps refilling as the
+	// old ones die, so it still looks continuous, just thinner.
+	int ps3Dust = 0;
+	for(CParticle *p = mod_ParticleSystemManager.m_aParticles[PARTICLE_HELI_DUST].m_pParticles; p; p = p->m_pNext)
+		ps3Dust++;
+	bool ps3DustFull = ps3Dust >= 160;
 #endif
 
 	uint8 surface = SURFACE_TARMAC;
@@ -2279,7 +2289,11 @@ CVehicle::HeliDustGenerate(CEntity *heli, float radius, float ground, int rnd)
 					break;
 				}
 				RwRGBA col = { r, g, b, 32 };
-				if(heliPos.z - pos.z < 20.0f)
+				if(heliPos.z - pos.z < 20.0f
+#ifdef __PS3__
+				   && !ps3DustFull
+#endif
+				  )
 					CParticle::AddParticle(PARTICLE_HELI_DUST, pos, dir, nil, dustSize, col);
 			}
 
