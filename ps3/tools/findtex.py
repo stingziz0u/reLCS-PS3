@@ -94,7 +94,7 @@ def txd_names(buf):
         t1 = struct.unpack_from('<I', buf, i + 12)[0]
         if t1 == 1:
             name = buf[i+32:i+64].split(b'\0')[0].decode('latin-1')
-            if name and all(32 < ord(c) < 127 for c in name):
+            if name and all(32 <= ord(c) < 127 for c in name):	# names can have spaces ("shade green 64hv")
                 names.add(name.lower())
         i += 4
     return names
@@ -122,6 +122,11 @@ def main():
         for name in entries:
             if name.endswith('.txd'):
                 txds[name[:-4]] = txd_names(get(name))
+        # GENERIC.TXD is a file of its own (models/generic.txd), not in the image
+        gen = find_ci(root, 'models', 'generic.txd')
+        if gen:
+            with open(gen, 'rb') as g:
+                txds['generic'] = txd_names(g.read())
         holders = {}
         for t, ns in txds.items():
             for x in ns:
@@ -141,7 +146,7 @@ def main():
             if own is None:
                 print(f'{m}: its TXD "{txd}" is not in the image')
                 continue
-            miss = sorted(dff_textures(get(m + '.dff')) - own)
+            miss = sorted(dff_textures(get(m + '.dff')) - own - txds.get('generic', set()))
             if not miss:
                 if want:
                     print(f'{m}: all its textures are in "{txd}"')

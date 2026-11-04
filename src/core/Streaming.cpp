@@ -313,6 +313,14 @@ bool gbPrintVehiclesInMemory;  // TODO
 bool gbPrintStreamingBuffer; // TODO
 #endif
 
+#ifdef __PS3__
+// patch 83 (ps3_texdeps.cpp): buildings whose textures are in other TXDs
+void PS3_TexDepsInit(void);
+int32 PS3_TexDepsCount(int32 model, const int16 **slots);
+void PS3_TexDepsSetCurrent(int32 model);
+bool PS3_TexDepsUses(int32 model, int32 txd);
+#endif
+
 bool
 CStreamingInfo::GetCdPosnAndSize(uint32 &posn, uint32 &size)
 {
@@ -432,6 +440,9 @@ CStreaming::Init2(void)
 	ms_currentPedLoading = NUMMODELSPERPEDGROUP;	// unused, whatever it is
 
 	LoadCdDirectory();
+#ifdef __PS3__
+	PS3_TexDepsInit();	// patch 83
+#endif
 
 	// allocate streaming buffers
 	if(ms_streamingBufferSize & 1) ms_streamingBufferSize++;
@@ -885,6 +896,21 @@ CStreaming::ConvertBufferToObject(int8 *buf, int32 streamId)
 			RwStreamClose(stream, &mem);
 			return false;
 		}
+#ifdef __PS3__
+		// patch 83: the TXDs of its other textures too
+		const int16 *ps3Deps;
+		int32 ps3NumDeps = PS3_TexDepsCount(streamId, &ps3Deps);
+		for(int32 d = 0; d < ps3NumDeps; d++)
+			if(!HasTxdLoaded(ps3Deps[d])){
+				RemoveModel(streamId);
+				ReRequestModel(streamId);
+				RwStreamClose(stream, &mem);
+				return false;
+			}
+		for(int32 d = 0; d < ps3NumDeps; d++)
+			CTxdStore::AddRef(ps3Deps[d]);
+		PS3_TexDepsSetCurrent(streamId);
+#endif
 
 		// Set Txd and anims to use
 		CTxdStore::AddRef(mi->GetTxdSlot());
@@ -927,6 +953,11 @@ CStreaming::ConvertBufferToObject(int8 *buf, int32 streamId)
 		POP_MEMID();
 		UpdateMemoryUsed();
 
+#ifdef __PS3__
+		PS3_TexDepsSetCurrent(-1);
+		for(int32 d = 0; d < ps3NumDeps; d++)
+			CTxdStore::RemoveRefWithoutDelete(ps3Deps[d]);
+#endif
 		// Txd and anims no longer needed unless we only read part of the file
 		if(ms_aInfoForModel[streamId].m_loadState != STREAMSTATE_STARTED){
 			CTxdStore::RemoveRefWithoutDelete(mi->GetTxdSlot());
@@ -1170,6 +1201,15 @@ CStreaming::RequestModel(int32 id, int32 flags)
 			if(id < STREAM_OFFSET_TXD){
 				mi = (CSimpleModelInfo*)CModelInfo::GetModelInfo(id);
 				RequestTxd(mi->GetTxdSlot(), flags);
+#ifdef __PS3__
+				{
+					// patch 83: and the TXDs its other textures are in
+					const int16 *deps;
+					int32 nd = PS3_TexDepsCount(id, &deps);
+					for(int32 d = 0; d < nd; d++)
+						RequestTxd(deps[d], flags);
+				}
+#endif
 				int anim = mi->GetAnimFileIndex();
 				if(anim != -1)
 					RequestAnim(anim, STREAMFLAGS_DEPENDENCY);
@@ -1856,23 +1896,27 @@ CStreaming::IsTxdUsedByRequestedModels(int32 txdId)
 	int streamId;
 	int i;
 
+#ifdef __PS3__
+	// patch 83: or one of a requested model's other TXDs
+#define PS3_USES_TXD(id) (CModelInfo::GetModelInfo(id)->GetTxdSlot() == txdId || PS3_TexDepsUses(id, txdId))
+#else
+#define PS3_USES_TXD(id) (CModelInfo::GetModelInfo(id)->GetTxdSlot() == txdId)
+#endif
 	for(si = ms_startRequestedList.m_next; si != &ms_endRequestedList; si = si->m_next){
 		streamId = si - ms_aInfoForModel;
-		if(streamId < STREAM_OFFSET_TXD &&
-		   CModelInfo::GetModelInfo(streamId)->GetTxdSlot() == txdId)
+		if(streamId < STREAM_OFFSET_TXD && PS3_USES_TXD(streamId))
 			return true;
 	}
 
 	for(i = 0; i < 4; i++){
 		streamId = ms_channel[0].streamIds[i];
-		if(streamId != -1 && streamId < STREAM_OFFSET_TXD &&
-		   CModelInfo::GetModelInfo(streamId)->GetTxdSlot() == txdId)
+		if(streamId != -1 && streamId < STREAM_OFFSET_TXD && PS3_USES_TXD(streamId))
 			return true;
 		streamId = ms_channel[1].streamIds[i];
-		if(streamId != -1 && streamId < STREAM_OFFSET_TXD &&
-		   CModelInfo::GetModelInfo(streamId)->GetTxdSlot() == txdId)
+		if(streamId != -1 && streamId < STREAM_OFFSET_TXD && PS3_USES_TXD(streamId))
 			return true;
 	}
+#undef PS3_USES_TXD
 
 	return false;
 }

@@ -72,6 +72,12 @@ public:
 	bool IsSimple(void) { return m_type == MITYPE_SIMPLE || m_type == MITYPE_TIME || m_type == MITYPE_WEAPON; }
 	bool IsClump(void) { return m_type == MITYPE_CLUMP || m_type == MITYPE_PED || m_type == MITYPE_VEHICLE;	}
 	char *GetModelName(void) { return m_name; }
+#ifdef __PS3__
+	// patch 83: 1 + its entry in ps3_texdeps.cpp's table (0: none), in the
+	// word LCS kept for the GU and reLCS leaves unused
+	uint32 GetPS3TexDeps(void) { return m_unk[0]; }
+	void SetPS3TexDeps(uint32 i) { m_unk[0] = i; }
+#endif
 	void SetModelName(const char *name);
 	uint32 GetNameHashKey() { return m_nameKey; }
 	void SetColModel(CColModel *col, bool owns = false){

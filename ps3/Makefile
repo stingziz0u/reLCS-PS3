@@ -97,7 +97,7 @@ GAME_SRCS := $(filter-out \
 
 PS3_SRCS := $(addprefix $(SRC)/skel/ps3/, \
   ps3.cpp ps3_log.cpp ps3_fs.cpp ps3_pad.cpp ps3_cdstream.cpp ps3_prof.cpp ps3_autotest.cpp ps3_carspawn.cpp ps3_missionspawn.cpp ps3_mods.cpp \
-  ps3_perftest.cpp ps3_spu.cpp ps3_pctest.cpp)
+  ps3_perftest.cpp ps3_spu.cpp ps3_pctest.cpp ps3_texdeps.cpp)
 
 GAME_INCS := $(foreach d,$(GAME_DIRS),-I$(SRC)/$(d)) -I$(SRC)/skel/ps3 -I$(SRC)/audio/eax
 

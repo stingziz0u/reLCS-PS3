@@ -75,10 +75,18 @@ CBaseModelInfo::SetTexDictionary(const char *name)
 	m_txdSlot = slot;
 }
 
+#ifdef __PS3__
+void PS3_TexDepsAddRefs(CBaseModelInfo *mi);	// ps3_texdeps.cpp (patch 83)
+void PS3_TexDepsRemoveRefs(CBaseModelInfo *mi);
+#endif
+
 void
 CBaseModelInfo::AddTexDictionaryRef(void)
 {
 	CTxdStore::AddRef(m_txdSlot);
+#ifdef __PS3__
+	PS3_TexDepsAddRefs(this);	// the TXDs of its other textures (patch 83)
+#endif
 }
 
 void
@@ -91,6 +99,9 @@ void
 CBaseModelInfo::RemoveTexDictionaryRef(void)
 {
 	CTxdStore::RemoveRef(m_txdSlot);
+#ifdef __PS3__
+	PS3_TexDepsRemoveRefs(this);
+#endif
 }
 
 void

@@ -139,6 +139,7 @@ static rw::Texture *(*ps3DefaultFindCB)(const char *name);
 // expects to find it); the first 48 different ones.
 #include "ps3_platform.h"	// PS3_Logf
 #include "KeyGen.h"
+rw::Texture *PS3_TexDepsFind(const char *name);	// ps3_texdeps.cpp (patch 83)
 static void
 PS3_LogMissingTexture(const char *name)
 {
@@ -173,6 +174,8 @@ PS3_GenericFindCB(const char *name)
 	rw::Texture *tex = ps3DefaultFindCB(name);
 	if(tex == nil && ps3GenericTxd)
 		tex = ps3GenericTxd->find(name);
+	if(tex == nil)
+		tex = PS3_TexDepsFind(name);	// patch 83: the other TXDs of the model being loaded
 	if(tex == nil)
 		PS3_LogMissingTexture(name);
 	return tex;
