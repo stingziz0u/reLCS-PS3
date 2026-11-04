@@ -7606,6 +7606,30 @@ CPed::MakePhonecall(void)
 	return true;
 }
 
+#ifdef __PS3__
+// patch 85: the phone's model. MI_MOBILE is reVC's number (258): LCS's IDE
+// numbers its models its own way, and Toni answered with no phone in his
+// hand. Looked up by name once ("cellphone", VC's and LCS's DFF), MI_MOBILE
+// if there is none.
+static int32
+PS3_MobileModel(void)
+{
+	static int32 id = -2;
+	if(id == -2){
+		int found = -1;
+		CBaseModelInfo *mi = CModelInfo::GetModelInfo("cellphone", &found);
+		CBaseModelInfo *old = CModelInfo::GetModelInfo(MI_MOBILE);
+		id = mi ? found : MI_MOBILE;
+		PS3_Logf("[phone] the phone is model %d (\"cellphone\" %s); MI_MOBILE %d is \"%s\"", id,
+		         mi ? "found" : "not in any IDE", MI_MOBILE, old ? old->GetModelName() : "nothing");
+	}
+	return id;
+}
+#define PS3_MI_MOBILE PS3_MobileModel()
+#else
+#define PS3_MI_MOBILE MI_MOBILE
+#endif
+
 void
 StartTalkingOnMobileCB(CAnimBlendAssociation* assoc, void* arg)
 {
@@ -7619,7 +7643,7 @@ FinishTalkingOnMobileCB(CAnimBlendAssociation *assoc, void *arg)
 {
 	CPed *ped = (CPed*)arg;
 	if (ped->m_storedWeapon != WEAPONTYPE_UNIDENTIFIED) {
-		ped->RemoveWeaponModel(MI_MOBILE);
+		ped->RemoveWeaponModel(PS3_MI_MOBILE);
 		ped->SetCurrentWeapon(ped->m_storedWeapon);
 		ped->m_storedWeapon = WEAPONTYPE_UNIDENTIFIED;
 	}
@@ -7640,6 +7664,10 @@ CPed::SetAnswerMobile(void)
 		m_lookTimer = INT32_MAX;
 		if (m_storedWeapon == WEAPONTYPE_UNIDENTIFIED)
 			m_storedWeapon = GetWeapon()->m_eWeaponType;
+#ifdef __PS3__
+		// patch 85: the script may have loaded LCS's phone or not
+		CStreaming::RequestModel(PS3_MI_MOBILE, STREAMFLAGS_DEPENDENCY);
+#endif
 
 #ifdef FIX_BUGS
 		SetCurrentWeapon(0);
@@ -7670,6 +7698,27 @@ CPed::ClearAnswerMobile(void)
 void
 CPed::AnswerMobile(void)
 {
+#ifdef __PS3__
+	// patch 85: Toni's head goes up and down on the phone (Ren). Twice a
+	// second: where the head is over the ped's position and what is playing
+	if (PS3_logsOn && IsPlayer()) {
+		static uint32 next;
+		if (CTimer::GetTimeInMilliseconds() >= next) {
+			next = CTimer::GetTimeInMilliseconds() + 500;
+			CVector head(0.0f, 0.0f, 0.0f);
+			TransformToNode(head, PED_HEAD);
+			char line[400];
+			int len = snprintf(line, sizeof(line), "[phone] head %.3f above, %.3f %.3f off; looking %d (%.2f); phone model %s;",
+			                   head.z - GetPosition().z, head.x - GetPosition().x, head.y - GetPosition().y,
+			                   bIsLooking, m_fLookDirection, m_pWeaponModel ? "on" : "none");
+			for (CAnimBlendAssociation *a = RpAnimBlendClumpGetFirstAssociation(GetClump()); a && len < (int)sizeof(line) - 48;
+			     a = RpAnimBlendGetNextAssociation(a))
+				len += snprintf(line + len, sizeof(line) - len, " %s %.2f@%.2f", a->hierarchy ? a->hierarchy->name : "?",
+				                a->blendAmount, a->currentTime);
+			PS3_Log(line);
+		}
+	}
+#endif
 	if (!IsPedInControl())
 		return;
 
@@ -7678,18 +7727,25 @@ CPed::AnswerMobile(void)
 	CAnimBlendAssociation *phoneTalkAssoc = RpAnimBlendClumpGetAssociation(GetClump(), ANIM_STD_PHONE_TALK);
 	if (phoneInAssoc || phoneTalkAssoc || phoneOutAssoc) {
 		if (phoneInAssoc) {
+#ifdef __PS3__
+			// patch 85: LCS's phone, and only once it is loaded (an instance
+			// of a model not loaded is nil, and its AddRef was a leak)
+			CBaseModelInfo *ps3Phone = CModelInfo::GetModelInfo(PS3_MI_MOBILE);
+			if (phoneInAssoc->currentTime >= 0.85f && !m_pWeaponModel && ps3Phone && ps3Phone->GetRwObject()) {
+#else
 			if (phoneInAssoc->currentTime >= 0.85f && !m_pWeaponModel) {
-				CBaseModelInfo *phoneModel = CModelInfo::GetModelInfo(MI_MOBILE);
+#endif
+				CBaseModelInfo *phoneModel = CModelInfo::GetModelInfo(PS3_MI_MOBILE);
 				m_pWeaponModel = (RpAtomic*)phoneModel->CreateInstance();
 				phoneModel->AddRef();
-				m_wepModelID = MI_MOBILE;
+				m_wepModelID = PS3_MI_MOBILE;
 
 				// They copied AddWeaponModel and forgot that here
 				// bool unused = IsPlayer();
 			}
 		} else if (phoneOutAssoc) {
 			if (phoneOutAssoc->currentTime >= 0.5f && phoneOutAssoc->currentTime - phoneOutAssoc->timeStep < 0.5f) {
-				RemoveWeaponModel(MI_MOBILE);
+				RemoveWeaponModel(PS3_MI_MOBILE);
 				SetCurrentWeapon(m_storedWeapon);
 				m_storedWeapon = WEAPONTYPE_UNIDENTIFIED;
 			}

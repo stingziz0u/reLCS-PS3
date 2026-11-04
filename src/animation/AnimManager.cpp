@@ -1659,7 +1659,19 @@ CAnimManager::LoadAnimFile(RwStream *stream, bool compress, char (*uncompressedA
 			if(strstr(seq->name, "L Toe"))
 				debug("anim %s has toe keyframes\n", hier->name); // BUG: seq->name
 
+#ifdef __PS3__
+			// patch 85: what the phone animations move (Toni's head bobbing)
+			bool ps3Phone = strncasecmp(hier->name, "phone", 5) == 0;
+			CVector ps3Min(1e9f, 1e9f, 1e9f), ps3Max(-1e9f, -1e9f, -1e9f);
+#endif
 			for(l = 0; l < numFrames; l++){
+#ifdef __PS3__
+				if(ps3Phone && l > 0 && (hasScale || hasTranslation)){
+					CVector t(fbuf[4], fbuf[5], fbuf[6]);	// the frame before (buf keeps it)
+					ps3Min.x = Min(ps3Min.x, t.x); ps3Min.y = Min(ps3Min.y, t.y); ps3Min.z = Min(ps3Min.z, t.z);
+					ps3Max.x = Max(ps3Max.x, t.x); ps3Max.y = Max(ps3Max.y, t.y); ps3Max.z = Max(ps3Max.z, t.z);
+				}
+#endif
 				if(hasScale){
 					RwStreamRead(stream, buf, 0x2C);
 					LittleSwap32(buf, 0x2C/4);
@@ -1721,6 +1733,18 @@ CAnimManager::LoadAnimFile(RwStream *stream, bool compress, char (*uncompressedA
 					}
 				}
 			}
+#ifdef __PS3__
+			if(ps3Phone){
+				if(hasScale || hasTranslation){
+					CVector t(fbuf[4], fbuf[5], fbuf[6]);	// the last frame
+					ps3Min.x = Min(ps3Min.x, t.x); ps3Min.y = Min(ps3Min.y, t.y); ps3Min.z = Min(ps3Min.z, t.z);
+					ps3Max.x = Max(ps3Max.x, t.x); ps3Max.y = Max(ps3Max.y, t.y); ps3Max.z = Max(ps3Max.z, t.z);
+					PS3_Logf("[anim] %s: \"%s\" (tag %d) %d frames, moves x %.3f..%.3f y %.3f..%.3f z %.3f..%.3f",
+					         hier->name, seq->name, seq->boneTag, numFrames, ps3Min.x, ps3Max.x, ps3Min.y, ps3Max.y, ps3Min.z, ps3Max.z);
+				}else
+					PS3_Logf("[anim] %s: \"%s\" (tag %d) %d frames, rotation only", hier->name, seq->name, seq->boneTag, numFrames);
+			}
+#endif
 		}
 
 		if(!compressHier){

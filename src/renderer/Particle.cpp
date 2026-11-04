@@ -2373,6 +2373,7 @@ struct PartCmd
 static SpuPartJob sPartJob __attribute__((aligned(128)));
 static SpuPartSprite sPartSprites[SPUPART_MAX_SPRITES] __attribute__((aligned(128)));
 static SpuPartBatch sPartBatches[SPUPART_MAX_BATCHES] __attribute__((aligned(128)));
+static int16 sPartBatchType[SPUPART_MAX_BATCHES];	// patch 85: the particle type of each batch (with logs)
 static PartCmd sPartCmds[MAX_PART_CMDS];
 static uint8 *sPartStaging;	// spuparticles_ram.txt
 static int sPartState;		// 0 not started, 1 on, 2 off
@@ -2427,10 +2428,14 @@ PS3_ParticlesSpu(uint32 &flags, RwRaster *&prevFrame)
 		PartCmd &c = sPartCmds[nc++];
 		c.type = type; c.arg = arg; c.flags = f; c.raster = r;
 	};
+	// patch 85: with logs, a batch per particle type so the fill can be
+	// told per type ([fx]); without, as before
+	int curType = 0;
 	auto closeBatch = [&]() {
 		if (batchFirst < 0)
 			return;
 		if (nb >= SPUPART_MAX_BATCHES) { overflow = true; batchFirst = -1; return; }
+		sPartBatchType[nb] = curType;
 		sPartBatches[nb].first = batchFirst;
 		sPartBatches[nb].count = ns - batchFirst;
 		sPartBatches[nb].outFirst = sPartBatches[nb].outCount = 0;
@@ -2446,6 +2451,9 @@ PS3_ParticlesSpu(uint32 &flags, RwRaster *&prevFrame)
 		CParticle *particle = psystem->m_pParticles;
 		if (particle == nil)
 			continue;
+		if (PS3_logsOn && i != curType)
+			closeBatch();
+		curType = i;
 		RwRaster **frames = psystem->m_ppRaster;
 		if (psystem->Flags & (DRAWTOP2D | SCREEN_TRAIL)) {
 			closeBatch();
@@ -2592,6 +2600,28 @@ PS3_ParticlesSpu(uint32 &flags, RwRaster *&prevFrame)
 				return false;
 			memcpy(ring, sPartStaging, j.numQuads * SPUPART_QUAD_BYTES);
 		}
+		// patch 85: the [fx] fill of the SPU's quads (it only counted the
+		// PPU's: with the SPU on, no [fx] line at all). Every 30th frame
+		// the quads' corners are read back (from the RSX's memory: slow,
+		// hence the sampling) and counted 30 times.
+		if (PS3_logsOn && (j.seq % 30) == 0 && j.numQuads > 0)
+			for (int b = 0; b < nb; b++) {
+				const SpuPartBatch &bt = sPartBatches[b];
+				for (uint32 q = 0; q < bt.outCount; q++) {
+					const RwIm2DVertex *v = (const RwIm2DVertex *)(dst + (bt.outFirst + q) * SPUPART_QUAD_BYTES);
+					float x0 = v[0].x, x1 = v[0].x, y0 = v[0].y, y1 = v[0].y;
+					for (int k = 1; k < 4; k++) {
+						x0 = Min(x0, v[k].x); x1 = Max(x1, v[k].x);
+						y0 = Min(y0, v[k].y); y1 = Max(y1, v[k].y);
+					}
+					x0 = Max(x0, 0.0f); x1 = Min(x1, (float)SCREEN_WIDTH);
+					y0 = Max(y0, 0.0f); y1 = Min(y1, (float)SCREEN_HEIGHT);
+					int t = sPartBatchType[b];
+					if (x1 > x0 && y1 > y0)
+						sFxFill[t] += 30.0 * (x1 - x0) * (y1 - y0);
+					sFxCount[t] += 30;
+				}
+			}
 	}
 
 	// 3. play the commands back
