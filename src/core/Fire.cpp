@@ -147,13 +147,21 @@ CFire::ProcessFire(void)
 		lightpos.z = m_vecPos.z + 5.0f;
 
 		if (!m_pEntity) {
+#ifdef __PS3__
+			PS3_PROF_SCOPE(PS3_PROF_GAME, "fire:   (in them) StoreStaticShadow");	// patch 86
+#endif
 			CShadows::StoreStaticShadow((uintptr)this, SHADOWTYPE_ADDITIVE, gpShadowExplosionTex, &lightpos, 7.0f, 0.0f, 0.0f, -7.0f, 0, nRandNumber / 2,
 			                            nRandNumber / 2, 0, 10.0f, 1.0f, 40.0f, 0, 0.0f);
 		}
 		fGreen = nRandNumber / 128.f;
 		fRed = nRandNumber / 128.f;
 
+#ifdef __PS3__
+		PS3_PROF_CALL(PS3_PROF_GAME, "fire:   (in them) CPointLights::AddLight",
+		              CPointLights::AddLight(CPointLights::LIGHT_POINT, m_vecPos, CVector(0.0f, 0.0f, 0.0f), 12.0f, fRed, fGreen, 0.0f, 0, true));
+#else
 		CPointLights::AddLight(CPointLights::LIGHT_POINT, m_vecPos, CVector(0.0f, 0.0f, 0.0f), 12.0f, fRed, fGreen, 0.0f, 0, true);
+#endif
 	} else {
 		Extinguish();
 	}
@@ -314,7 +322,13 @@ CFireManager::Update(void)
 {
 	for (int i = 0; i < NUM_FIRES; i++) {
 		if (m_aFires[i].m_bIsOngoing)
+#ifdef __PS3__
+			// patch 86: "[prof] game": per fire (x how many a frame)
+			PS3_PROF_CALL(PS3_PROF_GAME, m_aFires[i].m_pEntity ? (m_aFires[i].m_pEntity->IsVehicle() ? "fire: on a vehicle" : "fire: on a ped")
+			              : (m_aFires[i].m_bIsScriptFire ? "fire: script fire" : "fire: on the ground"), m_aFires[i].ProcessFire());
+#else
 			m_aFires[i].ProcessFire();
+#endif
 	}
 }
 

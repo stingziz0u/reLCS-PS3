@@ -1759,6 +1759,9 @@ CVector gTaxilightColour(1.0, 1.0f, 0.5f);
 void
 CAutomobile::PreRender(void)
 {
+#ifdef __PS3__
+	PS3_PROF_SCOPE(PS3_PROF_SCENE, "prerender:   (in vehicles) CAutomobile::PreRender");	// patch 86
+#endif
 	int i, j, n;
 	CVehicleModelInfo *mi = (CVehicleModelInfo*)CModelInfo::GetModelInfo(GetModelIndex());
 
@@ -1997,7 +2000,11 @@ CAutomobile::PreRender(void)
 		}
 	}
 
+#ifdef __PS3__
+	PS3_PROF_CALL(PS3_PROF_SCENE, "prerender:   (in cars) AddDamagedVehicleParticles", AddDamagedVehicleParticles());
+#else
 	AddDamagedVehicleParticles();
+#endif
 
 	// Exhaust smoke
 	if(bEngineOn && !(pHandling->Flags & HANDLING_NO_EXHAUST) && fwdSpeed < 130.0f){

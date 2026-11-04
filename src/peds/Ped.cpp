@@ -7708,9 +7708,11 @@ CPed::AnswerMobile(void)
 			CVector head(0.0f, 0.0f, 0.0f);
 			TransformToNode(head, PED_HEAD);
 			char line[400];
-			int len = snprintf(line, sizeof(line), "[phone] head %.3f above, %.3f %.3f off; looking %d (%.2f); phone model %s;",
+			CBaseModelInfo *pm = CModelInfo::GetModelInfo(PS3_MI_MOBILE);
+			int len = snprintf(line, sizeof(line), "[phone] head %.3f above, %.3f %.3f off; looking %d (%.2f); phone model %s (%s);",
 			                   head.z - GetPosition().z, head.x - GetPosition().x, head.y - GetPosition().y,
-			                   bIsLooking, m_fLookDirection, m_pWeaponModel ? "on" : "none");
+			                   bIsLooking, m_fLookDirection, m_pWeaponModel ? "on" : "none",
+			                   pm && pm->GetRwObject() ? "loaded" : "not loaded");
 			for (CAnimBlendAssociation *a = RpAnimBlendClumpGetFirstAssociation(GetClump()); a && len < (int)sizeof(line) - 48;
 			     a = RpAnimBlendGetNextAssociation(a))
 				len += snprintf(line + len, sizeof(line) - len, " %s %.2f@%.2f", a->hierarchy ? a->hierarchy->name : "?",
@@ -7729,9 +7731,13 @@ CPed::AnswerMobile(void)
 		if (phoneInAssoc) {
 #ifdef __PS3__
 			// patch 85: LCS's phone, and only once it is loaded (an instance
-			// of a model not loaded is nil, and its AddRef was a leak)
+			// of a model not loaded is nil, and its AddRef was a leak).
+			// Patch 86: at 0.85 s of phone_in, or 80% of it if shorter: LCS's
+			// phone_in ends before 0.85 s and the phone never came out
+			// ([phone]: "phone model none" all along)
 			CBaseModelInfo *ps3Phone = CModelInfo::GetModelInfo(PS3_MI_MOBILE);
-			if (phoneInAssoc->currentTime >= 0.85f && !m_pWeaponModel && ps3Phone && ps3Phone->GetRwObject()) {
+			float ps3At = phoneInAssoc->hierarchy ? Min(0.85f, phoneInAssoc->hierarchy->totalLength * 0.8f) : 0.85f;
+			if (phoneInAssoc->currentTime >= ps3At && !m_pWeaponModel && ps3Phone && ps3Phone->GetRwObject()) {
 #else
 			if (phoneInAssoc->currentTime >= 0.85f && !m_pWeaponModel) {
 #endif
@@ -7750,6 +7756,18 @@ CPed::AnswerMobile(void)
 				m_storedWeapon = WEAPONTYPE_UNIDENTIFIED;
 			}
 		}
+#ifdef __PS3__
+		// patch 86: talking without the phone (it wasn't loaded in time):
+		// it comes out now
+		else if (phoneTalkAssoc && !m_pWeaponModel) {
+			CBaseModelInfo *ps3Phone = CModelInfo::GetModelInfo(PS3_MI_MOBILE);
+			if (ps3Phone && ps3Phone->GetRwObject()) {
+				m_pWeaponModel = (RpAtomic*)ps3Phone->CreateInstance();
+				ps3Phone->AddRef();
+				m_wepModelID = PS3_MI_MOBILE;
+			}
+		}
+#endif
 	} else {
 		CAnimManager::BlendAnimation(GetClump(), ASSOCGRP_STD, ANIM_STD_PHONE_TALK, 4.0f);
 	}

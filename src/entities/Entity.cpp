@@ -343,7 +343,11 @@ void
 CEntity::PreRender(void)
 {
 	if (CModelInfo::GetModelInfo(GetModelIndex())->GetNum2dEffects() != 0)
+#ifdef __PS3__
+		PS3_PROF_CALL(PS3_PROF_SCENE, "prerender:   (in them) 2d effects (ProcessLightsForEntity)", ProcessLightsForEntity());	// patch 86
+#else
 		ProcessLightsForEntity();
+#endif
 
 	if(!bHasPreRenderEffects)
 		return;

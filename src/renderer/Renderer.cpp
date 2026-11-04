@@ -109,13 +109,24 @@ CRenderer::PreRender(void)
 	int i;
 	CLink<CVisibilityPlugins::AlphaObjectInfo> *node;
 
+#ifdef __PS3__
+	// patch 86: what PreRender spends its time on (2-4 ms a frame with the
+	// burning cars of The Trouble with Triads, 0.5-1 otherwise), by type,
+	// in "[prof] scene"
+	static const char *ps3PreTag[] = { "prerender: nothing", "prerender: buildings", "prerender: vehicles",
+	                                   "prerender: peds", "prerender: objects", "prerender: dummies" };
+#define PS3_PRERENDER(e) do { CEntity *pe_ = (e); unsigned long long t0_ = PS3_Ticks(); pe_->PreRender(); \
+		PS3_ProfAdd(PS3_PROF_SCENE, ps3PreTag[pe_->GetType() < 6 ? pe_->GetType() : 0], PS3_Ticks() - t0_); } while(0)
+#else
+#define PS3_PRERENDER(e) (e)->PreRender()
+#endif
 	for(i = 0; i < ms_nNoOfVisibleEntities; i++){
 		PS3_CRUMB("PreRender visible: model|type<<16", ms_aVisibleEntityPtrs[i]->GetModelIndex() | ms_aVisibleEntityPtrs[i]->GetType()<<16);
-		ms_aVisibleEntityPtrs[i]->PreRender();
+		PS3_PRERENDER(ms_aVisibleEntityPtrs[i]);
 	}
 
 	for(i = 0; i < ms_nNoOfVisibleVehicles; i++)
-		ms_aVisibleVehiclePtrs[i]->PreRender();
+		PS3_PRERENDER(ms_aVisibleVehiclePtrs[i]);
 #ifdef NEW_RENDERER
 	if(gbNewRenderer){
 		// How is this done with cWorldStream?
@@ -133,20 +144,29 @@ CRenderer::PreRender(void)
 		if (ms_aInVisibleEntityPtrs[i]->IsVehicle() && ((CVehicle*)ms_aInVisibleEntityPtrs[i])->IsHeli())
 #endif
 		PS3_CRUMB("PreRender invisible: model|type<<16", ms_aInVisibleEntityPtrs[i]->GetModelIndex() | ms_aInVisibleEntityPtrs[i]->GetType()<<16);
-		ms_aInVisibleEntityPtrs[i]->PreRender();
+		PS3_PRERENDER(ms_aInVisibleEntityPtrs[i]);
 	}
 
 	for(node = CVisibilityPlugins::m_alphaEntityList.head.next;
 	    node != &CVisibilityPlugins::m_alphaEntityList.tail;
 	    node = node->next){
 		PS3_CRUMB("PreRender alpha: model|type<<16", ((CEntity*)node->item.entity)->GetModelIndex() | ((CEntity*)node->item.entity)->GetType()<<16);
-		((CEntity*)node->item.entity)->PreRender();
+		PS3_PRERENDER((CEntity*)node->item.entity);
 	}
+#undef PS3_PRERENDER
 
 	PS3_CRUMB("CHeli::SpecialHeliPreRender", 0);
+#ifdef __PS3__
+	PS3_PROF_CALL(PS3_PROF_SCENE, "prerender: SpecialHeliPreRender", CHeli::SpecialHeliPreRender());
+#else
 	CHeli::SpecialHeliPreRender();
+#endif
 	PS3_CRUMB("CShadows::RenderExtraPlayerShadows", 0);
+#ifdef __PS3__
+	PS3_PROF_CALL(PS3_PROF_SCENE, "prerender: RenderExtraPlayerShadows", CShadows::RenderExtraPlayerShadows());
+#else
 	CShadows::RenderExtraPlayerShadows();
+#endif
 }
 
 #ifdef __PS3__
