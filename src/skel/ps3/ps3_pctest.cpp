@@ -63,19 +63,72 @@ extern "C" void PS3_LogMemTag(const char *tag);	// ps3.cpp
 // patch 61: streaming.txt also has Toni's lines (patch 60: read by the audio
 // stream thread now) and the streaming memory filled up to its budget (patch
 // 58: 110 MB), with the [mem] line at the end of every phase
-enum { PH_CALM, PH_TRAFFIC, PH_PILE, PH_CHASE, PH_BOOMS, PH_NEWCARS, PH_COLLISION, PH_TONI, PH_FILL, NUM_PHASE_KINDS };
+enum { PH_CALM, PH_TRAFFIC, PH_PILE, PH_CHASE, PH_BOOMS, PH_NEWCARS, PH_COLLISION, PH_TONI, PH_FILL, PH_BENCH_A, PH_BENCH_B, NUM_PHASE_KINDS };
 static const char *const phaseNames[NUM_PHASE_KINDS] = {
 	"calm", "traffic", "pile-up", "chase (wanted 4)", "explosions",
 	"new car models (asked for as the traffic does, spawned when in)", "collision (traffic, pile-up and explosions)",
-	"Toni's lines (one every 0.8 s)", "streaming memory filled (every car model)"
+	"Toni's lines (one every 0.8 s)", "streaming memory filled (every car model)",
+	"pass A (PPU)", "pass B (PPU; the SPU jobs will run here)"
 };
 struct TestKind { const char *file, *doneFile, *name; int numPhases; int phases[5]; };
-static const TestKind tests[2] = {
+#define NUM_TESTS 3
+static const TestKind tests[NUM_TESTS] = {
 	{ PS3_USRDIR "/processcontrol.txt", PS3_USRDIR "/processcontrol.done.txt", "processcontrol test", 5,
 	  { PH_CALM, PH_TRAFFIC, PH_PILE, PH_CHASE, PH_BOOMS } },
 	{ PS3_USRDIR "/streaming.txt", PS3_USRDIR "/streaming.done.txt", "streaming test", 4,
 	  { PH_NEWCARS, PH_TONI, PH_FILL, PH_COLLISION } },
+	// patch 103: the benchmark: the same scene twice in the same game (a
+	// crowd, traffic, the rain, an explosion every 1.5 s, the camera turning,
+	// the same random numbers), what the animation and the particles' update
+	// cost and which part of it an SPU could take. Pass B is where the SPU
+	// jobs will run, to compare with pass A.
+	{ PS3_USRDIR "/bench.txt", PS3_USRDIR "/bench.done.txt", "benchmark", 2,
+	  { PH_BENCH_A, PH_BENCH_B } },
 };
+
+// ---- patch 103: the benchmark's counters (the timers are in the animation
+// and particle code, on while gPS3BenchPass != 0)
+int gPS3BenchPass;
+unsigned long long gPS3BenchTicks[PS3B_NUM];
+unsigned int gPS3BenchCount[PS3B_NUM];
+extern int32 gPS3ForceWeather;	// Weather.cpp (weather.txt)
+static int32 benchPrevWeather = -1;
+static bool benchWeatherSaved;
+static uint64 benchFrames, benchUs;
+static float benchResult[2][4];	// per pass: animation, its SPU part, particles, their SPU part (ms per frame)
+
+static void
+benchReport(int pass)
+{
+	static double usPerTick;
+	if (usPerTick == 0.0)
+		usPerTick = 1000000.0 / (double)sysGetTimebaseFrequency();
+	double f = benchFrames ? (double)benchFrames : 1.0;
+	unsigned long long *t = gPS3BenchTicks;
+	unsigned int *c = gPS3BenchCount;
+#define MS(i) (t[i] * usPerTick / 1000.0 / f)
+	double animAll = MS(PS3B_ANIM_ALL), bones = MS(PS3B_ANIM_BONES), adv = MS(PS3B_ANIM_ADVANCE);
+	double partAll = MS(PS3B_PART_ALL), obj = MS(PS3B_PART_OBJ), freeP = MS(PS3B_PART_FREE), zP = MS(PS3B_PART_Z);
+#undef MS
+	double animSpu = bones - adv > 0.0 ? bones - adv : 0.0;
+	PS3_Logf("[bench] pass %c, %llu frames (%.2f ms a frame): animation %.3f ms a frame (%.1f clumps, %.0f bones); "
+	         "of it the bones %.3f ms, their keyframe advance %.3f ms (%.0f node updates) -> an SPU could take ~%.3f ms",
+	         'A' + pass, (unsigned long long)benchFrames, benchUs / 1000.0 / f, animAll, c[PS3B_ANIM_ALL] / f, c[PS3B_ANIM_BONES] / f,
+	         bones, adv, c[PS3B_ANIM_ADVANCE] / f, animSpu);
+	PS3_Logf("[bench] pass %c: particles' update %.3f ms a frame; the particle objects %.3f ms; systems without ground "
+	         "checks %.3f ms (%.0f particles), with them %.3f ms (%.0f particles) -> an SPU could take ~%.3f ms",
+	         'A' + pass, partAll, obj, freeP, c[PS3B_PART_FREE] / f, zP, c[PS3B_PART_Z] / f, freeP);
+	benchResult[pass][0] = animAll;
+	benchResult[pass][1] = animSpu;
+	benchResult[pass][2] = partAll;
+	benchResult[pass][3] = freeP;
+	if (pass == 1)
+		PS3_Logf("[bench] A vs B: animation %.3f / %.3f ms, particles %.3f / %.3f ms (with the same code in both "
+		         "passes the difference is the noise); worth an SPU: animation %s, particles %s (0.5 ms or more)",
+		         benchResult[0][0], benchResult[1][0], benchResult[0][2], benchResult[1][2],
+		         (benchResult[0][1] + benchResult[1][1]) / 2 >= 0.5f ? "YES" : "no",
+		         (benchResult[0][3] + benchResult[1][3]) / 2 >= 0.5f ? "YES" : "no");
+}
 static const TestKind *test;
 static int phaseIndex;
 static char flushLabel[96];
@@ -332,6 +385,22 @@ startPhase(CPlayerPed *p, int index, uint64 now)
 	bool busy = ph != PH_CALM && ph != PH_NEWCARS && ph != PH_TONI && ph != PH_FILL;
 	CPopulation::PedDensityMultiplier = busy ? Max(prevPedDensity, 1.0f) * 1.5f : prevPedDensity;
 	CCarCtrl::CarDensityMultiplier = busy ? Max(prevCarDensity, 1.0f) * 1.5f : prevCarDensity;
+	if (ph == PH_BENCH_A || ph == PH_BENCH_B) {
+		// patch 103: a crowd (the animation), the rain (its particles), the same
+		// random numbers in both passes
+		CPopulation::PedDensityMultiplier = Max(prevPedDensity, 1.0f) * 3.0f;
+		if (!benchWeatherSaved) {
+			benchPrevWeather = gPS3ForceWeather;
+			benchWeatherSaved = true;
+		}
+		gPS3ForceWeather = 2;
+		mysrand(0x5EED);	// the game's random numbers (CGeneral)
+		memset(gPS3BenchTicks, 0, sizeof(gPS3BenchTicks));
+		memset(gPS3BenchCount, 0, sizeof(gPS3BenchCount));
+		benchFrames = 0;
+		benchUs = 0;
+		gPS3BenchPass = ph == PH_BENCH_A ? 1 : 2;
+	}
 	keepSafe(p, true, ph == PH_CHASE);
 	if (ph == PH_CHASE)
 		p->SetWantedLevel(4);
@@ -343,8 +412,8 @@ startPhase(CPlayerPed *p, int index, uint64 now)
 	PS3_Logf("[pctest] %s, phase %d: %s, %d s (densities: peds %.2f, cars %.2f)", test->name, index + 1, phaseNames[ph],
 	         secsPerPhase, CPopulation::PedDensityMultiplier, CCarCtrl::CarDensityMultiplier);
 	char msg[64];
-	snprintf(msg, sizeof(msg), "%s %d/%d: DON'T TOUCH THE PAD", test == &tests[0] ? "PROCESSCONTROL TEST" : "STREAMING TEST",
-	         index + 1, test->numPhases);
+	snprintf(msg, sizeof(msg), "%s %d/%d: DON'T TOUCH THE PAD", test == &tests[0] ? "PROCESSCONTROL TEST" :
+	         test == &tests[1] ? "STREAMING TEST" : "BENCHMARK", index + 1, test->numPhases);
 	showText(msg);
 }
 
@@ -356,10 +425,14 @@ endPhase(CPlayerPed *p)
 	snprintf(l, 96, "%s: %s", test->name, phaseNames[phase]);
 	PS3_ProfFlush(l);
 	PS3_LogMemTag("[mem] ");	// patch 61: memory at the end of every phase
+	if (phase == PH_BENCH_A || phase == PH_BENCH_B) {
+		gPS3BenchPass = 0;
+		benchReport(phase == PH_BENCH_A ? 0 : 1);
+	}
 	PS3_Logf("[pctest] %s, phase %d done: %d %s", test->name, phaseIndex + 1, eventCount,
 	         phase == PH_PILE ? "cars dropped" : phase == PH_BOOMS ? "explosions" : phase == PH_NEWCARS ? "car models loaded" :
 	         phase == PH_COLLISION ? "cars dropped and explosions" : phase == PH_TONI ? "lines asked for" :
-	         phase == PH_FILL ? "models loaded" : "events");
+	         phase == PH_FILL ? "models loaded" : phase == PH_BENCH_A || phase == PH_BENCH_B ? "explosions" : "events");
 	if (phase == PH_PILE || phase == PH_COLLISION)
 		removePile();
 	if (phase == PH_NEWCARS) {
@@ -372,7 +445,7 @@ endPhase(CPlayerPed *p)
 		p->SetWantedLevel(0);
 		CWorld::ClearExcitingStuffFromArea(p->GetPosition(), 80.0f, true);
 	}
-	if (phase == PH_BOOMS || phase == PH_COLLISION) {
+	if (phase == PH_BOOMS || phase == PH_COLLISION || phase == PH_BENCH_A || phase == PH_BENCH_B) {
 		CExplosion::ClearAllExplosions();
 		gFireManager.ExtinguishPoint(p->GetPosition(), 80.0f);
 	}
@@ -384,6 +457,11 @@ finishTest(CPlayerPed *p, const char *why)
 	removePile();
 	removeNewCars();
 	PS3_ProfHold(0);
+	gPS3BenchPass = 0;
+	if (benchWeatherSaved) {
+		gPS3ForceWeather = benchPrevWeather;	// patch 103: weather.txt's, or none
+		benchWeatherSaved = false;
+	}
 	CPopulation::PedDensityMultiplier = prevPedDensity;
 	CCarCtrl::CarDensityMultiplier = prevCarDensity;
 	if (p) {
@@ -410,7 +488,7 @@ PS3_ProcessControlTestFrame(void)
 
 	if (state == 0) {
 		FILE *f = nil;
-		for (int k = 0; k < 2 && f == nil; k++) {
+		for (int k = 0; k < NUM_TESTS && f == nil; k++) {
 			f = fopen(tests[k].file, "rb");
 			if (f)
 				test = &tests[k];
@@ -447,7 +525,7 @@ PS3_ProcessControlTestFrame(void)
 			if (left != shown) {
 				char a[64];
 				snprintf(a, sizeof(a), "%s IN %d S: DON'T TOUCH THE PAD",
-				         test == &tests[0] ? "PROCESSCONTROL TEST" : "STREAMING TEST", left);
+				         test == &tests[0] ? "PROCESSCONTROL TEST" : test == &tests[1] ? "STREAMING TEST" : "BENCHMARK", left);
 				showText(a);
 				shown = left;
 			}
@@ -499,6 +577,14 @@ PS3_ProcessControlTestFrame(void)
 		if (pendingModel < 0 && now >= nextEventUs) {
 			newCarModel(p);	// one every 2.5 s, when the last one is in
 			nextEventUs = now + 2500000;
+		}
+	}
+	if ((phase == PH_BENCH_A || phase == PH_BENCH_B)) {
+		benchFrames++;
+		benchUs += (uint64)(frameMs * 1000.0f);
+		if (now >= nextEventUs) {
+			boom(p);	// one every 1.5 s: explosions, smoke, fire
+			nextEventUs = now + 1500000;
 		}
 	}
 	if (phase == PH_COLLISION && now >= nextEventUs) {

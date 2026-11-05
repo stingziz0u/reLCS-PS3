@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"	// patch 103: the benchmark
+#endif
 
 #include "AnimBlendAssociation.h"
 #include "AnimBlendNode.h"
@@ -21,11 +24,20 @@ CAnimBlendNode::Update(CVector &trans, CQuaternion &rot, float weight)
 	trans = CVector(0.0f, 0.0f, 0.0f);
 	rot = CQuaternion(0.0f, 0.0f, 0.0f, 0.0f);
 
+#ifdef __PS3__
+	unsigned long long ps3t0 = gPS3BenchPass ? PS3_Ticks() : 0;	// patch 103: the keyframe advance, apart
+#endif
 	if(association->IsRunning()){
 		remainingTime -= association->timeStep;
 		if(remainingTime <= 0.0f)
 			looped = NextKeyFrame();
 	}
+#ifdef __PS3__
+	if(ps3t0){
+		gPS3BenchTicks[PS3B_ANIM_ADVANCE] += PS3_Ticks() - ps3t0;
+		gPS3BenchCount[PS3B_ANIM_ADVANCE]++;
+	}
+#endif
 
 	float blend = association->GetBlendAmount(weight);
 	if(blend > 0.0f){
@@ -53,11 +65,20 @@ CAnimBlendNode::UpdateCompressed(CVector &trans, CQuaternion &rot, float weight)
 	trans = CVector(0.0f, 0.0f, 0.0f);
 	rot = CQuaternion(0.0f, 0.0f, 0.0f, 0.0f);
 
+#ifdef __PS3__
+	unsigned long long ps3t0 = gPS3BenchPass ? PS3_Ticks() : 0;	// patch 103: the keyframe advance, apart
+#endif
 	if(association->IsRunning()){
 		remainingTime -= association->timeStep;
 		if(remainingTime <= 0.0f)
 			looped = NextKeyFrameCompressed();
 	}
+#ifdef __PS3__
+	if(ps3t0){
+		gPS3BenchTicks[PS3B_ANIM_ADVANCE] += PS3_Ticks() - ps3t0;
+		gPS3BenchCount[PS3B_ANIM_ADVANCE]++;
+	}
+#endif
 
 	float blend = association->GetBlendAmount(weight);
 	if(blend > 0.0f){

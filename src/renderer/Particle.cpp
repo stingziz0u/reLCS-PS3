@@ -1337,7 +1337,22 @@ void CParticle::Update()
 	float fFricDeccel96 = pow(0.96f, CTimer::GetTimeStep());
 	float fFricDeccel99 = pow(0.99f, CTimer::GetTimeStep());
 	
+#ifdef __PS3__
+	// patch 103: the benchmark's split of the particles' update: the particle
+	// objects (emitters), and the particles of the systems that look for the
+	// ground (ZCHECK_*: world calls, they stay on the PPU) apart from the rest
+	struct PS3BenchPart {
+		unsigned long long t0;
+		PS3BenchPart() : t0(gPS3BenchPass ? PS3_Ticks() : 0) {}
+		~PS3BenchPart() { if(t0){ gPS3BenchTicks[PS3B_PART_ALL] += PS3_Ticks() - t0; gPS3BenchCount[PS3B_PART_ALL]++; } }
+	} ps3BenchPart;
+	unsigned long long ps3o0 = gPS3BenchPass ? PS3_Ticks() : 0;
+#endif
 	CParticleObject::UpdateAll();
+#ifdef __PS3__
+	if(ps3o0)
+		gPS3BenchTicks[PS3B_PART_OBJ] += PS3_Ticks() - ps3o0;
+#endif
 
 	// no more erectedcocks
 #ifndef FIX_BUGS
@@ -1370,9 +1385,21 @@ void CParticle::Update()
 		
 		if ( particle == nil )
 			continue;
+#ifdef __PS3__
+		unsigned long long ps3s0 = gPS3BenchPass ? PS3_Ticks() : 0;
+		int ps3Kind = (psystem->Flags & (ZCHECK_FIRST | ZCHECK_STEP | ZCHECK_BUMP | ZCHECK_BUMP_FIRST)) ? PS3B_PART_Z : PS3B_PART_FREE;
+		struct PS3BenchSys {
+			unsigned long long t0; int kind;
+			~PS3BenchSys() { if(t0) gPS3BenchTicks[kind] += PS3_Ticks() - t0; }
+		} ps3BenchSys = { ps3s0, ps3Kind };
+#endif
 				
 		for ( ; particle != nil; _Next(particle, prevParticle, psystem, bRemoveParticle) )
 		{
+#ifdef __PS3__
+			if(ps3s0)
+				gPS3BenchCount[ps3Kind]++;
+#endif
 			CVector vecWind(0.0f, 0.0f, 0.0f);
 			
 			bRemoveParticle = false;

@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"	// patch 103: the benchmark
+#endif
 
 #include "RwHelper.h"
 #include "General.h"
@@ -477,6 +480,15 @@ RpAnimBlendClumpUpdateAnimations(RpClump *clump, float timeDelta, bool doRender)
 
 	if(clumpData->link.next == nil)
 		return;
+#ifdef __PS3__
+	// patch 103: the benchmark's split of the animation (what an SPU could take)
+	struct PS3BenchAnim {
+		unsigned long long t0;
+		PS3BenchAnim() : t0(gPS3BenchPass ? PS3_Ticks() : 0) {}
+		~PS3BenchAnim() { if(t0){ gPS3BenchTicks[PS3B_ANIM_ALL] += PS3_Ticks() - t0; gPS3BenchCount[PS3B_ANIM_ALL]++; } }
+	} ps3BenchAnim;
+	unsigned long long ps3Bones0 = 0;
+#endif
 
 	// Update blend and get node array
 	i = 0;
@@ -506,6 +518,10 @@ RpAnimBlendClumpUpdateAnimations(RpClump *clump, float timeDelta, bool doRender)
 
 	updateData.nodes[i] = nil;
 
+#ifdef __PS3__
+	if(gPS3BenchPass)
+		ps3Bones0 = PS3_Ticks();
+#endif
 #ifdef ANIM_COMPRESSION
 	if(clumpData->frames[0].flag & AnimBlendFrameData::COMPRESSED){
 		if(IsClumpSkinned(clump))
@@ -527,6 +543,12 @@ RpAnimBlendClumpUpdateAnimations(RpClump *clump, float timeDelta, bool doRender)
 		clumpData->frames[0].flag |= AnimBlendFrameData::UPDATE_KEYFRAMES;
 	}
 
+#ifdef __PS3__
+	if(ps3Bones0){
+		gPS3BenchTicks[PS3B_ANIM_BONES] += PS3_Ticks() - ps3Bones0;
+		gPS3BenchCount[PS3B_ANIM_BONES] += clumpData->numFrames;
+	}
+#endif
 	for(link = clumpData->link.next; link; link = link->next){
 		assoc = CAnimBlendAssociation::FromLink(link);
 		assoc->UpdateTime(timeDelta, totalLength == 0.0f ? 1.0f : totalBlend/totalLength);

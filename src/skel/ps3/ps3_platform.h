@@ -99,6 +99,13 @@ void PS3_DecalTestPad(void);		// patch 93: R3 + Select, the road shadow test mod
 extern bool gPS3Tick30Now;		// patch 102: a 30 fps tick happened this frame (Weather.cpp)
 extern unsigned int gPS3Ticks30;	// patch 102: 30 fps ticks so far
 void PS3_UpdateTick30(void);		// patch 102: CGame::Process
+// patch 103: the benchmark (USRDIR/bench.txt, ps3_pctest.cpp). gPS3BenchPass:
+// 0 outside it, 1 its first pass, 2 the second (the SPU's turn, later). The
+// timers below only run inside it.
+extern int gPS3BenchPass;
+enum { PS3B_ANIM_ALL, PS3B_ANIM_BONES, PS3B_ANIM_ADVANCE, PS3B_PART_ALL, PS3B_PART_OBJ, PS3B_PART_FREE, PS3B_PART_Z, PS3B_NUM };
+extern unsigned long long gPS3BenchTicks[PS3B_NUM];
+extern unsigned int gPS3BenchCount[PS3B_NUM];
 class CEntity;
 void PS3_NearInventory(CEntity *e);	// patch 94: "[near]" (Renderer.cpp)
 class CSimpleModelInfo;
