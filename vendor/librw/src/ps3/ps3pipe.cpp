@@ -520,6 +520,7 @@ drawInstImpl(InstanceDataHeader *header, InstanceData *inst)
 int32 decalMode;
 bool decalCur;
 Material *aimHideMaterial;
+bool forceNoCull;
 bool decalBuilding;	// patch 96: a building is being drawn (mode 6 hides its meshes after the first)
 bool decalRoad;	// patch 95: a road is being drawn: its meshes after the first with an alpha texture (dirt, shadows) are overlays
 DecalStats decalStats;

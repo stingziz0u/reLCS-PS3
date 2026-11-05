@@ -1273,6 +1273,7 @@ PS3_FreeCamPad(void)
 			ps3FreeHideEnt = nil;
 			rw::ps3::aimHideMaterial = nil;
 			gPS3WatchNum = 0;
+			rw::ps3::forceNoCull = false;
 			ps3WatchLastEnt = nil;
 			ps3WatchLastMat = nil;
 		}
@@ -1323,6 +1324,53 @@ PS3_FreeCamPad(void)
 			rw::ps3::aimHideMaterial = nil;
 			PS3_Log("[free] O: everything shown");
 			AsciiToUnicode("Libre: todo visible", ps3AimMsg);
+			CHud::SetHelpMessage(ps3AimMsg, true);
+		}else if(down & PS3B(GLFW_GAMEPAD_BUTTON_RIGHT_THUMB)){
+			// patch 117: R3 alone: hide the next of the models around the cross,
+			// one after the other (also those not drawn or without collision)
+			static int idx = -1;
+			if(gPS3WatchNum == 0){
+				AsciiToUnicode("Libre: ningun modelo cerca de la cruz", ps3AimMsg);
+			}else{
+				idx = (idx + 1) % (gPS3WatchNum + 1);
+				char msg[200];
+				if(idx == gPS3WatchNum){
+					ps3FreeHideEnt = nil;
+					snprintf(msg, sizeof(msg), "Libre: R3, ninguno oculto");
+				}else{
+					ps3FreeHideEnt = ps3Watch[idx];
+					snprintf(msg, sizeof(msg), "Libre: R3, oculto %d de %d: %s", idx + 1, gPS3WatchNum,
+					         CModelInfo::GetModelInfo(ps3FreeHideEnt->GetModelIndex())->GetModelName());
+				}
+				PS3_Logf("[free] %s", msg + 7);
+				AsciiToUnicode(msg, ps3AimMsg);
+			}
+			CHud::SetHelpMessage(ps3AimMsg, true);
+		}else if(down & PS3B(GLFW_GAMEPAD_BUTTON_DPAD_UP)){
+			// patch 117: no backface culling at all (the inside of a building
+			// seen through its windows: the far walls' inner faces)
+			rw::ps3::forceNoCull = !rw::ps3::forceNoCull;
+			PS3_Logf("[free] D-pad up: backface culling %s", rw::ps3::forceNoCull ? "OFF" : "on");
+			AsciiToUnicode(rw::ps3::forceNoCull ? "Libre: sin culling (caras traseras visibles)" : "Libre: culling normal", ps3AimMsg);
+			CHud::SetHelpMessage(ps3AimMsg, true);
+		}else if(down & PS3B(GLFW_GAMEPAD_BUTTON_DPAD_DOWN)){
+			// patch 117: the mesh under the cross opaque (its material alpha 255) / back
+			static rw::Material *opMat;
+			static uint8 opAlpha;
+			char msg[200];
+			if(opMat){
+				opMat->color.alpha = opAlpha;
+				snprintf(msg, sizeof(msg), "Libre: %s con su alfa (%d)", opMat->texture ? opMat->texture->name : "-", opAlpha);
+				opMat = nil;
+			}else if(ps3AimMat){
+				opMat = ps3AimMat;
+				opAlpha = opMat->color.alpha;
+				opMat->color.alpha = 255;
+				snprintf(msg, sizeof(msg), "Libre: %s opaca (era alfa %d)", opMat->texture ? opMat->texture->name : "-", opAlpha);
+			}else
+				snprintf(msg, sizeof(msg), "Libre: nada bajo la cruz");
+			PS3_Logf("[free] D-pad down: %s", msg + 7);
+			AsciiToUnicode(msg, ps3AimMsg);
 			CHud::SetHelpMessage(ps3AimMsg, true);
 		}else if(down & PS3B(GLFW_GAMEPAD_BUTTON_Y)){
 			// patch 116: the occluders on/off, live (noocclusion.txt does it from the start)

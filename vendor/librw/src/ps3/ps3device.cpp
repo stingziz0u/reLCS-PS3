@@ -762,7 +762,7 @@ applyStates(void)
 		zcullStale = false;
 	}
 
-	int32 cull = s.cullmode == CULLBACK || s.cullmode == CULLFRONT;
+	int32 cull = (s.cullmode == CULLBACK || s.cullmode == CULLFRONT) && !forceNoCull;
 	if(hw.cull != cull){
 		hw.cull = cull;
 		rsxSetCullFaceEnable(ctx, cull ? GCM_TRUE : GCM_FALSE);
