@@ -1081,6 +1081,12 @@ CCamera::Process(void)
 #else
 	LODDistMultiplier *= CRenderer::ms_lodDistScale;
 #endif
+#ifdef __PS3__
+	{
+		extern float gPS3LodMult;	// Renderer.cpp, patch 122: test mode 16, D-pad right
+		LODDistMultiplier *= gPS3LodMult;
+	}
+#endif
 
 	CDraw::SetNearClipZ(RwCameraGetNearClipPlane(m_pRwCamera));
 	CDraw::SetFarClipZ(RwCameraGetFarClipPlane(m_pRwCamera));

@@ -1192,6 +1192,7 @@ PS3_AimUpdate(void)
 // the whole model, O shows everything again. [free] logs every pick.
 // Left stick moves, right stick looks, R1/L1 up/down, R2 faster, L2 slower
 CEntity *ps3FreeHideEnt;
+float gPS3LodMult = 1.0f;	// patch 122: Camera.cpp multiplies LODDistMultiplier by it
 static bool ps3FreeOn, ps3FreeSaved;
 static CVector ps3FreePos;
 static float ps3FreeHeading, ps3FreePitch;
@@ -1330,6 +1331,7 @@ PS3_FreeCamPad(void)
 			gPS3WatchNum = 0;
 			rw::ps3::forceNoCull = false;
 			rw::ps3::leedsDebug = 0;
+			gPS3LodMult = 1.0f;
 			ps3WatchLastEnt = nil;
 			ps3WatchLastMat = nil;
 		}
@@ -1401,6 +1403,18 @@ PS3_FreeCamPad(void)
 				PS3_Logf("[free] %s", msg + 7);
 				AsciiToUnicode(msg, ps3AimMsg);
 			}
+			CHud::SetHelpMessage(ps3AimMsg, true);
+		}else if(down & PS3B(GLFW_GAMEPAD_BUTTON_DPAD_RIGHT)){
+			// patch 122: every model's draw distance x1 / x1.5 / x2 / x3 (the
+			// detailed road drawn farther: does the LOD-looking wedge go?)
+			static const float mults[] = { 1.0f, 1.5f, 2.0f, 3.0f };
+			static int mi = 0;
+			mi = (mi + 1) % 4;
+			gPS3LodMult = mults[mi];
+			PS3_Logf("[free] D-pad right: draw distances x%.1f (LODDistMultiplier %.2f before)", gPS3LodMult, TheCamera.LODDistMultiplier);
+			char msg[96];
+			snprintf(msg, sizeof(msg), "Libre: distancia de dibujo x%.1f", gPS3LodMult);
+			AsciiToUnicode(msg, ps3AimMsg);
 			CHud::SetHelpMessage(ps3AimMsg, true);
 		}else if(down & PS3B(GLFW_GAMEPAD_BUTTON_DPAD_LEFT)){
 			// patch 121: the buildings' prelight: as is / ignored (flat) / alone
