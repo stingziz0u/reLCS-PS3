@@ -1086,6 +1086,34 @@ CParticle *CParticle::AddParticle(tParticleType type, CVector const &vecPos, CVe
 	if ( CTimer::GetIsPaused() /*TODO: || byte_355C47*/ )
 		return nil;
 
+#ifdef __PS3__
+	// patch 104: the benchmark (patch 103) waited 3-6 ms a frame for the RSX
+	// with explosions around: EXPLOSION_MEDIUM was 11 screens of fill with ~49
+	// big sprites alive (a molotov adds ~120 in its first 10 frames, a burning
+	// car 1-2 every 0.2 s). At most 24 alive (about half the fill); the fire
+	// keeps coming as the old ones go. USRDIR/noexpcap.txt turns it off.
+	if ( type == PARTICLE_EXPLOSION_MEDIUM )
+	{
+		static int capOn = -1;
+		if ( capOn < 0 )
+		{
+			FILE *f = fopen(PS3_USRDIR "/noexpcap.txt", "rb");
+			capOn = f == nil;
+			if ( f )
+				fclose(f);
+			PS3_Logf("[fx] EXPLOSION_MEDIUM: %s", capOn ? "at most 24 alive (noexpcap.txt turns it off)" : "no cap (noexpcap.txt)");
+		}
+		if ( capOn )
+		{
+			int alive = 0;
+			for ( CParticle *q = mod_ParticleSystemManager.m_aParticles[type].m_pParticles; q && alive < 24; q = q->m_pNext )
+				alive++;
+			if ( alive >= 24 )
+				return nil;
+		}
+	}
+#endif
+
 #ifdef RESTORIES_3DS_BUILD
 	/* LCS emits roughly twice the persistent wheel particle density of VC.
 	 * Halve only tyre dirt/sand/smoke at the common creation point, and bound
