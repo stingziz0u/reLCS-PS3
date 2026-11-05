@@ -972,6 +972,16 @@ PS3_GameMain(void)
 		PS3_Logf("[5] LOD pairs: %s; occluders: %s", gPS3LodPairs ? "on (nolodpairs.txt turns them off)" : "OFF (nolodpairs.txt)",
 		         gPS3NoOcclusion ? "OFF (noocclusion.txt)" : "on (noocclusion.txt turns them off)");
 	}
+	// patch 125: a model's detail level by the distance to its bounds
+	{
+		extern bool gPS3BoundLod;	// Renderer.cpp
+		FILE *bl = fopen(PS3_USRDIR "/noboundlod.txt", "rb");
+		if (bl) {
+			fclose(bl);
+			gPS3BoundLod = false;
+		}
+		PS3_Logf("[5] detail levels: %s", gPS3BoundLod ? "by the distance to the model's bounds (noboundlod.txt: to its pivot)" : "by the distance to the pivot (noboundlod.txt)");
+	}
 	// patch 90: USRDIR/norenderbounds.txt = visibility by the collision sphere only
 	{
 		extern bool gPS3RenderBounds;	// Entity.cpp

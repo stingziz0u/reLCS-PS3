@@ -201,6 +201,7 @@ CEntity *PS3_renderEntity;
 // only when a detailed instance of its model, at its place, was drawn.
 // USRDIR/nolodpairs.txt: the game's rule, to compare.
 bool gPS3LodPairs = true;
+bool gPS3BoundLod = true;	// patch 125: USRDIR/noboundlod.txt turns it off
 static int16 ps3LodHigh[MODELINFOSIZE];	// LOD model -> its detailed model, -1
 static uint8 ps3HasLod[MODELINFOSIZE];	// detailed model with a LOD model
 static bool ps3LodPairsBuilt;
@@ -1547,7 +1548,7 @@ PS3_FreeCamDraw2D(void)
 // one not uploaded yet (rw::ps3::diffMatHook). Stand where the bug comes and
 // goes, step back and forth: the log says what changed
 bool gPS3DiffOn;
-struct PS3DiffItem { CEntity *e; int16 model; float x, y, z; };
+struct PS3DiffItem { CEntity *e; int16 model; int8 level, levels; float x, y, z; };
 static PS3DiffItem ps3DiffA[3000], ps3DiffB[3000];
 static PS3DiffItem *ps3DiffCur = ps3DiffA, *ps3DiffPrev = ps3DiffB;
 static int ps3DiffNumCur, ps3DiffNumPrev;
@@ -1565,6 +1566,19 @@ PS3_DiffDrawn(CEntity *e)
 	it.e = e;
 	it.model = e->GetModelIndex();
 	it.x = e->GetPosition().x; it.y = e->GetPosition().y; it.z = e->GetPosition().z;
+	// patch 125: which detail level (atomic) of the model is drawn
+	it.level = -1;
+	it.levels = 0;
+	CBaseModelInfo *bmi = CModelInfo::GetModelInfo(it.model);
+	if((bmi->GetModelType() == MITYPE_SIMPLE || bmi->GetModelType() == MITYPE_TIME) && e->m_rwObject &&
+	   RwObjectGetType(e->m_rwObject) == rpATOMIC){
+		CSimpleModelInfo *smi = (CSimpleModelInfo*)bmi;
+		RpGeometry *g = RpAtomicGetGeometry((RpAtomic*)e->m_rwObject);
+		it.levels = smi->m_numAtomics;
+		for(int i = 0; i < smi->m_numAtomics; i++)
+			if(smi->m_atomics[i] && RpAtomicGetGeometry(smi->m_atomics[i]) == g)
+				it.level = i;
+	}
 }
 
 static void
@@ -1634,8 +1648,10 @@ PS3_DiffEndFrame(void)
 			}else if(i >= ps3DiffNumPrev || (uintptr)ps3DiffCur[j].e < (uintptr)ps3DiffPrev[i].e){
 				it = &ps3DiffCur[j++]; sign = '+';
 			}else{
-				i++; j++;
-				continue;
+				PS3DiffItem *a = &ps3DiffPrev[i++], *b = &ps3DiffCur[j++];
+				if(a->level == b->level)
+					continue;
+				it = b; sign = '~';	// patch 125: the same model, another detail level
 			}
 			if(!head){
 				head = true;
@@ -1647,7 +1663,12 @@ PS3_DiffEndFrame(void)
 			float lodDist = 0.0f;
 			if(mi->GetModelType() == MITYPE_SIMPLE || mi->GetModelType() == MITYPE_TIME)
 				lodDist = ((CSimpleModelInfo*)mi)->GetLargestLodDistance();
-			PS3_Logf("[diff]   %c %s at %.1f %.1f %.1f, %.0f m (draws to %.0f m)", sign, mi->GetModelName(), it->x, it->y, it->z, d, lodDist);
+			if(it->levels > 1)
+				PS3_Logf("[diff]   %c %s at %.1f %.1f %.1f, %.0f m (draws to %.0f m), detail level %d of %d (switches at %.0f / %.0f m)", sign, mi->GetModelName(),
+				         it->x, it->y, it->z, d, lodDist, it->level, it->levels,
+				         ((CSimpleModelInfo*)mi)->GetLodDistance(0), ((CSimpleModelInfo*)mi)->GetLodDistance(1));
+			else
+				PS3_Logf("[diff]   %c %s at %.1f %.1f %.1f, %.0f m (draws to %.0f m)", sign, mi->GetModelName(), it->x, it->y, it->z, d, lodDist);
 			lines++;
 		}
 		if(lines >= 60)
@@ -2552,6 +2573,22 @@ CRenderer::SetupEntityVisibility(CEntity *ent)
 		mi->m_isDamaged = true;
 
 	RpAtomic *a = mi->GetAtomicFromDistance(dist);
+#ifdef __PS3__
+	// patch 125: a model with several detail levels (atomics by distance)
+	// picks one by the distance to its pivot. A long road piece's pivot can be
+	// 70 m from where Toni stands on it (FS_custroadA1: pivot at 294 -307, the
+	// wedge at 247 -250): its far level, low detail with dark prelight, was
+	// drawn under his feet until he got near the pivot. The level is chosen
+	// by the distance to the model's bounds (0 inside them) when that gives a
+	// more detailed one; whether it's drawn at all stays the game's rule.
+	// USRDIR/noboundlod.txt: the pivot, as before
+	if(a && gPS3BoundLod && mi->m_numAtomics > 1){
+		float nd = (ms_vecCameraPosition - ent->GetBoundCentre()).Magnitude() - ent->GetBoundRadius();
+		RpAtomic *b = mi->GetAtomicFromDistance(nd > 0.0f ? nd : 0.0f);
+		if(b)
+			a = b;
+	}
+#endif
 	if(a){
 		mi->m_isDamaged = false;
 		if(ent->m_rwObject == nil)
