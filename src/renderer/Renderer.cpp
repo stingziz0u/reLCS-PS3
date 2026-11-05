@@ -807,9 +807,10 @@ static const char *const ps3DecalModeName[] = {
 	"8 hide cars/peds shadows", "9 hide pools and pole shadows", "10 hide player vehicle lights",
 	"11 hide skidmarks, rubbish, glass", "12 hide coronas, lights, particles, fx",
 	"13 hide the aimed model", "14 hide the rest at the aimed point",
-	"15 hide the aimed mesh"
+	"15 hide the aimed mesh",
+	"16 free camera (the view frozen)"
 };
-#define PS3_NUMTESTMODES 16
+#define PS3_NUMTESTMODES 17
 static uint32 ps3DecalPrev;
 static wchar ps3DecalMsg[96];
 
@@ -866,10 +867,14 @@ bool
 PS3_AimHidden(CEntity *e)
 {
 	int m = rw::ps3::decalMode;
-	if(!PS3_logsOn || (m != 13 && m != 14) || e == nil)
+	if(!PS3_logsOn || (m != 13 && m != 14 && m != 16) || e == nil)
 		return false;
 	if(m == 13)
 		return e == ps3AimEnt;
+	if(m == 16){
+		extern CEntity *ps3FreeHideEnt;
+		return e == ps3FreeHideEnt;
+	}
 	for(int i = 0; i < ps3AimNumOthers; i++)
 		if(ps3AimOthers[i] == e)
 			return true;
@@ -1123,6 +1128,189 @@ PS3_AimUpdate(void)
 	}
 }
 
+// ---- patch 115: test mode 16, a free camera over a frozen view -----------------
+// The game (and TheCamera, which ConstructRenderList culls and picks the LODs
+// with) stays where it was: Toni stands, the pad goes to the free camera, and
+// only the RW camera is moved for the frame's drawing (PS3_FreeCamBeginRender /
+// EndRender, main.cpp). What is drawn is what Toni's camera would draw, seen from
+// elsewhere. A cross at the centre: X hides the mesh under it (again: shown), square
+// the whole model, O shows everything again. [free] logs every pick.
+// Left stick moves, right stick looks, R1/L1 up/down, R2 faster, L2 slower
+CEntity *ps3FreeHideEnt;
+static bool ps3FreeOn, ps3FreeSaved;
+static CVector ps3FreePos;
+static float ps3FreeHeading, ps3FreePitch;
+static unsigned ps3FreePrev;
+static uint32 ps3FreeFrame;
+static rw::Matrix ps3FreeSavedMat;
+
+static CVector
+PS3_FreeForward(void)
+{
+	return CVector(Cos(ps3FreePitch)*Cos(ps3FreeHeading), Cos(ps3FreePitch)*Sin(ps3FreeHeading), Sin(ps3FreePitch));
+}
+
+bool
+PS3_FreeCamActive(void)
+{
+	return ps3FreeOn && PS3_logsOn && rw::ps3::decalMode == 16;
+}
+
+// what is drawn under the cross: the ray from the free camera
+static void
+PS3_FreePick(int action)	// 0 look, 1 hide the mesh, 2 hide the model
+{
+	CVector cam = ps3FreePos, fwd = PS3_FreeForward();
+	CColPoint cp;
+	CEntity *hit = nil;
+	if(!CWorld::ProcessLineOfSight(cam, cam + fwd*300.0f, cp, hit, true, false, false, true, false, false, false, false) || hit == nil){
+		if(action){
+			AsciiToUnicode("Libre: nada bajo la cruz", ps3AimMsg);
+			CHud::SetHelpMessage(ps3AimMsg, true);
+		}
+		return;
+	}
+	CEntity *others[24], *oth[24];
+	int16 n = 0;
+	CWorld::FindObjectsKindaColliding(cp.point, 3.0f, false, &n, 24, others, true, false, false, true, true);
+	int k = 0;
+	for(int i = 0; i < n; i++) if(others[i] != hit) oth[k++] = others[i];
+	PS3_AimRender(hit, oth, k, cam, fwd, action != 0);
+	const char *model = ps3AimMatEnt ? CModelInfo::GetModelInfo(ps3AimMatEnt->GetModelIndex())->GetModelName() : "nada";
+	const char *tex = ps3AimMat && ps3AimMat->texture ? ps3AimMat->texture->name : "sin textura";
+	const char *what = "";
+	if(action == 1){
+		rw::ps3::aimHideMaterial = rw::ps3::aimHideMaterial == ps3AimMat ? nil : ps3AimMat;
+		what = rw::ps3::aimHideMaterial ? " - malla oculta" : " - malla visible";
+	}else if(action == 2){
+		ps3FreeHideEnt = ps3FreeHideEnt == ps3AimMatEnt ? nil : ps3AimMatEnt;
+		what = ps3FreeHideEnt ? " - modelo oculto" : " - modelo visible";
+	}
+	if(action)
+		PS3_Logf("[free] %s at %.1f %.1f %.1f looking %.2f %.2f %.2f: %s / %s%s", action == 1 ? "X" : "square",
+		         cam.x, cam.y, cam.z, fwd.x, fwd.y, fwd.z, model, tex, what);
+	char msg[200];
+	snprintf(msg, sizeof(msg), "Libre: %s / %s%s", model, tex, what);
+	AsciiToUnicode(msg, ps3AimMsg);
+	CHud::SetHelpMessage(ps3AimMsg, true);
+}
+
+static void
+PS3_FreeCamPad(void)
+{
+	if(!PS3_logsOn || rw::ps3::decalMode != 16){
+		if(ps3FreeOn){
+			ps3FreeOn = false;
+			ps3FreeHideEnt = nil;
+			rw::ps3::aimHideMaterial = nil;
+		}
+		return;
+	}
+	CPad *pad = CPad::GetPad(0);
+	if(!ps3FreeOn){
+		ps3FreeOn = true;
+		ps3FreeHideEnt = nil;
+		rw::ps3::aimHideMaterial = nil;
+		ps3FreePos = TheCamera.GetPosition();
+		CVector f = TheCamera.GetForward();
+		ps3FreeHeading = Atan2(f.y, f.x);
+		ps3FreePitch = Asin(Clamp(f.z, -1.0f, 1.0f));
+		ps3FreePrev = ~0u;
+		PS3_Logf("[free] on at %.1f %.1f %.1f, %02d:%02d (the view stays Toni's camera's)", ps3FreePos.x, ps3FreePos.y, ps3FreePos.z,
+		         CClock::GetHours(), CClock::GetMinutes());
+	}
+	float dt = Min(CTimer::GetTimeStepNonClippedInSeconds(), 0.1f);
+	CControllerState &st = pad->NewState;
+	float speed = 6.0f;
+	if(st.RightShoulder2) speed *= 4.0f;
+	if(st.LeftShoulder2) speed *= 0.2f;
+	float lx = st.LeftStickX/128.0f, ly = -st.LeftStickY/128.0f;
+	float rx = st.RightStickX/128.0f, ry = -st.RightStickY/128.0f;
+	if(Abs(lx) < 0.15f) lx = 0.0f;
+	if(Abs(ly) < 0.15f) ly = 0.0f;
+	if(Abs(rx) < 0.15f) rx = 0.0f;
+	if(Abs(ry) < 0.15f) ry = 0.0f;
+	ps3FreeHeading -= rx*2.0f*dt;
+	ps3FreePitch = Clamp(ps3FreePitch + ry*1.5f*dt, -1.5f, 1.5f);
+	CVector fwd = PS3_FreeForward();
+	CVector right(Sin(ps3FreeHeading), -Cos(ps3FreeHeading), 0.0f);
+	ps3FreePos += (fwd*ly + right*lx)*speed*dt;
+	if(st.RightShoulder1) ps3FreePos.z += speed*dt;
+	if(st.LeftShoulder1) ps3FreePos.z -= speed*dt;
+#define PS3B(b) (1u << (b))
+	unsigned m = PS3_PadButtons();
+	unsigned down = m & ~ps3FreePrev;
+	ps3FreePrev = m;
+	if(!(m & PS3B(GLFW_GAMEPAD_BUTTON_BACK))){	// not while Select is held (R3 + Select)
+		if(down & PS3B(GLFW_GAMEPAD_BUTTON_A))
+			PS3_FreePick(1);
+		else if(down & PS3B(GLFW_GAMEPAD_BUTTON_X))
+			PS3_FreePick(2);
+		else if(down & PS3B(GLFW_GAMEPAD_BUTTON_B)){
+			ps3FreeHideEnt = nil;
+			rw::ps3::aimHideMaterial = nil;
+			PS3_Log("[free] O: everything shown");
+			AsciiToUnicode("Libre: todo visible", ps3AimMsg);
+			CHud::SetHelpMessage(ps3AimMsg, true);
+		}else if(ps3FreeFrame++ % 15 == 0 && !rw::ps3::aimHideMaterial && !ps3FreeHideEnt)
+			PS3_FreePick(0);
+	}
+#undef PS3B
+	pad->NewState.Clear();	// Toni stands still
+}
+
+// main.cpp: around the frame's drawing, the RW camera at the free camera
+void
+PS3_FreeCamBeginRender(void)
+{
+	RwFrame *frame = RwCameraGetFrame(Scene.camera);
+	RwMatrix *mat = RwFrameGetMatrix(frame);
+	if(ps3FreeSaved){	// the frame before didn't end (its start failed)
+		*mat = ps3FreeSavedMat;
+		ps3FreeSaved = false;
+	}
+	if(!PS3_FreeCamActive())
+		return;
+	ps3FreeSavedMat = *mat;
+	ps3FreeSaved = true;
+	CVector f = PS3_FreeForward();
+	CVector up(0.0f, 0.0f, 1.0f);
+	CVector right = CrossProduct(up, f);
+	right.Normalise();
+	up = CrossProduct(f, right);
+	*RwMatrixGetPos(mat) = ps3FreePos;
+	*RwMatrixGetAt(mat) = f;
+	*RwMatrixGetUp(mat) = up;
+	*RwMatrixGetRight(mat) = right;
+	RwMatrixUpdate(mat);
+	RwFrameUpdateObjects(frame);
+}
+
+void
+PS3_FreeCamEndRender(void)
+{
+	if(!ps3FreeSaved)
+		return;
+	RwFrame *frame = RwCameraGetFrame(Scene.camera);
+	*RwFrameGetMatrix(frame) = ps3FreeSavedMat;
+	RwMatrixUpdate(RwFrameGetMatrix(frame));
+	RwFrameUpdateObjects(frame);
+	rw::Frame::syncDirty();	// TheCamera.m_viewMatrix (the RW camera's) back to the game's at once
+	ps3FreeSaved = false;
+}
+
+// Render2dStuff: the cross
+void
+PS3_FreeCamDraw2D(void)
+{
+	if(!PS3_FreeCamActive())
+		return;
+	float cx = SCREEN_WIDTH/2, cy = SCREEN_HEIGHT/2;
+	CRGBA c(255, 40, 40, 255);
+	CSprite2d::DrawRect(CRect(cx - 12.0f, cy - 1.0f, cx + 12.0f, cy + 1.0f), c);
+	CSprite2d::DrawRect(CRect(cx - 1.0f, cy - 12.0f, cx + 1.0f, cy + 12.0f), c);
+}
+
 // CPad::UpdatePads (Pad.cpp), after pad 0: R3 + Select = next test mode
 // (the log gets a snapshot of the mode being left)
 void
@@ -1132,6 +1320,7 @@ PS3_DecalTestPad(void)
 	if(!PS3_logsOn)
 		return;	// patch 98: a testing tool, only with logson.txt (the shadows are fixed, patch 97)
 	PS3_AimUpdate();	// patch 110
+	PS3_FreeCamPad();	// patch 115
 	unsigned m = PS3_PadButtons();
 	unsigned down = m & ~ps3DecalPrev;
 	ps3DecalPrev = m;

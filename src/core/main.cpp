@@ -1904,6 +1904,12 @@ Render2dStuff(void)
 	else
 #endif
 	{ PS3_CRUMB("2d: CHud::Draw", 0); CHud::Draw(); }
+#ifdef __PS3__
+	{
+		extern void PS3_FreeCamDraw2D(void);	// patch 115
+		PS3_FreeCamDraw2D();
+	}
+#endif
 
 	PS3_CRUMB("2d: CSpecialFX::Render2DFXs", 0);
 	CSpecialFX::Render2DFXs();
@@ -2152,6 +2158,12 @@ Idle(void *arg)
 		RwCameraSetFogDistance(Scene.camera, Apply3DSFogProfile(CTimeCycle::GetFogStart()));
 #endif
 
+#ifdef __PS3__
+		{
+			extern void PS3_FreeCamBeginRender(void);	// Renderer.cpp, patch 115: test mode 16
+			PS3_FreeCamBeginRender();
+		}
+#endif
 		if(CWeather::LightningFlash && !CCullZones::CamNoRain()){
 			if(!DoRWStuffStartOfFrame_Horizon(255, 255, 255, 255, 255, 255, 255))
 				goto popret;
@@ -2255,6 +2267,12 @@ Idle(void *arg)
 	tbStartTimer(0, "Present");
 	DoRWStuffEndOfFrame();
 	tbEndTimer("Present");
+#ifdef __PS3__
+	{
+		extern void PS3_FreeCamEndRender(void);
+		PS3_FreeCamEndRender();
+	}
+#endif
 
 	POP_MEMID();	// MEMID_RENDER
 
