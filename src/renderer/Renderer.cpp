@@ -753,9 +753,57 @@ PS3_FarReport(void)
 	ps3FarWorstModel = -1;
 }
 
+// ---- patch 96: LODs drawn near the camera (their detailed model wasn't) ------
+struct PS3NearLod { int32 model; uint32 frames; float dist; };
+static PS3NearLod ps3NearLods[16];
+static int32 ps3NumNearLods;
+
+static void
+PS3_NoteNearLod(CEntity *ent, float dist)
+{
+	if(!PS3_logsOn || dist > 80.0f)
+		return;
+	int32 id = ent->GetModelIndex(), k;
+	for(k = 0; k < ps3NumNearLods; k++)
+		if(ps3NearLods[k].model == id)
+			break;
+	if(k == ps3NumNearLods){
+		if(k == 16)
+			return;
+		ps3NumNearLods++;
+		ps3NearLods[k].model = id;
+		ps3NearLods[k].frames = 0;
+		ps3NearLods[k].dist = dist;
+	}
+	ps3NearLods[k].frames++;
+	ps3NearLods[k].dist = Min(ps3NearLods[k].dist, dist);
+}
+
+static void
+PS3_NearLodReport(void)
+{
+	if(ps3NumNearLods == 0){
+		PS3_Logf("[snap]   no LOD drawn within 80 m");
+		return;
+	}
+	char buf[600] = "";
+	for(int32 k = 0; k < ps3NumNearLods; k++){
+		CSimpleModelInfo *mi = (CSimpleModelInfo*)CModelInfo::GetModelInfo(ps3NearLods[k].model);
+		CSimpleModelInfo *hi = mi->GetRelatedModel();
+		char t[96];
+		snprintf(t, sizeof(t), "%s%s x%u from %.0f m (detailed %s%s)", k ? ", " : "", mi->GetModelName(),
+		         ps3NearLods[k].frames, ps3NearLods[k].dist, hi ? hi->GetModelName() : "none",
+		         hi ? (hi->GetRwObject() ? " loaded" : " NOT loaded") : "");
+		strncat(buf, t, sizeof(buf) - strlen(buf) - 1);
+	}
+	PS3_Logf("[snap]   LODs drawn within 80 m: %s", buf);
+	ps3NumNearLods = 0;
+}
+
 // ---- patch 93: the decal test modes (R3 + Select) and the snapshot ---------------
 static const char *const ps3DecalModeName[] = {
-	"0 normal", "1 depth bias", "2 no depth test", "3 no ZCULL", "4 opaque (no blend)", "5 no fog"
+	"0 normal", "1 depth bias", "2 no depth test", "3 hide ground overlays", "4 hide shad",
+	"5 opaque (no blend)", "6 hide every 2nd+ mesh", "7 hide near LODs"
 };
 static uint32 ps3DecalPrev;
 static wchar ps3DecalMsg[96];
@@ -783,6 +831,7 @@ PS3_DecalSnapshot(const char *why)
 		         d.srcBlend, d.dstBlend, d.alphaFunc, d.alphaRef, d.gsAlphaRef, d.matAlpha);
 	else
 		PS3_Logf("[snap]   no shadow mesh reached the RSX");
+	PS3_NearLodReport();
 	memset(&decalStats, 0, sizeof(decalStats));
 	ps3ShadNearSum = ps3ShadVisSum = ps3ShadRenderedSum = ps3ShadSumFrames = 0;
 }
@@ -805,8 +854,7 @@ PS3_DecalTestPad(void)
 	CPad::GetPad(0)->NewState.Clear();	// not a camera change
 	if(PS3_logsOn)
 		PS3_DecalSnapshot("leaving the mode");
-	rw::ps3::decalMode = (rw::ps3::decalMode + 1) % 6;
-	rw::ps3::zcullOn = rw::ps3::decalMode != 3;
+	rw::ps3::decalMode = (rw::ps3::decalMode + 1) % 8;
 	char msg[96];
 	snprintf(msg, sizeof(msg), "Sombras: modo %s", ps3DecalModeName[rw::ps3::decalMode]);
 	AsciiToUnicode(msg, ps3DecalMsg);
@@ -1840,6 +1888,11 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 	}
 
 #ifdef __PS3__
+	// patch 96: test mode 7, no LOD near the camera (holes where one was)
+	if(rw::ps3::decalMode == 7 && dist < 100.0f){
+		PS3_BB(PS3BB_HIDDEN);
+		return VIS_INVISIBLE;
+	}
 	// patch 95: the distance the draw distance is compared with (the fog)
 	float lodDist = dist / PS3_LodFogScale(mi);
 #else
@@ -1881,6 +1934,9 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 			return VIS_INVISIBLE;
 		}
 		PS3_BB(PS3BB_VISIBLE);
+#ifdef __PS3__
+		PS3_NoteNearLod(ent, dist);	// patch 96
+#endif
 		return VIS_VISIBLE;
 	}
 

@@ -71,15 +71,22 @@ struct InstanceData
 	bool32    decal;	// patch 94: its texture's name has "shad" in it (the road shadows)
 };
 
-// patch 94: a shadow overlay mesh, by its texture's name
+// patch 94: a shadow overlay mesh, by its texture's name (1). Patch 96:
+// 2 for the ground overlays of LCS's roads and pavements (dirtywhite,
+// cover7_64, crackedgroundb, gridwire64HV), drawn on the road's plane
 static bool32
 isShadowTexture(Material *m)
 {
 	if(m == nil || m->texture == nil)
 		return 0;
-	for(const char *n = m->texture->name; *n; n++)
+	const char *name = m->texture->name;
+	for(const char *n = name; *n; n++)
 		if(strncasecmp(n, "shad", 4) == 0)
 			return 1;
+	static const char *const overlays[] = { "dirtywhite", "cover7", "cracked", "gridwire" };
+	for(int i = 0; i < 4; i++)
+		if(strncasecmp(name, overlays[i], strlen(overlays[i])) == 0)
+			return 2;
 	return 0;
 }
 
@@ -512,13 +519,17 @@ drawInstImpl(InstanceDataHeader *header, InstanceData *inst)
 // ---- patch 93: the road shadow decals, what they're drawn with and test modes ----
 int32 decalMode;
 bool decalCur;
+bool decalBuilding;	// patch 96: a building is being drawn (mode 6 hides its meshes after the first)
 bool decalRoad;	// patch 95: a road is being drawn: its meshes after the first with an alpha texture (dirt, shadows) are overlays
 DecalStats decalStats;
 
 static void
-drawDecal(InstanceDataHeader *header, InstanceData *inst)
+drawDecal(InstanceDataHeader *header, InstanceData *inst, int32 kind)
 {
 	DecalStats &d = decalStats;
+	// patch 96: the hiding modes, to see which meshes the road shadows are
+	if(decalMode == 3 && kind == 2 || decalMode == 4 && kind == 1 || decalMode == 6)
+		return;
 	Material *m = inst->material;
 	d.meshes++;
 	if(m->texture){
@@ -565,7 +576,7 @@ drawDecal(InstanceDataHeader *header, InstanceData *inst)
 		rw::SetRenderState(rw::ZTESTENABLE, zt);
 		break;
 	}
-	case 4: {	// a solid shape where it is
+	case 5: {	// a solid shape where it is
 		uint32 va = rw::GetRenderState(rw::VERTEXALPHA);
 		uint32 af = rw::GetRenderState(rw::ALPHATESTFUNC);
 		uint32 gs = rw::GetRenderState(rw::GSALPHATEST);
@@ -578,14 +589,7 @@ drawDecal(InstanceDataHeader *header, InstanceData *inst)
 		rw::SetRenderState(rw::GSALPHATEST, gs);
 		break;
 	}
-	case 5: {
-		uint32 fog = rw::GetRenderState(rw::FOGENABLE);
-		rw::SetRenderState(rw::FOGENABLE, 0);
-		drawInstImpl(header, inst);
-		rw::SetRenderState(rw::FOGENABLE, fog);
-		break;
-	}
-	default:	// 0 and 3 (ZCULL, set for the whole frame)
+	default:	// 0, 7 (the game hides near LODs)
 		drawInstImpl(header, inst);
 	}
 }
@@ -593,10 +597,12 @@ drawDecal(InstanceDataHeader *header, InstanceData *inst)
 static void
 drawInst(InstanceDataHeader *header, InstanceData *inst)
 {
-	if(decalCur || inst->decal ||
-	   decalRoad && inst != header->inst && inst->material->texture && inst->material->texture->raster &&
-	   GETPS3RASTEREXT(inst->material->texture->raster)->hasAlpha){
-		drawDecal(header, inst);
+	if(decalCur || inst->decal){
+		drawDecal(header, inst, inst->decal ? inst->decal : 1);
+		return;
+	}
+	if(decalMode == 6 && decalBuilding && inst != header->inst){
+		drawDecal(header, inst, 3);	// hidden
 		return;
 	}
 	drawInstImpl(header, inst);

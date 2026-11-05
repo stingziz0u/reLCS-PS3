@@ -188,12 +188,14 @@ extern bool leedsWantSample;	// log the next one drawn
 // res-PS3 patch 93: the road shadow decals (models with "shad" in the name;
 // patch 94: and every mesh whose texture's name has "shad" in it).
 // The game sets decalCur around their Render; decalMode is the test mode
-// (R3 + Select): 0 as is, 1 depth bias, 2 no depth test, 3 no ZCULL (whole
-// frame), 4 opaque (no blend, no alpha test), 5 no fog. decalStats: what
+// (R3 + Select). Patch 96: 0 as is, 1 depth bias, 2 no depth test,
+// 3 ground overlays hidden, 4 "shad" hidden, 5 opaque, 6 every building's
+// meshes after the first hidden, 7 LODs within 100 m hidden (the game). decalStats: what
 // they were drawn with since the last reset.
 extern int32 decalMode;
 extern bool decalCur;
 extern bool decalRoad;	// patch 95: the road overlays (meshes after the first, alpha texture)
+extern bool decalBuilding;	// patch 96: a building is being drawn
 struct DecalStats
 {
 	uint32 meshes, textured, texAlpha, vertexAlpha, blendOn, ztestOn, zwriteOn, fogOn, gsAlphaTest, cullNone;
