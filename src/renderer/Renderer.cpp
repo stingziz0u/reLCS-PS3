@@ -217,21 +217,45 @@ static PS3VisibleHigh ps3VisHigh[MODELINFOSIZE];
 // patch 28 kept the LOD over them (Harwood's road, Ren's video: the textures
 // fighting; gone with nolodpairs.txt). Now any of them drawn inside the
 // LOD's bounds lets it hide.
-static CEntity *ps3DrawnHigh[256];
-static int32 ps3NumDrawnHigh;
-static uint32 ps3DrawnHighFrame;
+// patch 124: every building accepted, not only the models some LOD names,
+// and the frame before as well. LODcustroadpm1 / pm2 stand for a whole stretch
+// of Staunton's roads (FS_custroadA*, com_roadkb*, com_cust_roads*) none of
+// which is the LOD's own model, and the LOD is decided before the sector scan
+// accepts them: patch 38 found nothing inside and kept the LOD over the drawn
+// roads (Ren's dark wedges, the subway stairs: patch 123's log, all at one
+// distance from those LODs). Centres, not pointers: the frame before's
+// entities may be gone
+static CVector ps3DrawnCentre[2][1024];
+static int32 ps3NumDrawn[2];
+static uint32 ps3DrawnFrame[2];
+static int32 ps3NumDrawnHigh;	// the [lod] reports
 
-// a detailed instance drawn this frame inside this LOD's bounds
+static void
+PS3_NoteDrawn(CEntity *ent)
+{
+	int k = ps3VisFrame & 1;
+	if(ps3DrawnFrame[k] != ps3VisFrame){
+		ps3DrawnFrame[k] = ps3VisFrame;
+		ps3NumDrawn[k] = 0;
+	}
+	if(ps3NumDrawn[k] < 1024)
+		ps3DrawnCentre[k][ps3NumDrawn[k]++] = ent->GetBoundCentre();
+}
+
+// a detailed instance drawn (this frame so far, or the frame before) inside this LOD's bounds
 static bool
 PS3_HighDrawnInside(CEntity *lod)
 {
-	if(ps3DrawnHighFrame != ps3VisFrame)
-		return false;
 	CVector c = lod->GetBoundCentre();
 	float r = lod->GetBoundRadius();
-	for(int32 i = 0; i < ps3NumDrawnHigh; i++)
-		if((ps3DrawnHigh[i]->GetBoundCentre() - c).MagnitudeSqr() < r*r)
-			return true;
+	for(int k = 0; k < 2; k++){
+		uint32 f = ps3DrawnFrame[k];
+		if(f != ps3VisFrame && f + 1 != ps3VisFrame)
+			continue;
+		for(int32 i = 0; i < ps3NumDrawn[k]; i++)
+			if((ps3DrawnCentre[k][i] - c).MagnitudeSqr() < r*r)
+				return true;
+	}
 	return false;
 }
 
@@ -282,14 +306,11 @@ static void
 PS3_MarkHighDrawn(CEntity *ent)
 {
 	int32 id = ent->GetModelIndex();
+	if(ent->IsBuilding() && !ent->bIsBIGBuilding)
+		PS3_NoteDrawn(ent);	// patch 124
 	if(id < 0 || id >= MODELINFOSIZE || !ps3HasLod[id])
 		return;
-	if(ps3DrawnHighFrame != ps3VisFrame){
-		ps3DrawnHighFrame = ps3VisFrame;
-		ps3NumDrawnHigh = 0;
-	}
-	if(ps3NumDrawnHigh < 256)
-		ps3DrawnHigh[ps3NumDrawnHigh++] = ent;
+	ps3NumDrawnHigh++;
 	PS3VisibleHigh &v = ps3VisHigh[id];
 	if(v.frame != ps3VisFrame){
 		v.frame = ps3VisFrame;
