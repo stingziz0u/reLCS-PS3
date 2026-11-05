@@ -2748,6 +2748,35 @@ CRenderer::SetupEntityVisibility(CEntity *ent)
 	}
 }
 
+// patch 128: mode 17, why a LOD within 250 m is drawn, when that changes
+extern bool gPS3DiffOn;
+static void
+PS3_LodWhyLog(CEntity *ent, CSimpleModelInfo *mi, CSimpleModelInfo *nonLOD, float dist, int why)
+{
+	if(dist > 250.0f)
+		return;
+	static CEntity *seenEnt[256];
+	static int8 seenWhy[256];
+	uint32 h = ((uint32)(uintptr)ent >> 4) & 255;
+	if(seenEnt[h] == ent && seenWhy[h] == why)
+		return;
+	seenEnt[h] = ent;
+	seenWhy[h] = why;
+	static const char *const whys[] = {
+		"no related model (drawn as the game does)",
+		"beyond its near distance",
+		"beyond LOD_DISTANCE + STREAM_DISTANCE",
+		"its detailed model NOT LOADED",
+		"its detailed model still fading in",
+		"KEPT by the LOD pairing (no detailed building found inside it)",
+	};
+	PS3_Logf("[diff]   LOD %s drawn, %.0f m: %s; near distance %.0f, detailed %s (%s, alpha %d), bounds %.0f %.0f %.0f r %.0f",
+	         mi->GetModelName(), dist, whys[why], mi->GetNearDistance(),
+	         nonLOD ? nonLOD->GetModelName() : "-", nonLOD && nonLOD->GetRwObject() ? "loaded" : "not loaded",
+	         nonLOD ? nonLOD->m_alpha : -1, ent->GetBoundCentre().x, ent->GetBoundCentre().y, ent->GetBoundCentre().z,
+	         ent->GetBoundRadius());
+}
+
 int32
 CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 {
@@ -2808,6 +2837,15 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 	// Find out whether to draw below near distance.
 	// This is only the case if there is a non-LOD which is either not
 	// loaded or not completely faded in yet.
+#ifdef __PS3__
+	// patch 128: why this LOD is drawn (mode 17 logs it)
+	int ps3Why = dist >= mi->GetNearDistance() ? 1 : dist >= LOD_DISTANCE + STREAM_DISTANCE ? 2 : 0;
+	if(ps3Why == 0 && nonLOD){
+		if(nonLOD->GetRwObject() == nil) ps3Why = 3;
+		else if(nonLOD->m_alpha != 255) ps3Why = 4;
+		else ps3Why = 5;	// kept by the pairing (if it isn't hidden just below)
+	}
+#endif
 	if(dist < mi->GetNearDistance() && dist < LOD_DISTANCE + STREAM_DISTANCE){
 		// No non-LOD or non-LOD is completely visible.
 #ifdef __PS3__
@@ -2876,6 +2914,10 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 			CVisibilityPlugins::InsertEntityIntoSortedList(ent, dist);
 			ent->bDistanceFade = true;
 			PS3_BB(PS3BB_FADING);
+#ifdef __PS3__
+			if(gPS3DiffOn)
+				PS3_LodWhyLog(ent, mi, nonLOD, dist, ps3Why);	// patch 128
+#endif
 			return VIS_INVISIBLE;
 		}
 
@@ -2887,11 +2929,17 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 			CVisibilityPlugins::InsertEntityIntoSortedList(ent, dist);
 			ent->bDistanceFade = false;
 			PS3_BB(PS3BB_DRAWLAST);
+#ifdef __PS3__
+			if(gPS3DiffOn)
+				PS3_LodWhyLog(ent, mi, nonLOD, dist, ps3Why);	// patch 128
+#endif
 			return VIS_INVISIBLE;
 		}
 		PS3_BB(PS3BB_VISIBLE);
 #ifdef __PS3__
 		PS3_NoteNearLod(ent, dist);	// patch 96
+		if(gPS3DiffOn)
+			PS3_LodWhyLog(ent, mi, nonLOD, dist, ps3Why);	// patch 128
 #endif
 		return VIS_VISIBLE;
 	}
