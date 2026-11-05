@@ -934,6 +934,16 @@ PS3_GameMain(void)
 		PS3_Logf("[5] buildings without prelight: %s", rw::ps3::leedsUnlitLift ?
 		         "lit by the time cycle ambient (nounlitlift.txt turns it off)" : "lit by the emission only (nounlitlift.txt)");
 	}
+	// patch 101: the Leeds emission floor (black buildings in the rain at night)
+	{
+		FILE *ef = fopen(PS3_USRDIR "/noemissfloor.txt", "rb");
+		if (ef) {
+			fclose(ef);
+			rw::ps3::leedsEmissionFloor = false;
+		}
+		PS3_Logf("[5] Leeds emission floor: %s", rw::ps3::leedsEmissionFloor ?
+		         "0.2 x the time cycle ambient (noemissfloor.txt turns it off)" : "off, TIMECYC's emission only (noemissfloor.txt)");
+	}
 	// patch 28: the LOD buildings' pairing with their detailed instances and
 	// the occluders, both switchable to compare the pop-in
 	{

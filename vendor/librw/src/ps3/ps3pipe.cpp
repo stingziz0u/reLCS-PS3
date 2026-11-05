@@ -634,6 +634,7 @@ lightingCB(Atomic *atomic)
 }
 
 static bool liftAmbient;	// patch 100: set by leedsRenderCB for a building without prelight
+bool leedsEmissionFloor = true;	// patch 101 (USRDIR/noemissfloor.txt turns it off)
 
 static void
 defaultRenderCB(Atomic *atomic, InstanceDataHeader *header)
@@ -692,6 +693,14 @@ leedsRenderCB(Atomic *atomic, InstanceDataHeader *header)
 
 	setWorldMatrix(atomic->getFrame()->getLTM());
 	lightingCB(atomic);	// the ambient light: the emissive part
+	// patch 101: the emission has a floor of 0.2 x the time cycle ambient.
+	// TIMECYC's emission at night is 34,31,40 clear and 2,3,5 in the rain:
+	// with the rain the faces of low prelight (the upper floors, the road)
+	// lost the ~13% lift they have clear and came out pitch black (Ren,
+	// Staunton). 0.2 x ambient is about the clear night's emission; by day
+	// the emission is higher and stays as it is.
+	if(leedsEmissionFloor)
+		liftAmbientToWorld(0.2f);
 
 	bindAttribs(header);
 	setVertexProgram(VP_LEEDS);
