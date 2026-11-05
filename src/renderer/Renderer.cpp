@@ -1034,6 +1034,20 @@ PS3_AimRender(CEntity *hit, CEntity **others, int n, const CVector &cam, const C
 	}
 	bool ta = mat && mat->texture && mat->texture->raster && GETPS3RASTEREXT(mat->texture->raster)->hasAlpha;
 	int meshes = g->meshHeader ? g->meshHeader->numMeshes : 0;
+	// patch 118: which way the triangle faces (its winding): a back face is
+	// what backface culling throws away, the hole shows the clear colour
+	{
+		rw::V3d *v = g->morphTargets[0].vertices;
+		CVector a(v[tr->v[0]].x, v[tr->v[0]].y, v[tr->v[0]].z);
+		CVector b(v[tr->v[1]].x, v[tr->v[1]].y, v[tr->v[1]].z);
+		CVector c(v[tr->v[2]].x, v[tr->v[2]].y, v[tr->v[2]].z);
+		CVector n = Multiply3x3(eBest->GetMatrix(), CrossProduct(b - a, c - a));
+		CVector wa = eBest->GetMatrix() * a, wb = eBest->GetMatrix() * b, wc = eBest->GetMatrix() * c;
+		float facing = DotProduct(n, fwd);
+		PS3_Logf("[aim]   triangle %d faces %s (normal %.2f %.2f %.2f), corners %.1f %.1f %.1f / %.1f %.1f %.1f / %.1f %.1f %.1f, %d vertices",
+		         triBest, facing > 0.0f ? "AWAY (a back face: culled)" : "the camera", n.x, n.y, n.z,
+		         wa.x, wa.y, wa.z, wb.x, wb.y, wb.z, wc.x, wc.y, wc.z, g->numVertices);
+	}
 	PS3_Logf("[aim]   drawn under the centre: %s, %.1f m, triangle %d of %d, material %d of %d (%d meshes): %s (colour %d %d %d %d%s%s), %s%s",
 	         CModelInfo::GetModelInfo(eBest->GetModelIndex())->GetModelName(), tBest, triBest, g->numTriangles,
 	         tr->matId, g->matList.numMaterials, meshes, mat && mat->texture ? mat->texture->name : "no texture",
