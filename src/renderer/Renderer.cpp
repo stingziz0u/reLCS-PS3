@@ -1751,7 +1751,22 @@ CRenderer::SetupEntityVisibility(CEntity *ent)
 		PS3_MarkHighDrawn(ent);
 #endif
 
+#ifdef __PS3__
+		// patch 97: the road shadows of Staunton (pm_treeshad_*, flag noZwrite)
+		// are meshes laid on the ground, partly under it. LCS draws noZwrite
+		// models after the opaque world, without depth writes (Leeds' PASS_NOZ,
+		// reLCS's NEW_RENDERER, which is off on the PS3). Here they were drawn
+		// with the opaque buildings, in the order the sector scan found them,
+		// which follows the camera: drawn before the road under them, the road
+		// painted over them (Ren: the shadow comes and goes with the camera
+		// angle; hiding "shad" in patch 96's mode 4 took it away for good, no
+		// depth bias or test brought it back). The sorted list draws them
+		// after the opaque world and RenderFadingEntities turns off the depth
+		// writes for noZwrite.
+		if(mi->m_drawLast || ent->bDrawLast || mi->m_noZwrite){
+#else
 		if(mi->m_drawLast || ent->bDrawLast){
+#endif
 			if(CVisibilityPlugins::InsertEntityIntoSortedList(ent, dist)){
 				ent->bDistanceFade = false;
 				return VIS_INVISIBLE;
@@ -1927,7 +1942,11 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 			return VIS_INVISIBLE;
 		}
 
+#ifdef __PS3__
+		if(mi->m_drawLast || mi->m_noZwrite){	// patch 97: as above
+#else
 		if(mi->m_drawLast){
+#endif
 			CVisibilityPlugins::InsertEntityIntoSortedList(ent, dist);
 			ent->bDistanceFade = false;
 			PS3_BB(PS3BB_DRAWLAST);
