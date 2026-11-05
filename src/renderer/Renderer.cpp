@@ -2838,6 +2838,19 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 	// This is only the case if there is a non-LOD which is either not
 	// loaded or not completely faded in yet.
 #ifdef __PS3__
+	// patch 129: the near test by the distance to the LOD's bounds, not its
+	// pivot. LODcustroadpm1 (pivot 252 -118, no detailed model of its own,
+	// near distance 136) stretches ~90 m from its pivot over Staunton's
+	// detailed roads: from the wedge (247 -254) its pivot is ~136 m away, so it
+	// was drawn over them until Toni walked closer (patch 128's log: every LOD
+	// drawn there was "beyond its near distance"). Only for LODs up to 150 m
+	// across (not the island LODs). USRDIR/noboundlod.txt: the pivot
+	float ps3PivotDist = dist;
+	if(gPS3BoundLod && ent->GetBoundRadius() < 150.0f){
+		float bd = (ms_vecCameraPosition - ent->GetBoundCentre()).Magnitude() - ent->GetBoundRadius();
+		if(bd < 0.0f) bd = 0.0f;
+		if(bd < dist) dist = bd;
+	}
 	// patch 128: why this LOD is drawn (mode 17 logs it)
 	int ps3Why = dist >= mi->GetNearDistance() ? 1 : dist >= LOD_DISTANCE + STREAM_DISTANCE ? 2 : 0;
 	if(ps3Why == 0 && nonLOD){
@@ -2878,6 +2891,7 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 	}
 
 #ifdef __PS3__
+	dist = ps3PivotDist;	// patch 129: the near test only
 	// patch 96: test mode 7, no LOD near the camera (holes where one was)
 	if(rw::ps3::decalMode == 7 && dist < 100.0f){
 		PS3_BB(PS3BB_HIDDEN);
