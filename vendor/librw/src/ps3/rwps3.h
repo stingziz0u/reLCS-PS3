@@ -193,6 +193,7 @@ extern bool leedsWantSample;	// log the next one drawn
 // they were drawn with since the last reset.
 extern int32 decalMode;
 extern bool decalCur;
+extern bool decalRoad;	// patch 95: the road overlays (meshes after the first, alpha texture)
 struct DecalStats
 {
 	uint32 meshes, textured, texAlpha, vertexAlpha, blendOn, ztestOn, zwriteOn, fogOn, gsAlphaTest, cullNone;

@@ -412,7 +412,13 @@ CVisibilityPlugins::RenderFadingEntities(CLinkList<AlphaObjectInfo> &list)
 				gPS3ShadRendered++;
 			}
 #endif
+#ifdef __PS3__
+			// patch 95: a LOD fades where its stretched draw distance ends
+			RenderFadingAtomic((RpAtomic*)e->m_rwObject, node->item.sort,
+			                   e->bIsBIGBuilding ? PS3_LodFogScale((CSimpleModelInfo*)mi) : 1.0f);
+#else
 			RenderFadingAtomic((RpAtomic*)e->m_rwObject, node->item.sort, 1.0f);
+#endif
 #ifdef __PS3__
 			if(ps3Decal)
 				rw::ps3::decalCur = false;

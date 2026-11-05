@@ -582,6 +582,35 @@ PS3_ShadReport(void)
 	ps3ShadFrames = 0;
 }
 
+// ---- patch 95: LODs (big buildings) are kept until the fog hides them --------
+// [far]: with the fog starting behind the camera, LODs ended at their draw
+// distance with 40-80% fog (LODebarrier_gaz2 at 545 m, LODroad_se_12 at
+// 1090 m, the tunnel LODs at 422 m): the city far away appeared and went
+// in steps. Their draw distance is stretched until the fog there is 97%
+// (at most x3), the same scale for the cut, the streaming request and the
+// fade. USRDIR/nolodfog.txt turns it off.
+static int ps3LodFogOn = -1;
+
+float
+PS3_LodFogScale(CSimpleModelInfo *mi)
+{
+	if(ps3LodFogOn < 0){
+		FILE *f = fopen(PS3_USRDIR "/nolodfog.txt", "rb");
+		ps3LodFogOn = f == nil;
+		if(f)
+			fclose(f);
+		PS3_Logf("[far] LODs kept until the fog hides them: %s", ps3LodFogOn ? "on (nolodfog.txt turns it off)" : "off (nolodfog.txt)");
+	}
+	if(!ps3LodFogOn || Scene.camera == nil || mi == nil || !mi->m_isBigBuilding)
+		return 1.0f;
+	float fogStart = Scene.camera->fogPlane, farClip = Scene.camera->farPlane;
+	float reach = fogStart + 0.97f*(farClip - fogStart);	// 97% fog there
+	float lodEnd = mi->GetLodDistance(0) + FADE_DISTANCE;
+	if(lodEnd <= 0.0f || reach <= lodEnd)
+		return 1.0f;
+	return Min(reach/lodEnd, 3.0f);
+}
+
 // ---- patch 94: "[near]", every building model drawn within 60 m, once: its
 // materials (texture, material alpha, texture alpha). The road shadows of
 // Staunton aren't pm_treeshad_* (that one was behind the camera): this
@@ -616,6 +645,24 @@ PS3_NearInventory(CEntity *e)
 	}
 	CVector p = e->GetPosition();
 	CSimpleModelInfo *mi = (CSimpleModelInfo*)CModelInfo::GetModelInfo(id);
+	// patch 95: the average prelight of each mesh (a shadow overlay is dark)
+	if(g->colors && g->meshHeader && mi->m_wetRoadReflection){
+		char mb[400] = "";
+		rw::Mesh *mesh = g->meshHeader->getMeshes();
+		for(uint32 k = 0; k < g->meshHeader->numMeshes && k < 8; k++, mesh++){
+			uint32 r = 0, gg = 0, b = 0, al = 0, n = 0;
+			for(uint32 j = 0; j < mesh->numIndices; j++){
+				rw::RGBA &c = g->colors[mesh->indices[j]];
+				r += c.red; gg += c.green; b += c.blue; al += c.alpha; n++;
+			}
+			if(n == 0) n = 1;
+			char t[64];
+			snprintf(t, sizeof(t), "%s%s %u/%u/%u a%u", k ? ", " : "",
+			         mesh->material && mesh->material->texture ? mesh->material->texture->name : "none", r/n, gg/n, b/n, al/n);
+			strncat(mb, t, sizeof(mb) - strlen(mb) - 1);
+		}
+		PS3_Logf("[near]   %s meshes, average prelight: %s", mi->GetModelName(), mb);
+	}
 	PS3_Logf("[near] %s at %.0f %.0f %.1f, %d m away: %d materials: %s%s%s%s", mi->GetModelName(), p.x, p.y, p.z,
 	         (int)(e->GetPosition() - TheCamera.GetPosition()).Magnitude2D(), g->matList.numMaterials, buf,
 	         mi->m_wetRoadReflection ? " | road" : "", mi->m_drawLast ? " | drawLast" : "", mi->m_noZwrite ? " | noZwrite" : "");
@@ -637,6 +684,8 @@ PS3_FarNoteCut(CEntity *ent, float dist)
 {
 	if(!PS3_logsOn || Scene.camera == nil || !ent->GetIsOnScreen())
 		return;
+	if(strncasecmp(CModelInfo::GetModelInfo(ent->GetModelIndex())->GetModelName(), "IslandLOD", 9) == 0)
+		return;	// patch 95: the other islands' LODs, deleted on purpose for this level
 	float fogStart = Scene.camera->fogPlane, farClip = Scene.camera->farPlane;
 	float fog = farClip > fogStart ? (dist - fogStart)/(farClip - fogStart) : 1.0f;	// 1: all fog
 	if(fog >= 0.9f)
@@ -904,8 +953,12 @@ CRenderer::RenderOneRoad(CEntity *e)
 #ifdef __PS3__
 		if(PS3_logsOn)
 			PS3_NoteBuildingDrawn(e);	// patch 78: "[dark]"
+		rw::ps3::decalRoad = true;	// patch 95: its overlays go through the decal test modes
 #endif
 		e->Render();
+#ifdef __PS3__
+		rw::ps3::decalRoad = false;
+#endif
 
 		POP_RENDERGROUP();
 	}
@@ -1786,7 +1839,13 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 		}
 	}
 
-	RpAtomic *a = mi->GetFirstAtomicFromDistance(dist);
+#ifdef __PS3__
+	// patch 95: the distance the draw distance is compared with (the fog)
+	float lodDist = dist / PS3_LodFogScale(mi);
+#else
+	float lodDist = dist;
+#endif
+	RpAtomic *a = mi->GetFirstAtomicFromDistance(lodDist);
 	if(a){
 		if(ent->m_rwObject == nil)
 			ent->CreateRwObject();
@@ -1833,9 +1892,9 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 
 
 	// get faded atomic
-	a = mi->GetFirstAtomicFromDistance(dist - FADE_DISTANCE);
+	a = mi->GetFirstAtomicFromDistance(lodDist - FADE_DISTANCE);
 	if(a == nil){
-		if(ent->bStreamBIGBuilding && dist-STREAM_DISTANCE-FADE_DISTANCE < mi->GetLodDistance(0) && request){
+		if(ent->bStreamBIGBuilding && lodDist-STREAM_DISTANCE-FADE_DISTANCE < mi->GetLodDistance(0) && request){
 			PS3_BB(PS3BB_STREAM);
 			return ent->GetIsOnScreen() ? VIS_STREAMME : VIS_INVISIBLE;
 		}else{

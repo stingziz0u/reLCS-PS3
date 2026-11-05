@@ -512,6 +512,7 @@ drawInstImpl(InstanceDataHeader *header, InstanceData *inst)
 // ---- patch 93: the road shadow decals, what they're drawn with and test modes ----
 int32 decalMode;
 bool decalCur;
+bool decalRoad;	// patch 95: a road is being drawn: its meshes after the first with an alpha texture (dirt, shadows) are overlays
 DecalStats decalStats;
 
 static void
@@ -592,7 +593,9 @@ drawDecal(InstanceDataHeader *header, InstanceData *inst)
 static void
 drawInst(InstanceDataHeader *header, InstanceData *inst)
 {
-	if(decalCur || inst->decal){
+	if(decalCur || inst->decal ||
+	   decalRoad && inst != header->inst && inst->material->texture && inst->material->texture->raster &&
+	   GETPS3RASTEREXT(inst->material->texture->raster)->hasAlpha){
 		drawDecal(header, inst);
 		return;
 	}
