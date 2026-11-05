@@ -934,6 +934,17 @@ PS3_GameMain(void)
 		PS3_Logf("[5] buildings without prelight: %s", rw::ps3::leedsUnlitLift ?
 		         "lit by the time cycle ambient (nounlitlift.txt turns it off)" : "lit by the emission only (nounlitlift.txt)");
 	}
+	// patch 119: the meshes in the windings of their geometry's triangles
+	// (part of a Staunton road was turned over: culled, a dark wedge)
+	{
+		FILE *wf = fopen(PS3_USRDIR "/nowindfix.txt", "rb");
+		if (wf) {
+			fclose(wf);
+			rw::ps3::windFix = false;
+		}
+		PS3_Logf("[5] mesh windings: %s", rw::ps3::windFix ?
+		         "checked against the geometry's triangles (nowindfix.txt turns it off)" : "as the strips give them (nowindfix.txt)");
+	}
 	// patch 101: the Leeds emission floor (black buildings in the rain at night)
 	{
 		FILE *ef = fopen(PS3_USRDIR "/noemissfloor.txt", "rb");

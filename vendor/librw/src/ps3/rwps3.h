@@ -185,6 +185,8 @@ extern float leedsBiasFactor, leedsBiasUnits;	// their polygon offset (USRDIR/le
 extern bool leedsLighting;	// the Leeds world pipeline draws as LCS (false: as the default pipeline)
 extern bool leedsUnlitLift;	// patch 100: buildings without prelight get the time cycle ambient (USRDIR/nounlitlift.txt turns it off)
 void liftAmbientToWorld(float32 k);
+extern bool windFix;	// patch 119: meshes drawn with the windings of the geometry's triangles (USRDIR/nowindfix.txt turns it off)
+extern uint32 windFixGeos, windFixTris;	// geometries and triangles turned so far
 extern bool leedsEmissionFloor;	// patch 101: Leeds emission at least 0.2 x the time cycle ambient (USRDIR/noemissfloor.txt turns it off)
 extern uint32 leedsDraws;	// patch 33: Leeds models drawn this frame (diagnostics)
 extern bool leedsWantSample;	// log the next one drawn

@@ -582,6 +582,8 @@ logStats(void)
 	       vramEvictions, rasterStats.noVram, rasterStats.packedDXT);
 	rsxLog("[rsx]   frames over 20 ms: %u, over 50 ms: %u, worst %.1f ms",
 	       slowFrames, verySlowFrames, worstFrameUs/1000.0);
+	if(windFixGeos)
+		rsxLog("[rsx]   windings (patch 119): %u triangles turned in %u geometries so far", windFixTris, windFixGeos);
 	TexProfile &t = texProfile;
 	if(t.txds || t.models || t.others)
 		rsxLog("[tex]   streaming: %u TXDs %.1f ms, %u models %.1f ms (DFF parse %.1f, setup %.1f), %u other %.1f ms; "

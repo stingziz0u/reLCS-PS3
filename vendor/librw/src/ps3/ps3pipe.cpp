@@ -138,6 +138,103 @@ destroyNativeData(void *object, int32, int32)
 	return object;
 }
 
+// ---- res-PS3 patch 119: the windings ----------------------------------------
+// The converted LCS meshes are triangle strips, and some strips (a part of
+// FS_custroadA1 at Staunton's traffic light: a dark wedge, the road seen only
+// from below) come out with their triangles turned the other way: with
+// backface culling the GPU throws them away. The geometry's own triangle list
+// has them right (the camera ray: the normal up, turned away from below). So
+// every mesh is drawn as a triangle list, each triangle in the winding of the
+// geometry triangle with the same corners. One with both windings in the
+// geometry (double sided) or none is kept as the strip gives it.
+bool windFix = true;
+uint32 windFixGeos, windFixTris;
+
+struct WindSlot { uint64 key; int8 dir; };	// dir: 1 / -1, 2 both (keep)
+
+static inline uint64
+windKey(uint32 a, uint32 b, uint32 c, int *dir)
+{
+	// sorted corners; dir: whether (a,b,c) is an even rotation of the sorted order
+	uint32 lo = a, mid = b, hi = c;
+	if(lo > mid){ uint32 t = lo; lo = mid; mid = t; }
+	if(mid > hi){ uint32 t = mid; mid = hi; hi = t; }
+	if(lo > mid){ uint32 t = lo; lo = mid; mid = t; }
+	// (a,b,c) is an even rotation of (lo,mid,hi) when, starting from lo, mid comes next
+	bool even = (a == lo && b == mid) || (b == lo && c == mid) || (c == lo && a == mid);
+	*dir = even ? 1 : -1;
+	return ((uint64)lo << 32) | ((uint64)mid << 16) | hi;
+}
+
+static WindSlot*
+windTableBuild(Geometry *geo, uint32 *maskOut)
+{
+	uint32 size = 16;
+	while(size < (uint32)geo->numTriangles*2) size <<= 1;
+	WindSlot *t = (WindSlot*)rwMalloc(size*sizeof(WindSlot), MEMDUR_FUNCTION | ID_GEOMETRY);
+	if(t == nil)
+		return nil;
+	for(uint32 i = 0; i < size; i++) t[i].key = ~0ull;
+	uint32 mask = size - 1;
+	for(int32 i = 0; i < geo->numTriangles; i++){
+		Triangle *tr = &geo->triangles[i];
+		if(tr->v[0] == tr->v[1] || tr->v[1] == tr->v[2] || tr->v[0] == tr->v[2])
+			continue;
+		int dir;
+		uint64 k = windKey(tr->v[0], tr->v[1], tr->v[2], &dir);
+		uint32 h = (uint32)((k * 0x9E3779B97F4A7C15ull) >> 40) & mask;
+		while(t[h].key != ~0ull && t[h].key != k) h = (h + 1) & mask;
+		if(t[h].key == k){
+			if(t[h].dir != dir) t[h].dir = 2;
+		}else{
+			t[h].key = k;
+			t[h].dir = dir;
+		}
+	}
+	*maskOut = mask;
+	return t;
+}
+
+static int
+windLookup(WindSlot *t, uint32 mask, uint64 k)
+{
+	uint32 h = (uint32)((k * 0x9E3779B97F4A7C15ull) >> 40) & mask;
+	while(t[h].key != ~0ull){
+		if(t[h].key == k) return t[h].dir;
+		h = (h + 1) & mask;
+	}
+	return 0;
+}
+
+// a strip (or a list) to a list in the geometry's windings; returns the count
+static uint32
+windMesh(Mesh *mesh, bool strip, WindSlot *t, uint32 mask, uint16 *out, uint32 *turned)
+{
+	uint32 n = 0;
+	uint16 *ix = mesh->indices;
+	uint32 count = strip ? (mesh->numIndices >= 3 ? mesh->numIndices - 2 : 0) : mesh->numIndices/3;
+	for(uint32 i = 0; i < count; i++){
+		uint32 a, b, c;
+		if(strip){
+			a = ix[i]; b = ix[i+1]; c = ix[i+2];
+			if(i & 1){ uint32 x = a; a = b; b = x; }	// the GPU's winding of an odd strip triangle
+		}else{
+			a = ix[i*3]; b = ix[i*3+1]; c = ix[i*3+2];
+		}
+		if(a == b || b == c || a == c)
+			continue;	// a strip's joint
+		int dir;
+		uint64 k = windKey(a, b, c, &dir);
+		int want = windLookup(t, mask, k);
+		if((want == 1 || want == -1) && want != dir){
+			uint32 x = a; a = b; b = x;
+			(*turned)++;
+		}
+		out[n++] = a; out[n++] = b; out[n++] = c;
+	}
+	return n;
+}
+
 static InstanceDataHeader*
 instanceMesh(rw::ObjPipeline *rwpipe, Geometry *geo)
 {
@@ -153,6 +250,62 @@ instanceMesh(rw::ObjPipeline *rwpipe, Geometry *geo)
 	header->totalNumVertex = geo->numVertices;
 	header->totalNumIndex = meshh->totalIndices;
 	header->inst = rwNewT(InstanceData, header->numMeshes, MEMDUR_EVENT | ID_GEOMETRY);
+
+	// patch 119: the windings checked against the geometry's triangles; only
+	// a geometry with a turned triangle is drawn as lists (the rest as before)
+	if(windFix && geo->triangles && geo->numTriangles > 0 && geo->numVertices <= 0xFFFF){
+		bool strip = meshh->flags == 1;
+		uint32 mask;
+		WindSlot *t = windTableBuild(geo, &mask);
+		if(t){
+			uint32 maxIdx = 0;
+			Mesh *m = meshh->getMeshes();
+			for(uint32 i = 0; i < meshh->numMeshes; i++, m++)
+				maxIdx += strip ? (m->numIndices >= 3 ? (m->numIndices - 2)*3 : 0) : m->numIndices;
+			uint16 *list = (uint16*)rwMalloc(maxIdx*2 + 16, MEMDUR_FUNCTION | ID_GEOMETRY);
+			uint32 *counts = (uint32*)rwMalloc(meshh->numMeshes*4 + 4, MEMDUR_FUNCTION | ID_GEOMETRY);
+			uint32 turned = 0, total = 0;
+			if(list && counts){
+				m = meshh->getMeshes();
+				for(uint32 i = 0; i < meshh->numMeshes; i++, m++){
+					counts[i] = windMesh(m, strip, t, mask, list + total, &turned);
+					total += counts[i];
+				}
+			}
+			rwFree(t);
+			if(list && counts && turned){
+				windFixGeos++;
+				windFixTris += turned;
+				header->primType = GCM_TYPE_TRIANGLES;
+				header->totalNumIndex = total;
+				if(!vramAlloc(&header->ib, total*2 + 16, "index buffer")){
+					header->numMeshes = 0;
+					rwFree(list); rwFree(counts);
+					return header;
+				}
+				InstanceData *inst = header->inst;
+				Mesh *mesh = meshh->getMeshes();
+				uint32 off = 0;
+				for(uint32 i = 0; i < header->numMeshes; i++, mesh++, inst++){
+					uint16 *mi = list + off/2;
+					findMinVertAndNumVertices(mi, counts[i], &inst->minVert, &inst->numVertices);
+					inst->numIndex = counts[i];
+					inst->material = mesh->material;
+					inst->vertexAlpha = 0;
+					inst->offset = off;
+					inst->decal = isShadowTexture(mesh->material);
+					off += counts[i]*2;
+				}
+				memcpy(header->ib.ptr, list, off);
+				vramFlush(header->ib.ptr, off);
+				vertexCacheTouched();
+				rwFree(list); rwFree(counts);
+				return header;
+			}
+			if(list) rwFree(list);
+			if(counts) rwFree(counts);
+		}
+	}
 
 	if(!vramAlloc(&header->ib, header->totalNumIndex*2 + 16, "index buffer")){
 		header->numMeshes = 0;
