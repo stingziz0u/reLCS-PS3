@@ -1757,6 +1757,21 @@ bool leedsLighting = true;
 uint32 leedsDraws;
 bool leedsWantSample;
 
+// patch 100: a building without prelight is lit by the lights, and the
+// ambient light is LCS's emission (TIMECYC's third colour): 2,3,5 in the
+// rain at night, so those buildings came out black (Staunton, Ren's photos).
+// Their ambient is raised to the time cycle ambient the prelit ones get.
+bool leedsUnlitLift = true;
+
+void
+liftAmbientToWorld(float32 k)
+{
+	if(ambLight.red < worldAmb[0]*k) ambLight.red = worldAmb[0]*k;
+	if(ambLight.green < worldAmb[1]*k) ambLight.green = worldAmb[1]*k;
+	if(ambLight.blue < worldAmb[2]*k) ambLight.blue = worldAmb[2]*k;
+	lightsDirty = true;
+}
+
 void
 setWorldAmbient(float32 r, float32 g, float32 b)
 {

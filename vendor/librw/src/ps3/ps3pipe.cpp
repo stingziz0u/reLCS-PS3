@@ -633,6 +633,8 @@ lightingCB(Atomic *atomic)
 	}
 }
 
+static bool liftAmbient;	// patch 100: set by leedsRenderCB for a building without prelight
+
 static void
 defaultRenderCB(Atomic *atomic, InstanceDataHeader *header)
 {
@@ -641,6 +643,8 @@ defaultRenderCB(Atomic *atomic, InstanceDataHeader *header)
 	uint32 flags = atomic->geometry->flags;
 	setWorldMatrix(atomic->getFrame()->getLTM());
 	lightingCB(atomic);
+	if(liftAmbient)
+		liftAmbientToWorld(0.9f);	// ~ a prelit model of mid prelight x 255/128
 
 	bindAttribs(header);
 	setVertexProgram(VP_DEFAULT);
@@ -679,7 +683,9 @@ static void
 leedsRenderCB(Atomic *atomic, InstanceDataHeader *header)
 {
 	if(!leedsLighting || !(atomic->geometry->flags & Geometry::PRELIT)){
+		liftAmbient = leedsLighting && leedsUnlitLift;
 		defaultRenderCB(atomic, header);
+		liftAmbient = false;
 		return;
 	}
 	Material *m;

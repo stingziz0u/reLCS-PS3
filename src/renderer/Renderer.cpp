@@ -882,8 +882,9 @@ PS3_WeatherReport(void)
 	         CTimeCycle::GetFarClip(), CTimeCycle::GetFogStart());
 }
 
-enum { PS3DARK_UNKNOWN, PS3DARK_OK, PS3DARK_PRELIT, PS3DARK_UNLIT, PS3DARK_NOTEX };
-static const char *ps3DarkWhy[] = { "?", "ok", "prelight nearly black", "no prelight, no normals or lighting", "textured mesh without its texture" };
+enum { PS3DARK_UNKNOWN, PS3DARK_OK, PS3DARK_PRELIT, PS3DARK_UNLIT, PS3DARK_NOTEX, PS3DARK_NOPRELIT };
+static const char *ps3DarkWhy[] = { "?", "ok", "prelight nearly black", "no prelight, no normals or lighting", "textured mesh without its texture",
+	"no prelight: lit by the ambient light (patch 100 lifts it)" };
 struct PS3DarkSeen { int16 model; uint8 why; uint8 lod; int16 prelit; float dist; };
 static PS3DarkSeen ps3DarkSeen[16];
 static int32 ps3NumDarkSeen, ps3DarkDrawn, ps3BuildingsDrawn;
@@ -913,7 +914,7 @@ PS3_ClassifyBuilding(RpAtomic *atomic, int32 *prelitAvg)
 	}
 	if(!(g->flags & rw::Geometry::NORMALS) || !(g->flags & rw::Geometry::LIGHT))
 		return PS3DARK_UNLIT;
-	return PS3DARK_OK;
+	return PS3DARK_NOPRELIT;	// patch 100: listed too, black in the rain at night before
 }
 
 static void

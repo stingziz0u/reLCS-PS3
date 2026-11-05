@@ -183,6 +183,8 @@ extern bool fxaaOn;		// FXAA on the camera's picture before it is shown
 extern bool leedsBiasOn;	// patch 66: a Leeds model's meshes after the first drawn a little in front (default off; USRDIR/leedsbias.txt turns it on)
 extern float leedsBiasFactor, leedsBiasUnits;	// their polygon offset (USRDIR/leedsbias.txt: "factor units")
 extern bool leedsLighting;	// the Leeds world pipeline draws as LCS (false: as the default pipeline)
+extern bool leedsUnlitLift;	// patch 100: buildings without prelight get the time cycle ambient (USRDIR/nounlitlift.txt turns it off)
+void liftAmbientToWorld(float32 k);
 extern uint32 leedsDraws;	// patch 33: Leeds models drawn this frame (diagnostics)
 extern bool leedsWantSample;	// log the next one drawn
 // res-PS3 patch 93: the road shadow decals (models with "shad" in the name;

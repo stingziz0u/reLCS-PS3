@@ -924,6 +924,16 @@ PS3_GameMain(void)
 		PS3_Logf("[5] Leeds overlay depth bias: %s (factor %.1f, units %.1f; leedsbias.txt turns it on)",
 		         rw::ps3::leedsBiasOn ? "ON (leedsbias.txt)" : "off", rw::ps3::leedsBiasFactor, rw::ps3::leedsBiasUnits);
 	}
+	// patch 100: buildings without prelight lit by the time cycle ambient
+	{
+		FILE *nl = fopen(PS3_USRDIR "/nounlitlift.txt", "rb");
+		if (nl) {
+			fclose(nl);
+			rw::ps3::leedsUnlitLift = false;
+		}
+		PS3_Logf("[5] buildings without prelight: %s", rw::ps3::leedsUnlitLift ?
+		         "lit by the time cycle ambient (nounlitlift.txt turns it off)" : "lit by the emission only (nounlitlift.txt)");
+	}
 	// patch 28: the LOD buildings' pairing with their detailed instances and
 	// the occluders, both switchable to compare the pop-in
 	{
