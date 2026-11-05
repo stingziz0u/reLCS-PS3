@@ -483,6 +483,11 @@ CEntity::Render(void)
 				bImBeingRendered = false;
 				return;
 			}
+			if(IsBuilding() && !bIsBIGBuilding){
+				// patch 127: every detailed building drawn, for the LODs' choice next frame
+				extern void PS3_NoteDrawnBuilding(CEntity *e);
+				PS3_NoteDrawnBuilding(this);
+			}
 			extern bool gPS3DiffOn;	// patch 123: test mode 17
 			if(gPS3DiffOn){
 				extern void PS3_DiffDrawn(CEntity *e);

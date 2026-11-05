@@ -243,6 +243,18 @@ PS3_NoteDrawn(CEntity *ent)
 		ps3DrawnCentre[k][ps3NumDrawn[k]++] = ent->GetBoundCentre();
 }
 
+// patch 127: noted where the detailed buildings are really drawn
+// (CEntity::Render), whatever list brought them there. Patch 124 noted them
+// in SetupEntityVisibility, past the early returns some take (bDontStream,
+// draw last...): LODcustroadA1 (the wedge's LOD, its bounds holding the
+// wedge) found nothing inside and stayed over FS_custroadA1 ("kept, detailed
+// one not drawn" 19-20 a frame; mode 18 without LODs: the wedge gone, Ren)
+void
+PS3_NoteDrawnBuilding(CEntity *e)
+{
+	PS3_NoteDrawn(e);
+}
+
 // a detailed instance drawn (this frame so far, or the frame before) inside this LOD's bounds
 static bool
 PS3_HighDrawnInside(CEntity *lod)
