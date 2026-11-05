@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"	// patch 102: gPS3Tick30Now
+#endif
 
 #include "Automobile.h"
 #include "Bike.h"
@@ -449,7 +452,11 @@ CExplosion::Update()
 						CCoronas::RegisterCorona((uintptr)&explosion, 128, 0, 0, 255, explosion.m_vecPosition, 8.0f, 80.0f, gpCoronaTexture[0], CCoronas::TYPE_NORMAL, CCoronas::REFLECTION_ON, CCoronas::LOSCHECK_OFF, CCoronas::STREAK_OFF, 0.0f);
 
 					CCoronas::RegisterCorona((uintptr)&explosion + 1, 30, 15, 0, 255, explosion.m_vecPosition, explosion.m_fRadius, 80.0f, gpCoronaTexture[7], CCoronas::TYPE_STAR, CCoronas::REFLECTION_OFF, CCoronas::LOSCHECK_OFF, CCoronas::STREAK_OFF, 0.0f);
+#ifdef __PS3__
+				} else if (gPS3Tick30Now && (gPS3Ticks30 & 1)) {	// patch 102: 15 a second, as at 30 fps
+#else
 				} else if (explosion.m_nIteration & 1) {
+#endif
 					if (explosion.m_pVictimEntity != nil)
 						CParticle::AddParticle(PARTICLE_ENGINE_SMOKE2, explosion.m_pVictimEntity->GetPosition(), CVector(0.0f, 0.0f, 0.0f), nil, CGeneral::GetRandomNumberInRange(0.5f, 0.8f), color);
 					CVector pos = explosion.m_vecPosition;

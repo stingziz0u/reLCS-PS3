@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"	// patch 102: gPS3Tick30Now
+#endif
 
 #include "main.h"
 #include "TxdStore.h"
@@ -359,6 +362,22 @@ CShadows::StoreStaticShadow(uint32 nID, uint8 ShadowType, RwTexture *pTexture, C
 				
 				return true;
 			}
+#ifdef __PS3__
+			// patch 102: a shadow that moved (the cars' headlight pools at
+			// night, 2-4 recast a frame, 0.2-0.35 ms) is cast again on the 30
+			// fps ticks; in between it keeps last frame's polygons, as the PS2
+			// at 30 fps did
+			else if ( !gPS3Tick30Now )
+			{
+				aStaticShadows[nSlot].m_bJustCreated     = true;
+				aStaticShadows[nSlot].m_nIntensity       = nIntensity;
+				aStaticShadows[nSlot].m_nRed             = nRed;
+				aStaticShadows[nSlot].m_nGreen           = nGreen;
+				aStaticShadows[nSlot].m_nBlue            = nBlue;
+				aStaticShadows[nSlot].m_nTimeCreated     = CTimer::GetTimeInMilliseconds();
+				return true;
+			}
+#endif
 			else
 			{
 				aStaticShadows[nSlot].Free();

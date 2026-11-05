@@ -4541,6 +4541,11 @@ float fSpeedMult[] = {
 	0.85f
 };
 
+#ifdef __PS3__
+#define PS3_FRAMESEED (gPS3Ticks30 + m_randomSeed)	// patch 102: counted in 30 fps ticks
+#else
+#define PS3_FRAMESEED (CTimer::GetFrameCounter() + m_randomSeed)
+#endif
 void
 CAutomobile::AddDamagedVehicleParticles(void)
 {
@@ -4548,8 +4553,19 @@ CAutomobile::AddDamagedVehicleParticles(void)
 
 	if(this == FindPlayerVehicle() && TheCamera.GetLookingForwardFirstPerson())
 		return;
-	if(this != FindPlayerVehicle() && (CTimer::GetFrameCounter() + m_randomSeed) & 1)
+#ifdef __PS3__
+	// patch 102: smoke, sparks and flames of a damaged car were added every
+	// frame (the player's) or every other frame: twice the PS2's at 60 fps
+	// (ENGINE_SMOKE2 alone 5 screens of fill in the pile-up of the streaming
+	// test). On the 30 fps ticks, counted in ticks.
+	if(!gPS3Tick30Now)
 		return;
+	if(this != FindPlayerVehicle() && (gPS3Ticks30 + m_randomSeed) & 1)
+		return;
+#else
+	if(this != FindPlayerVehicle() && PS3_FRAMESEED & 1)
+		return;
+#endif
 	if(m_fHealth >= 650.0f)
 		return;
 
@@ -4591,7 +4607,7 @@ CAutomobile::AddDamagedVehicleParticles(void)
 		n = (CGeneral::GetRandomNumber() & 7) + 2;
 		for(i = 0; i < n; i++)
 			CParticle::AddParticle(PARTICLE_SPARK_SMALL, damagePos, direction);
-		if(((CTimer::GetFrameCounter() + m_randomSeed) & 7) == 0)
+		if((PS3_FRAMESEED & 7) == 0)
 			CParticle::AddParticle(PARTICLE_ENGINE_SMOKE2, damagePos, 0.8f*m_vecMoveSpeed, nil, 0.1f, 0, 0, 0, 1000);
 	}else if(electric && m_fHealth < 460.0f){
 		direction = 0.85f*m_vecMoveSpeed;
@@ -4600,7 +4616,7 @@ CAutomobile::AddDamagedVehicleParticles(void)
 		n = (CGeneral::GetRandomNumber() & 3) + 1;
 		for(i = 0; i < n; i++)
 			CParticle::AddParticle(PARTICLE_SPARK_SMALL, damagePos, direction);
-		if(((CTimer::GetFrameCounter() + m_randomSeed) & 0xF) == 0)
+		if((PS3_FRAMESEED & 0xF) == 0)
 			CParticle::AddParticle(PARTICLE_ENGINE_SMOKE, damagePos, 0.8f*m_vecMoveSpeed, nil, 0.1f, 0, 0, 0, 1000);
 	}else if(m_fHealth < 250.0f){
 		// nothing
@@ -4610,8 +4626,8 @@ CAutomobile::AddDamagedVehicleParticles(void)
 		CParticle::AddParticle(PARTICLE_ENGINE_STEAM, damagePos, fSpeedMult[1]*direction);
 		CParticle::AddParticle(PARTICLE_ENGINE_SMOKE, damagePos, fSpeedMult[2]*direction);
 	}else if(m_fHealth < 460.0f){
-		if(((CTimer::GetFrameCounter() + m_randomSeed) & 3) == 0 ||
-		   ((CTimer::GetFrameCounter() + m_randomSeed) & 3) == 2)
+		if((PS3_FRAMESEED & 3) == 0 ||
+		   (PS3_FRAMESEED & 3) == 2)
 			CParticle::AddParticle(PARTICLE_ENGINE_STEAM, damagePos, fSpeedMult[3]*direction);
 	}else{
 		int rnd = CTimer::GetFrameCounter() + m_randomSeed;
@@ -4629,12 +4645,12 @@ CAutomobile::AddDamagedVehicleParticles(void)
 			n = (CGeneral::GetRandomNumber() & 2) + 2;
 			for(i = 0; i < n; i++)
 				CParticle::AddParticle(PARTICLE_SPARK_SMALL, damagePos, direction);
-			if(((CTimer::GetFrameCounter() + m_randomSeed) & 0xF) == 0)
+			if((PS3_FRAMESEED & 0xF) == 0)
 				CParticle::AddParticle(PARTICLE_ENGINE_SMOKE, damagePos, 0.8f*m_vecMoveSpeed, nil, 0.1f, 0, 0, 0, 1000);
 		}else{
 			if(TheCamera.GetLookDirection() != LOOKING_FORWARD)
 				CParticle::AddParticle(PARTICLE_ENGINE_STEAM, damagePos, direction);
-			else if(((CTimer::GetFrameCounter() + m_randomSeed) & 1) == 0)
+			else if((PS3_FRAMESEED & 1) == 0)
 				CParticle::AddParticle(PARTICLE_ENGINE_STEAM, damagePos, fSpeedMult[4]*m_vecMoveSpeed);
 		}
 	}

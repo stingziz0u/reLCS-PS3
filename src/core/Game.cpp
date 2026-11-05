@@ -1192,6 +1192,9 @@ void CGame::InitialiseWhenRestarting(void)
 
 void CGame::Process(void) 
 {
+#ifdef __PS3__
+	PS3_UpdateTick30();	// patch 102
+#endif
 	if (FrontEndMenuManager.m_bWantToLoad) {
 		/* Match reStories PC and the native LCS memory-card flow: saved running
 		 * scripts are not resumed because their entity handles are transient.  MAIN

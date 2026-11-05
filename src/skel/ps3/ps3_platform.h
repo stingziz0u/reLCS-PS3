@@ -96,6 +96,9 @@ void PS3_SpuTaskStop(PS3SpuTask *t);
 bool PS3_IsShadModel(int id);		// patch 93: model with "shad" in the name (Renderer.cpp)
 extern unsigned int gPS3ShadRendered;	// patch 93
 void PS3_DecalTestPad(void);		// patch 93: R3 + Select, the road shadow test modes
+extern bool gPS3Tick30Now;		// patch 102: a 30 fps tick happened this frame (Weather.cpp)
+extern unsigned int gPS3Ticks30;	// patch 102: 30 fps ticks so far
+void PS3_UpdateTick30(void);		// patch 102: CGame::Process
 class CEntity;
 void PS3_NearInventory(CEntity *e);	// patch 94: "[near]" (Renderer.cpp)
 class CSimpleModelInfo;

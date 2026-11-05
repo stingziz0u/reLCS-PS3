@@ -147,6 +147,24 @@ const float Windyness[] = {
 // ray casts and twice the fill, and the steam after the rain ran for half
 // the time. As the fire (patch 86) and the heli dust (patch 90): it runs
 // at 30 ticks a second. True on the frames where a 1/30 s tick happened.
+// patch 102: one 30 fps tick for the whole frame (CGame::Process), for the
+// effects that count frames: gPS3Tick30Now on the frames where one happened,
+// gPS3Ticks30 how many so far (in place of the frame counter)
+bool gPS3Tick30Now = true;
+uint32 gPS3Ticks30;
+
+bool
+PS3_Tick30(float &acc);
+
+void
+PS3_UpdateTick30(void)
+{
+	static float acc;
+	gPS3Tick30Now = PS3_Tick30(acc);
+	if(gPS3Tick30Now)
+		gPS3Ticks30++;
+}
+
 bool
 PS3_Tick30(float &acc)
 {
