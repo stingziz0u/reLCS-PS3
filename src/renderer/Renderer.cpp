@@ -1087,6 +1087,8 @@ PS3_AimRender(CEntity *hit, CEntity **others, int n, const CVector &cam, const C
 		if(!found)
 			PS3_Log("[aim]   same place: no other triangle of the model");
 	}
+	PS3_Logf("[aim]   geometry flags 0x%x (%s), %s", g->flags, (g->flags & rw::Geometry::PRELIT) ? "PRELIT: the Leeds pipeline" : "not prelit: lit by the lights",
+	         g->colors ? "colours kept" : "no colours");
 	PS3_Logf("[aim]   drawn under the centre: %s, %.1f m, triangle %d of %d, material %d of %d (%d meshes): %s (colour %d %d %d %d%s%s), %s%s",
 	         CModelInfo::GetModelInfo(eBest->GetModelIndex())->GetModelName(), tBest, triBest, g->numTriangles,
 	         tr->matId, g->matList.numMaterials, meshes, mat && mat->texture ? mat->texture->name : "no texture",
@@ -1327,6 +1329,7 @@ PS3_FreeCamPad(void)
 			rw::ps3::aimHideMaterial = nil;
 			gPS3WatchNum = 0;
 			rw::ps3::forceNoCull = false;
+			rw::ps3::leedsDebug = 0;
 			ps3WatchLastEnt = nil;
 			ps3WatchLastMat = nil;
 		}
@@ -1398,6 +1401,16 @@ PS3_FreeCamPad(void)
 				PS3_Logf("[free] %s", msg + 7);
 				AsciiToUnicode(msg, ps3AimMsg);
 			}
+			CHud::SetHelpMessage(ps3AimMsg, true);
+		}else if(down & PS3B(GLFW_GAMEPAD_BUTTON_DPAD_LEFT)){
+			// patch 121: the buildings' prelight: as is / ignored (flat) / alone
+			rw::ps3::leedsDebug = (rw::ps3::leedsDebug + 1) % 3;
+			static const char *const names[] = { "luz normal", "SIN prelight (plano)", "SOLO prelight" };
+			static const char *const lognames[] = { "as is", "the prelight ignored (flat)", "the prelight alone" };
+			PS3_Logf("[free] D-pad left: Leeds lighting %s", lognames[rw::ps3::leedsDebug]);
+			char msg[96];
+			snprintf(msg, sizeof(msg), "Libre: %s", names[rw::ps3::leedsDebug]);
+			AsciiToUnicode(msg, ps3AimMsg);
 			CHud::SetHelpMessage(ps3AimMsg, true);
 		}else if(down & PS3B(GLFW_GAMEPAD_BUTTON_DPAD_UP)){
 			// patch 117: no backface culling at all (the inside of a building

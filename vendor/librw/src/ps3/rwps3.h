@@ -201,7 +201,9 @@ extern int32 decalMode;
 extern bool decalCur;
 extern bool decalRoad;	// patch 95: the road overlays (meshes after the first, alpha texture)
 extern Material *aimHideMaterial;
-extern bool forceNoCull;	// res-PS3 patch 117: test mode 16, D-pad up: no backface culling at all	// res-PS3 patch 114: test mode 15, the mesh under the screen centre hidden
+extern bool forceNoCull;
+extern int32 leedsDebug;	// patch 121: test mode 16, D-pad left: 0 as is, 1 the prelight ignored (flat), 2 the prelight alone
+void leedsDebugLights(void);	// res-PS3 patch 117: test mode 16, D-pad up: no backface culling at all	// res-PS3 patch 114: test mode 15, the mesh under the screen centre hidden
 extern bool decalBuilding;	// patch 96: a building is being drawn
 struct DecalStats
 {

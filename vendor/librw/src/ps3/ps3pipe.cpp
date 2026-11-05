@@ -858,6 +858,8 @@ leedsRenderCB(Atomic *atomic, InstanceDataHeader *header)
 	// the emission is higher and stays as it is.
 	if(leedsEmissionFloor)
 		liftAmbientToWorld(0.2f);
+	if(leedsDebug)
+		leedsDebugLights();	// patch 121
 
 	bindAttribs(header);
 	setVertexProgram(VP_LEEDS);

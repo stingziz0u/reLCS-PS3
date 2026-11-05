@@ -1772,6 +1772,23 @@ liftAmbientToWorld(float32 k)
 	lightsDirty = true;
 }
 
+// patch 121: test mode 16, D-pad left. 1: the prelight ignored, every Leeds
+// model at one flat brightness (the time cycle ambient x 0, the ambient
+// light 1: 0.5, x255/128 textured); 2: the prelight alone (x 1, no ambient)
+int32 leedsDebug;
+
+void
+leedsDebugLights(void)
+{
+	if(leedsDebug == 1){
+		ambLight.red = ambLight.green = ambLight.blue = 1.0f;
+		lightsDirty = true;
+	}else if(leedsDebug == 2){
+		ambLight.red = ambLight.green = ambLight.blue = 0.0f;
+		lightsDirty = true;
+	}
+}
+
 void
 setWorldAmbient(float32 r, float32 g, float32 b)
 {
@@ -1801,6 +1818,10 @@ setLeedsMaterial(uint8 alpha, const SurfaceProperties &surfaceprops)
 	c[0] = worldAmb[0];
 	c[1] = worldAmb[1];
 	c[2] = worldAmb[2];
+	if(leedsDebug == 1)
+		c[0] = c[1] = c[2] = 0.0f;
+	else if(leedsDebug == 2)
+		c[0] = c[1] = c[2] = 1.0f;
 	c[3] = alpha / 255.0f;
 	float32 *s = constWant[C_SURFPROPS];
 	s[0] = surfaceprops.ambient;
