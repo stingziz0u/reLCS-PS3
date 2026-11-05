@@ -1,5 +1,8 @@
 #include "common.h"
 #ifdef __PS3__
+#include "src/ps3/rwps3.h"	// patch 109: decalMode
+#endif
+#ifdef __PS3__
 #include "ps3_platform.h"	// patch 102: gPS3Tick30Now
 #endif
 
@@ -60,6 +63,40 @@ CPolyBunch       CShadows::aPolyBunches     [MAX_POLYBUNCHES];
 CStaticShadow    CShadows::aStaticShadows   [MAX_STATICSHADOWS];
 CPolyBunch      *CShadows::pEmptyBunchList;
 #ifdef __PS3__
+// patch 109: the shadows near the camera, for [snap] (R3 + Select)
+void
+PS3_ShadowSnapshot(void)
+{
+	static const char *const types[] = { "none", "dark", "additive", "invcolor" };
+	CVector cam = TheCamera.GetPosition();
+	int32 n = 0;
+	for ( int32 i = 0; i < CShadows::ShadowsStoredToBeRendered && i < MAX_STOREDSHADOWS && n < 16; i++ ) {
+		CStoredShadow &sh = CShadows::asShadowsStored[i];
+		if ( (sh.m_vecPos - cam).Magnitude2D() > 50.0f )
+			continue;
+		n++;
+		PS3_Logf("[snap]   stored shadow (cars, peds, lights of the frame): %s at %.1f %.1f %.1f, front %.2f %.2f side %.2f %.2f, intensity %d, rgb %d %d %d, z %.1f",
+		         types[sh.m_ShadowType & 3], sh.m_vecPos.x, sh.m_vecPos.y, sh.m_vecPos.z, sh.m_vecFront.x, sh.m_vecFront.y,
+		         sh.m_vecSide.x, sh.m_vecSide.y, sh.m_nIntensity, sh.m_nRed, sh.m_nGreen, sh.m_nBlue, sh.m_fZDistance);
+	}
+	n = 0;
+	for ( int32 i = 0; i < MAX_STATICSHADOWS && n < 16; i++ ) {
+		CStaticShadow &sh = CShadows::aStaticShadows[i];
+		if ( sh.m_pPolyBunch == nil || (sh.m_vecPosn - cam).Magnitude2D() > 50.0f )
+			continue;
+		n++;
+		int32 polys = 0;
+		for ( CPolyBunch *b = sh.m_pPolyBunch; b && polys < 999; b = b->m_pNext )
+			polys++;
+		PS3_Logf("[snap]   static shadow (pools, poles): %s id %08x at %.1f %.1f %.1f, front %.2f %.2f side %.2f %.2f, intensity %d, rgb %d %d %d, %d polygons",
+		         types[sh.m_nType & 3], sh.m_nId, sh.m_vecPosn.x, sh.m_vecPosn.y, sh.m_vecPosn.z, sh.m_vecFront.x, sh.m_vecFront.y,
+		         sh.m_vecSide.x, sh.m_vecSide.y, sh.m_nIntensity, sh.m_nRed, sh.m_nGreen, sh.m_nBlue, polys);
+	}
+	PS3_Logf("[snap]   time %02d:%02d, shadow strength %d, pole shadow strength %d, light shadow strength %d",
+	         CClock::GetHours(), CClock::GetMinutes(), CTimeCycle::GetShadowStrength(), CTimeCycle::GetPoleShadowStrength(),
+	         CTimeCycle::GetLightShadowStrength());
+}
+
 // patch 108: "[shadows]" every 10 s (with the [lod] report)
 uint32 PS3_shadBunchOut, PS3_shadNoSlot;
 void
@@ -1176,6 +1213,10 @@ CShadows::SetRenderModeForShadowType(uint8 ShadowType)
 void
 CShadows::RenderStoredShadows(void)
 {
+#ifdef __PS3__
+	if ( rw::ps3::decalMode == 8 )
+		return;	// patch 109: test mode (R3 + Select), which shadow is the broken one
+#endif
 	PUSH_RENDERGROUP("CShadows::RenderStoredShadows");
 
 	RenderBuffer::ClearRenderBuffer();
@@ -1359,6 +1400,10 @@ CShadows::RenderStoredShadows(void)
 void
 CShadows::RenderStaticShadows(void)
 {
+#ifdef __PS3__
+	if ( rw::ps3::decalMode == 9 )
+		return;	// patch 109: test mode (R3 + Select), which shadow is the broken one
+#endif
 	PUSH_RENDERGROUP("CShadows::RenderStaticShadows");
 
 	RenderBuffer::ClearRenderBuffer();
@@ -2526,6 +2571,10 @@ CShadows::CalcPedShadowValues(CVector vecLightDir,
 void
 CShadows::RenderExtraPlayerShadows(void)
 {
+#ifdef __PS3__
+	if ( rw::ps3::decalMode == 10 )
+		return;	// patch 109: test mode
+#endif
 #ifdef FIX_BUGS
 	if (CReplay::IsPlayingBack())
 		return;

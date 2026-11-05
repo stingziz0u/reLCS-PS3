@@ -986,14 +986,22 @@ CEntity::ProcessLightsForEntity(void)
 						effect->col.r,
 						effect->col.g,
 						effect->col.b,
+#ifdef __PS3__
+						15.0f, 1.0f, 80.0f, false, 0.0f);	// patch 109: the lamps' light pools to 80 m (40, faded from 30)
+#else
 						15.0f, 1.0f, 40.0f, false, 0.0f);
+#endif
 				}else if(lightFlickering){
 					CShadows::StoreStaticShadow((uintptr)this + i, SHADOWTYPE_ADDITIVE,
 						effect->light.shadow, &pos,
 						effect->light.shadowSize, 0.0f,
 						0.0f, -effect->light.shadowSize,
 						0, 0.0f, 0.0f, 0.0f,
+#ifdef __PS3__
+						15.0f, 1.0f, 80.0f, false, 0.0f);	// patch 109
+#else
 						15.0f, 1.0f, 40.0f, false, 0.0f);
+#endif
 				}
 			}
 			break;

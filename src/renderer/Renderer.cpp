@@ -803,7 +803,8 @@ PS3_NearLodReport(void)
 // ---- patch 93: the decal test modes (R3 + Select) and the snapshot ---------------
 static const char *const ps3DecalModeName[] = {
 	"0 normal", "1 depth bias", "2 no depth test", "3 hide ground overlays", "4 hide shad",
-	"5 opaque (no blend)", "6 hide every 2nd+ mesh", "7 hide near LODs"
+	"5 opaque (no blend)", "6 hide every 2nd+ mesh", "7 hide near LODs",
+	"8 hide cars/peds shadows", "9 hide pools and pole shadows", "10 hide player vehicle lights"
 };
 static uint32 ps3DecalPrev;
 static wchar ps3DecalMsg[96];
@@ -832,6 +833,10 @@ PS3_DecalSnapshot(const char *why)
 	else
 		PS3_Logf("[snap]   no shadow mesh reached the RSX");
 	PS3_NearLodReport();
+	{
+		extern void PS3_ShadowSnapshot(void);	// Shadows.cpp (patch 109)
+		PS3_ShadowSnapshot();
+	}
 	memset(&decalStats, 0, sizeof(decalStats));
 	ps3ShadNearSum = ps3ShadVisSum = ps3ShadRenderedSum = ps3ShadSumFrames = 0;
 }
@@ -856,7 +861,7 @@ PS3_DecalTestPad(void)
 	CPad::GetPad(0)->NewState.Clear();	// not a camera change
 	if(PS3_logsOn)
 		PS3_DecalSnapshot("leaving the mode");
-	rw::ps3::decalMode = (rw::ps3::decalMode + 1) % 8;
+	rw::ps3::decalMode = (rw::ps3::decalMode + 1) % 11;
 	char msg[96];
 	snprintf(msg, sizeof(msg), "Sombras: modo %s", ps3DecalModeName[rw::ps3::decalMode]);
 	AsciiToUnicode(msg, ps3DecalMsg);
