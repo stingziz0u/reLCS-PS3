@@ -7,6 +7,7 @@ int32 gPS3FxOff;	// autotest rain mode: 1 streaks, 2 drops on the screen, 4 spla
 // 3 foggy, 4 extra sunny, 5 hurricane): always that weather, to look at the
 // black buildings without waiting for it (ps3.cpp reads it)
 int32 gPS3ForceWeather = -1;
+
 #endif
 
 
@@ -138,6 +139,26 @@ const float Windyness[] = {
 #define RAIN_COLOUR_G (200)
 #define RAIN_COLOUR_B (256)
 #define RAIN_ALPHA (255)
+
+#ifdef __PS3__
+// patch 98: the rain was written for the PS2's 30 fps: every frame it adds
+// screen drops, splashes and ground steam (and casts a line to the ground
+// for each drop), so at 60 fps there were twice as many alive, twice the
+// ray casts and twice the fill, and the steam after the rain ran for half
+// the time. As the fire (patch 86) and the heli dust (patch 90): it runs
+// at 30 ticks a second. True on the frames where a 1/30 s tick happened.
+bool
+PS3_Tick30(float &acc)
+{
+	acc += CTimer::GetTimeStep() / 50.0f;	// seconds (a time step of 1 is 1/50 s)
+	if(acc < 1.0f/30.0f)
+		return false;
+	acc -= 1.0f/30.0f;
+	if(acc > 1.0f/30.0f)
+		acc = 0.0f;	// a long frame: one tick, not a burst
+	return true;
+}
+#endif
 
 void CWeather::Init(void)
 {
@@ -324,8 +345,19 @@ void CWeather::Update(void)
 
 	AddRain();
 
+#ifdef __PS3__
+	// patch 98: the heat haze every 8th frame and the bugs every frame, at 30 a second
+	static float ps3SunTick;
+	static uint32 ps3SunTicks;
+	bool ps3Sun = PS3_Tick30(ps3SunTick);
+	if (ps3Sun)
+		ps3SunTicks++;
+	if ((NewWeatherType == WEATHER_SUNNY || NewWeatherType == WEATHER_EXTRA_SUNNY) &&
+		!CGame::IsInInterior() && !CCutsceneMgr::IsRunning() && ps3Sun && (ps3SunTicks & 7) == 0) {
+#else
 	if ((NewWeatherType == WEATHER_SUNNY || NewWeatherType == WEATHER_EXTRA_SUNNY) &&
 		!CGame::IsInInterior() && !CCutsceneMgr::IsRunning() && (CTimer::GetFrameCounter() & 7) == 0) {
+#endif
 #ifdef FIX_BUGS
 		if (FindPlayerPed() && (!FindPlayerPed()->CheckIfInTheAir() || FindPlayerPed()->CheckIfInTheAir() && FindPlayerPed()->GetPosition().z < 7.5f &&
 			CClock::GetHours() > 6 && CClock::GetHours() < 18))
@@ -336,7 +368,11 @@ void CWeather::Update(void)
 			AddHeatHaze();
 	}
 
-	if ((NewWeatherType == WEATHER_SUNNY || NewWeatherType == WEATHER_EXTRA_SUNNY) && !CGame::IsInInterior() && !CCutsceneMgr::IsRunning())
+	if ((NewWeatherType == WEATHER_SUNNY || NewWeatherType == WEATHER_EXTRA_SUNNY) && !CGame::IsInInterior() && !CCutsceneMgr::IsRunning()
+#ifdef __PS3__
+	    && ps3Sun
+#endif
+	   )
 		AddBeastie();
 }
 
@@ -456,6 +492,11 @@ void CWeather::AddRain()
 			return;
 		}
 	}
+#ifdef __PS3__
+	static float ps3RainTick;
+	if (!PS3_Tick30(ps3RainTick))
+		return;	// patch 98
+#endif
 
 	if(Rain > 0.0){
 		startStreamAfterRain = 1;
@@ -607,6 +648,11 @@ void CWeather::RenderRainStreaks(void)
 		return;
 	TempBufferIndicesStored = 0;
 	TempBufferVerticesStored = 0;
+#ifdef __PS3__
+	// patch 98: new streaks (1 in 16 per free slot) only on 30 fps ticks
+	static float ps3StreakTick;
+	bool ps3NewStreaks = PS3_Tick30(ps3StreakTick);
+#endif
 	for (int i = 0; i < NUM_RAIN_STREAKS; i++) {
 		if (Streaks[i].timer) {
 			float secondsElapsed = (CTimer::GetTimeInMilliseconds() - Streaks[i].timer) / 1024.0f;
@@ -631,7 +677,11 @@ void CWeather::RenderRainStreaks(void)
 #endif
 			}
 		}
+#ifdef __PS3__
+		else if (ps3NewStreaks && (CGeneral::GetRandomNumber() & 0xF00) == 0){
+#else
 		else if ((CGeneral::GetRandomNumber() & 0xF00) == 0){
+#endif
 			// 1/16 probability
 			Streaks[i].direction = CVector(0.0f, 0.0f, -12.0f);
 			Streaks[i].position = 6.0f * TheCamera.GetForward() + TheCamera.GetPosition() + CVector(-1.8f * Streaks[i].direction.x, -1.8f * Streaks[i].direction.y, 8.0f);

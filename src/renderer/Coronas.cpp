@@ -487,7 +487,13 @@ CCoronas::RenderReflections(void)
 
 			// check if we want a reflection on this corona
 			if(aCoronas[i].renderReflection){
+#ifdef __PS3__
+				// patch 98: the ground under a reflected light looked for every
+				// 16 frames at 30 fps, every 32 at 60
+				if(((CTimer::GetFrameCounter() + i) & (CTimer::GetTimeStep() < 1.2f ? 0x1F : 0xF)) == 0 &&
+#else
 				if(((CTimer::GetFrameCounter() + i) & 0xF) == 0 &&
+#endif
 				   CWorld::ProcessVerticalLine(aCoronas[i].coors, -1000.0f, point, entity, true, false, false, false, true, false, nil))
 					aCoronas[i].heightAboveRoad = aCoronas[i].coors.z - point.point.z;
 			}else{

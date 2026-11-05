@@ -842,6 +842,8 @@ void
 PS3_DecalTestPad(void)
 {
 #define PS3B(b) (1u << (b))
+	if(!PS3_logsOn)
+		return;	// patch 98: a testing tool, only with logson.txt (the shadows are fixed, patch 97)
 	unsigned m = PS3_PadButtons();
 	unsigned down = m & ~ps3DecalPrev;
 	ps3DecalPrev = m;
