@@ -13,7 +13,7 @@ converted from your own copy. It is the sibling of
 [reVC-PS3](https://github.com/stingziz0u/reVC-PS3) (GTA Vice City), and
 shares their PS3 layer.
 
-> **Status: 1.2 alpha.** The game is playable on a real PS3, but it hasn't
+> **Status: 1.3 alpha.** The game is playable on a real PS3, but it hasn't
 > been played through yet. reLCS itself is still a work in progress (its
 > audio, for one), and this is still an alpha of the port: **expect bugs,
 > crashes and odd things**, and please report them with the log (see
@@ -25,6 +25,8 @@ shares their PS3 layer.
 > - Some LOD buildings can still pop in at a distance.
 > - Thin dark lines on some buildings flicker as the camera moves (two
 >   surfaces at the same depth).
+> - The windows of some buildings can show the empty inside of the
+>   building, depending on the weather and the camera angle. Left for 1.4.
 >
 > If the game crashes or freezes, please send the log (it is only written
 > with an empty `USRDIR/logson.txt`, see [Troubleshooting](#troubleshooting)).
@@ -35,6 +37,72 @@ Liberty City Stories for PS2, converted with the
 (see [Installation](#installation)). The PKG only has the program, its icon
 and two res-PS3 files (the PlayStation button icons and the controller
 picture of the settings page).
+
+## What's new in 1.3
+
+The streets of Liberty City, drawn right:
+
+- **No more dark wedges on the roads**: the dark triangles that covered
+  parts of some streets (and came back at a distance) were two road LODs
+  drawn over the detailed road. Those two now go by the distance to their
+  bounds, so the detailed road is drawn as you get near
+  (`USRDIR/noboundlod.txt` goes back to the old rule).
+- **The Staunton road shadows** no longer vanish or flicker: the models
+  that don't write the depth are drawn after the opaque world, the alpha
+  list is four times bigger, and buildings are put on screen by their drawn
+  geometry when it is bigger than their collision.
+- **No more pitch black buildings in the rain at night**: buildings without
+  prelight are lit by the time cycle's ambient, and the emission has a
+  floor.
+- **Fog in the rain** (no pop-in at the draw distance, no black LODs),
+  and the LODs are kept until the fog hides them.
+- Buildings take the textures their own TXD doesn't have from any loaded TXD
+  that has them (the white or missing world textures).
+- Models fade in over LCS's half second at 60 fps too.
+- **Toni's phone**: it comes out and stays in his hand, and his head and
+  arm move as they should during the call.
+
+Missions:
+
+- *Avenging Angels*: the gang members' script no longer stops (a missing
+  return), and the frame drops around them are gone.
+- A bike you get on no longer starts with a bomb (the Pizza Boy that blew
+  up).
+- The race's "go", its end and the other front-end sounds play without a
+  wrong sample on top.
+
+Performance:
+
+- Fires no longer drop frames (a static shadow that casts nothing isn't
+  cast again every frame); moving static shadows, car smoke and the rain
+  (drops, splashes, steam, streaks) run on 30 ticks a second at 60 fps.
+- At most 24 medium explosions alive at once, the helicopter's dust capped,
+  160 coronas (street lamps only close), 1600 shadow polygon bunches and
+  128 static shadows (lamp light pools to 80 m).
+
+From Gamer100Dev's [reVC-PS3-Optimised](https://github.com/Gamer100Dev/reVC-PS3-Optimised):
+
+- Shadows filtered right, the ped shadow never wraps to black at the edge
+  of its range, the car lights fade smoothly, the long corona streaks
+  without their square.
+- The drops and blood on the lens refract this frame, not the one before.
+- The radio tunes a station 8 frames after the last press instead of 20.
+- RSX safety: the waits for the RSX keep waiting instead of reusing memory
+  still in use, a full vertex ring starts over instead of dropping draws,
+  and damaged textures are refused.
+
+Also:
+
+- **The rocket launcher's view over the whole screen**, as in San Andreas
+  (the black frame around it is gone; the sniper rifle keeps its scope).
+- **Mission spawner** (`USRDIR/missionspawner.txt`): every mission and side
+  activity from a list (see [Features](#features)).
+- `USRDIR/weather.txt` with a number forces a weather (see
+  [Troubleshooting](#troubleshooting)).
+- Test modes for the reports, only with the log on (R3 + Select): hide the
+  ground or light effects, the model or mesh under the screen centre, a
+  free camera over the frozen view with a cross to pick a model, a log of
+  what is drawn frame by frame and every LOD hidden.
 
 ## What's new in 1.2
 
@@ -210,6 +278,19 @@ and unconverted assets from other games or platforms don't.
 - Buildings popping in or out: an empty `USRDIR/nolodpairs.txt` goes back
   to the game's own rule for the LOD buildings, `USRDIR/noocclusion.txt`
   turns off the occluders. Report which one changes it, with the log.
+  Also (each an empty file): `noboundlod.txt` (the road LODs by their
+  pivot again), `nolodfog.txt` (the LODs hidden at their draw distance,
+  not the fog), `norenderbounds.txt` (buildings on screen by their
+  collision only), `nowindfix.txt` (the meshes' triangles as the strips
+  give them).
+- Buildings too dark or too bright: an empty `USRDIR/nounlitlift.txt` or
+  `USRDIR/noemissfloor.txt` turns off the light added to the buildings
+  without prelight or the emission floor.
+- `USRDIR/weather.txt` with a number in it (0 sunny, 1 cloudy, 2 rainy,
+  3 foggy, 4 extra sunny, 5 hurricane) keeps that weather all the time
+  (it isn't saved in the game).
+- With the log on, R3 + Select goes through the test modes (the name shows
+  on screen); mode 0 is the normal game.
 - Something not loading, or loading late: an empty `USRDIR/nocdthread.txt`
   reads the game data on the game's own thread again, and
   `USRDIR/notxddirect.txt` converts the TXDs' true colour textures the old
@@ -282,6 +363,8 @@ and PSL1GHT's `cgcomp` with `cgcomp-relative-constants.patch`; see
   for re3/reVC, on which it is built, and aap for [librw](https://github.com/aap/librw).
 - The [ps3dev](https://github.com/ps3dev) people for ps3toolchain and PSL1GHT.
 - lieff for [minimp3](https://github.com/lieff/minimp3).
+- Gamer100Dev for the fixes of
+  [reVC-PS3-Optimised](https://github.com/Gamer100Dev/reVC-PS3-Optimised).
 
 The original reLCS README is kept as [README.res.md](README.res.md).
 
