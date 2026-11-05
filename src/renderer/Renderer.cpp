@@ -806,9 +806,10 @@ static const char *const ps3DecalModeName[] = {
 	"5 opaque (no blend)", "6 hide every 2nd+ mesh", "7 hide near LODs",
 	"8 hide cars/peds shadows", "9 hide pools and pole shadows", "10 hide player vehicle lights",
 	"11 hide skidmarks, rubbish, glass", "12 hide coronas, lights, particles, fx",
-	"13 hide the aimed model", "14 hide the rest at the aimed point"
+	"13 hide the aimed model", "14 hide the rest at the aimed point",
+	"15 hide the aimed mesh"
 };
-#define PS3_NUMTESTMODES 15
+#define PS3_NUMTESTMODES 16
 static uint32 ps3DecalPrev;
 static wchar ps3DecalMsg[96];
 
@@ -942,11 +943,104 @@ PS3_AimTriangle(CEntity *e, const CVector &p)
 		PS3_Logf("[aim]   no triangle of the model under the point");
 }
 
+// patch 114: what is drawn under the screen centre: the ray against the
+// models' own triangles (not their collision), the nearest of the hit model and
+// those around the point. Vertical walls, windows and overlays included
+static rw::Material *ps3AimMat;
+static CEntity *ps3AimMatEnt;
+
+static bool
+PS3_RayTriangles(CEntity *e, const CVector &cam, const CVector &fwd, float *tBest, int *triBest)
+{
+	if(e->m_rwObject == nil || RwObjectGetType(e->m_rwObject) != rpATOMIC)
+		return false;
+	RpGeometry *g = RpAtomicGetGeometry((RpAtomic*)e->m_rwObject);
+	if(g == nil || g->triangles == nil || g->morphTargets == nil || g->morphTargets[0].vertices == nil)
+		return false;
+	CMatrix inv = Invert(e->GetMatrix());
+	CVector o = inv * cam;
+	CVector d = Multiply3x3(inv, fwd);
+	rw::V3d *v = g->morphTargets[0].vertices;
+	bool found = false;
+	for(int32 t = 0; t < g->numTriangles; t++){
+		rw::Triangle *tr = &g->triangles[t];
+		CVector a(v[tr->v[0]].x, v[tr->v[0]].y, v[tr->v[0]].z);
+		CVector e1 = CVector(v[tr->v[1]].x, v[tr->v[1]].y, v[tr->v[1]].z) - a;
+		CVector e2 = CVector(v[tr->v[2]].x, v[tr->v[2]].y, v[tr->v[2]].z) - a;
+		CVector p = CrossProduct(d, e2);
+		float det = DotProduct(e1, p);
+		if(det > -1e-7f && det < 1e-7f)
+			continue;
+		float inv_det = 1.0f/det;
+		CVector s = o - a;
+		float u = DotProduct(s, p)*inv_det;
+		if(u < 0.0f || u > 1.0f) continue;
+		CVector q = CrossProduct(s, e1);
+		float w = DotProduct(d, q)*inv_det;
+		if(w < 0.0f || u + w > 1.0f) continue;
+		float tt = DotProduct(e2, q)*inv_det;
+		if(tt > 0.05f && tt < *tBest){
+			*tBest = tt;
+			*triBest = t;
+			found = true;
+		}
+	}
+	return found;
+}
+
+static void
+PS3_AimRender(CEntity *hit, CEntity **others, int n, const CVector &cam, const CVector &fwd, bool log = true)
+{
+	float tBest = 300.0f;
+	int triBest = -1;
+	CEntity *eBest = nil;
+	CEntity *cand[17];
+	int nc = 0;
+	cand[nc++] = hit;
+	for(int i = 0; i < n && nc < 17; i++)
+		cand[nc++] = others[i];
+	for(int i = 0; i < nc; i++){
+		int tri;
+		if(PS3_RayTriangles(cand[i], cam, fwd, &tBest, &tri)){
+			eBest = cand[i];
+			triBest = tri;
+		}
+	}
+	ps3AimMat = nil;
+	ps3AimMatEnt = eBest;
+	if(eBest == nil){
+		if(log)
+			PS3_Log("[aim]   drawn under the centre: no triangle of these models");
+		return;
+	}
+	RpGeometry *g = RpAtomicGetGeometry((RpAtomic*)eBest->m_rwObject);
+	rw::Triangle *tr = &g->triangles[triBest];
+	rw::Material *mat = tr->matId < g->matList.numMaterials ? g->matList.materials[tr->matId] : nil;
+	ps3AimMat = mat;
+	if(!log)
+		return;
+	char col[96] = "no prelight";
+	if(g->colors){
+		rw::RGBA *k = g->colors;
+		snprintf(col, sizeof(col), "prelight %d %d %d %d / %d %d %d %d / %d %d %d %d",
+		         k[tr->v[0]].red, k[tr->v[0]].green, k[tr->v[0]].blue, k[tr->v[0]].alpha,
+		         k[tr->v[1]].red, k[tr->v[1]].green, k[tr->v[1]].blue, k[tr->v[1]].alpha,
+		         k[tr->v[2]].red, k[tr->v[2]].green, k[tr->v[2]].blue, k[tr->v[2]].alpha);
+	}
+	bool ta = mat && mat->texture && mat->texture->raster && GETPS3RASTEREXT(mat->texture->raster)->hasAlpha;
+	int meshes = g->meshHeader ? g->meshHeader->numMeshes : 0;
+	PS3_Logf("[aim]   drawn under the centre: %s, %.1f m, triangle %d of %d, material %d of %d (%d meshes): %s (colour %d %d %d %d%s%s), %s%s",
+	         CModelInfo::GetModelInfo(eBest->GetModelIndex())->GetModelName(), tBest, triBest, g->numTriangles,
+	         tr->matId, g->matList.numMaterials, meshes, mat && mat->texture ? mat->texture->name : "no texture",
+	         mat ? mat->color.red : 0, mat ? mat->color.green : 0, mat ? mat->color.blue : 0, mat ? mat->color.alpha : 0,
+	         ta ? ", texture alpha" : "", mat && rw::MatFX::get(mat) ? ", matfx" : "", col, PS3_AimFlags(eBest));
+}
+
 static void
 PS3_AimUpdate(void)
 {
 	int m = rw::ps3::decalMode;
-	if(m != 13 && m != 14)
+	if(m != 13 && m != 14 && m != 15)
 		return;
 	if(ps3AimFrame++ % 10)
 		return;
@@ -965,7 +1059,32 @@ PS3_AimUpdate(void)
 	}
 	CEntity *others[24];
 	int16 n = 0;
-	CWorld::FindObjectsKindaColliding(cp.point, 1.0f, false, &n, 24, others, true, false, false, true, true);
+	CWorld::FindObjectsKindaColliding(cp.point, m == 15 ? 3.0f : 1.0f, false, &n, 24, others, true, false, false, true, true);
+	if(m == 15){
+		// patch 114: the mesh drawn under the centre is hidden; the HUD names it
+		CEntity *oth[24];
+		int k = 0;
+		for(int i = 0; i < n; i++) if(others[i] != hit) oth[k++] = others[i];
+		rw::Material *was = ps3AimMat;
+		CEntity *wasEnt = ps3AimMatEnt;
+		PS3_AimRender(hit, oth, k, cam, fwd, false);
+		if(ps3AimMat != was || ps3AimMatEnt != wasEnt || hit != ps3AimEnt){
+			ps3AimEnt = hit;
+			PS3_Logf("[aim] mode 15, %02d:%02d, camera %.1f %.1f %.1f looking %.2f %.2f %.2f, collision: %s at %.1f m",
+			         CClock::GetHours(), CClock::GetMinutes(), cam.x, cam.y, cam.z, fwd.x, fwd.y, fwd.z,
+			         CModelInfo::GetModelInfo(hit->GetModelIndex())->GetModelName(), (cp.point - cam).Magnitude());
+			PS3_AimRender(hit, oth, k, cam, fwd);
+		}
+		if(ps3AimMat != rw::ps3::aimHideMaterial){
+			rw::ps3::aimHideMaterial = ps3AimMat;
+			char msg[200];
+			snprintf(msg, sizeof(msg), "Malla oculta: %s, %s", ps3AimMatEnt ? CModelInfo::GetModelInfo(ps3AimMatEnt->GetModelIndex())->GetModelName() : "nada",
+			         ps3AimMat && ps3AimMat->texture ? ps3AimMat->texture->name : "sin textura");
+			AsciiToUnicode(msg, ps3AimMsg);
+			CHud::SetHelpMessage(ps3AimMsg, true);
+		}
+		return;
+	}
 	bool changed = hit != ps3AimEnt;
 	if(!changed){
 		// the set at the point may still change
@@ -994,6 +1113,7 @@ PS3_AimUpdate(void)
 	         cp.normal.x, cp.normal.y, cp.normal.z, cp.surfaceB);
 	PS3_Logf("[aim]   hit: %s (id %d) at %.1f %.1f %.1f%s", name, hit->GetModelIndex(), hp.x, hp.y, hp.z, PS3_AimFlags(hit));
 	PS3_AimTriangle(hit, cp.point);
+	PS3_AimRender(hit, ps3AimOthers, ps3AimNumOthers, cam, fwd);
 	for(int i = 0; i < ps3AimNumOthers; i++){
 		CEntity *e = ps3AimOthers[i];
 		CVector p = e->GetPosition();
@@ -1028,6 +1148,7 @@ PS3_DecalTestPad(void)
 	ps3AimEnt = nil;
 	ps3AimNumOthers = 0;
 	ps3AimFrame = 0;
+	rw::ps3::aimHideMaterial = nil;
 	char msg[96];
 	snprintf(msg, sizeof(msg), "Sombras: modo %s", ps3DecalModeName[rw::ps3::decalMode]);
 	AsciiToUnicode(msg, ps3DecalMsg);

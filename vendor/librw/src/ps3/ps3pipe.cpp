@@ -519,6 +519,7 @@ drawInstImpl(InstanceDataHeader *header, InstanceData *inst)
 // ---- patch 93: the road shadow decals, what they're drawn with and test modes ----
 int32 decalMode;
 bool decalCur;
+Material *aimHideMaterial;
 bool decalBuilding;	// patch 96: a building is being drawn (mode 6 hides its meshes after the first)
 bool decalRoad;	// patch 95: a road is being drawn: its meshes after the first with an alpha texture (dirt, shadows) are overlays
 DecalStats decalStats;
@@ -597,6 +598,8 @@ drawDecal(InstanceDataHeader *header, InstanceData *inst, int32 kind)
 static void
 drawInst(InstanceDataHeader *header, InstanceData *inst)
 {
+	if(aimHideMaterial && inst->material == aimHideMaterial)
+		return;	// patch 114: test mode 15
 	if(decalCur || inst->decal){
 		drawDecal(header, inst, inst->decal ? inst->decal : 1);
 		return;
