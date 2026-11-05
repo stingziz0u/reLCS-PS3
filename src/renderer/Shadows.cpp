@@ -880,9 +880,15 @@ CShadows::StoreCarLightShadow(CVehicle *pCar, int32 nID, RwTexture *pTexture, CV
 
 			if ( fDistToCam >= (fDrawDistance*(1.0f-(1.0f/4.0f))) && !bSpecialCam ) // BUG? must be 3.0?
 			{
+#ifdef __PS3__
+				// from reVC-PS3-Optimised (Gamer100Dev): from full strength at 75% of the range
+				// to 0 at its end (it began at 0.75 there, a step)
+				float fMult = Clamp((fDrawDistance - fDistToCam) / (fDrawDistance*0.25f), 0.0f, 1.0f);
+#else
 				//fDistToCam == 0             -> 3
 				//fDistToCam == fDrawDistance -> 0
 				float fMult = 1.0f - (3.0f / fDrawDistance) * (fDistToCam - (fDrawDistance*(1.0f-(1.0f/3.0f))) );
+#endif
 
 				nRed   = (int32)(nRed   * fMult);
 				nGreen = (int32)(nGreen * fMult);
@@ -1039,6 +1045,11 @@ CShadows::StoreShadowForPedObject(CEntity *pPedObject, float fDisplacementX, flo
 			//fDistToCam == 0             ->  2
 			//fDistToCam == fDrawDistance -> -2
 			float fMult = 1.0f - (4.0f / fDrawDistance) * (fDistToCam - (fDrawDistance*(1.0f/4.0f))); // BUG ? negative
+#ifdef __PS3__
+			// from reVC-PS3-Optimised (Gamer100Dev): never below 0 (a negative strength wrapped
+			// around in the vertex colour: dark shadows popping in the distance)
+			fMult = Clamp(fMult, 0.0f, 1.0f);
+#endif
 			int32 nColorStrength;
 
 			if ( fDistToCam >= (fDrawDistance*(1.0f/4.0f)) ) // BUG ? negative
@@ -1224,6 +1235,10 @@ CShadows::RenderStoredShadows(void)
 	RwRenderStateSet(rwRENDERSTATEZWRITEENABLE,      (void *)FALSE);
 	RwRenderStateSet(rwRENDERSTATEZTESTENABLE,       (void *)TRUE);
 	RwRenderStateSet(rwRENDERSTATEVERTEXALPHAENABLE, (void *)TRUE);
+#ifdef __PS3__
+	// from reVC-PS3-Optimised (Gamer100Dev): bilinear, not the filter the draw before left
+	RwRenderStateSet(rwRENDERSTATETEXTUREFILTER,     (void *)rwFILTERLINEAR);
+#endif
 	RwRenderStateSet(rwRENDERSTATETEXTUREADDRESS,    (void *)rwTEXTUREADDRESSCLAMP);
 
 
@@ -1411,6 +1426,10 @@ CShadows::RenderStaticShadows(void)
 	RwRenderStateSet(rwRENDERSTATEZWRITEENABLE,      (void *)FALSE);
 	RwRenderStateSet(rwRENDERSTATEZTESTENABLE,       (void *)TRUE);
 	RwRenderStateSet(rwRENDERSTATEVERTEXALPHAENABLE, (void *)TRUE);
+#ifdef __PS3__
+	// from reVC-PS3-Optimised (Gamer100Dev): bilinear, not the filter the draw before left
+	RwRenderStateSet(rwRENDERSTATETEXTUREFILTER,     (void *)rwFILTERLINEAR);
+#endif
 	RwRenderStateSet(rwRENDERSTATEFOGENABLE,         (void *)FALSE);
 
 	SetAlphaTest(0);
@@ -2545,6 +2564,19 @@ CShadows::CalcPedShadowValues(CVector vecLightDir,
 	*pfFrontY = -vecLightDir.y;
 
 	float fDist = Sqrt(*pfFrontY * *pfFrontY + *pfFrontX * *pfFrontX);
+#ifdef __PS3__
+	if(fDist < 1.0e-4f){
+		// from reVC-PS3-Optimised (Gamer100Dev): a light straight down has no horizontal
+		// direction (0/0, NaN shadow vertices): a neutral footprint, no offset
+		*pfFrontX = 0.0f;
+		*pfFrontY = 0.5f;
+		*pfSideX = 0.5f;
+		*pfSideY = 0.0f;
+		*pfDisplacementX = 0.0f;
+		*pfDisplacementY = 0.0f;
+		return;
+	}
+#endif
 	float fMult = (fDist + 1.0f) / fDist;
 
 	*pfFrontX *= fMult;
