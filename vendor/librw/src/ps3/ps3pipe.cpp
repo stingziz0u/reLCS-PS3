@@ -68,7 +68,20 @@ struct InstanceData
 	Material *material;
 	bool32    vertexAlpha;
 	uint32    offset;	// in the index buffer, bytes
+	bool32    decal;	// patch 94: its texture's name has "shad" in it (the road shadows)
 };
+
+// patch 94: a shadow overlay mesh, by its texture's name
+static bool32
+isShadowTexture(Material *m)
+{
+	if(m == nil || m->texture == nil)
+		return 0;
+	for(const char *n = m->texture->name; *n; n++)
+		if(strncasecmp(n, "shad", 4) == 0)
+			return 1;
+	return 0;
+}
 
 struct InstanceDataHeader : rw::InstanceDataHeader
 {
@@ -150,6 +163,7 @@ instanceMesh(rw::ObjPipeline *rwpipe, Geometry *geo)
 		inst->material = mesh->material;
 		inst->vertexAlpha = 0;
 		inst->offset = offset;
+		inst->decal = isShadowTexture(mesh->material);
 		memcpy((uint8*)indices + offset, mesh->indices, inst->numIndex*2);
 		offset += inst->numIndex*2;
 		mesh++;
@@ -511,9 +525,12 @@ drawDecal(InstanceDataHeader *header, InstanceData *inst)
 		Raster *r = m->texture->raster;
 		if(r && GETPS3RASTEREXT(r)->hasAlpha)
 			d.texAlpha++;
-		if(d.tex[0] == 0){
-			strncpy(d.tex, m->texture->name, sizeof(d.tex)-1);
-			d.tex[sizeof(d.tex)-1] = 0;
+		// up to 4 different texture names, "a,b,c,d"
+		const char *tn = m->texture->name;
+		if(strstr(d.tex, tn) == nil && strlen(d.tex) + strlen(tn) + 2 < sizeof(d.tex)){
+			if(d.tex[0])
+				strcat(d.tex, ",");
+			strcat(d.tex, tn);
 		}
 	}
 	d.matAlpha = m->color.alpha;
@@ -531,9 +548,9 @@ drawDecal(InstanceDataHeader *header, InstanceData *inst)
 	d.gsAlphaRef = rw::GetRenderState(rw::GSALPHATESTREF);
 
 	switch(decalMode){
-	case 1:	// in front of the road under it
+	case 1:	// in front of the road under it (patch 94: stronger, ~3 cm at 30 m)
 		if(rsxCtx){
-			rsxSetPolygonOffset(rsxCtx, -1.0f, -48.0f);
+			rsxSetPolygonOffset(rsxCtx, -4.0f, -512.0f);
 			rsxSetPolygonOffsetFillEnable(rsxCtx, GCM_TRUE);
 		}
 		drawInstImpl(header, inst);
@@ -575,7 +592,7 @@ drawDecal(InstanceDataHeader *header, InstanceData *inst)
 static void
 drawInst(InstanceDataHeader *header, InstanceData *inst)
 {
-	if(decalCur){
+	if(decalCur || inst->decal){
 		drawDecal(header, inst);
 		return;
 	}

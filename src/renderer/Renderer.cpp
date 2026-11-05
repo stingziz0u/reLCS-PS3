@@ -582,12 +582,55 @@ PS3_ShadReport(void)
 	ps3ShadFrames = 0;
 }
 
+// ---- patch 94: "[near]", every building model drawn within 60 m, once: its
+// materials (texture, material alpha, texture alpha). The road shadows of
+// Staunton aren't pm_treeshad_* (that one was behind the camera): this
+// says what they are.
+static uint8 ps3NearDone[MODELINFOSIZE];
+static int32 ps3NumNear;
+
+void
+PS3_NearInventory(CEntity *e)
+{
+	if(!PS3_logsOn || ps3NumNear >= 400 || !e->IsBuilding())
+		return;
+	int32 id = e->GetModelIndex();
+	if(id < 0 || id >= MODELINFOSIZE || ps3NearDone[id])
+		return;
+	if(e->m_rwObject == nil || RwObjectGetType(e->m_rwObject) != rpATOMIC)
+		return;
+	if((e->GetPosition() - TheCamera.GetPosition()).MagnitudeSqr2D() > 60.0f*60.0f)
+		return;
+	ps3NearDone[id] = 1;
+	ps3NumNear++;
+	RpGeometry *g = RpAtomicGetGeometry((RpAtomic*)e->m_rwObject);
+	if(g == nil)
+		return;
+	char buf[400] = "";
+	for(int32 k = 0; k < g->matList.numMaterials && k < 8; k++){
+		rw::Material *mat = g->matList.materials[k];
+		char t[64];
+		bool ta = mat->texture && mat->texture->raster && GETPS3RASTEREXT(mat->texture->raster)->hasAlpha;
+		snprintf(t, sizeof(t), "%s%s(a%d%s)", k ? ", " : "", mat->texture ? mat->texture->name : "none", mat->color.alpha, ta ? " tex-alpha" : "");
+		strncat(buf, t, sizeof(buf) - strlen(buf) - 1);
+	}
+	CVector p = e->GetPosition();
+	CSimpleModelInfo *mi = (CSimpleModelInfo*)CModelInfo::GetModelInfo(id);
+	PS3_Logf("[near] %s at %.0f %.0f %.1f, %d m away: %d materials: %s%s%s%s", mi->GetModelName(), p.x, p.y, p.z,
+	         (int)(e->GetPosition() - TheCamera.GetPosition()).Magnitude2D(), g->matList.numMaterials, buf,
+	         mi->m_wetRoadReflection ? " | road" : "", mi->m_drawLast ? " | drawLast" : "", mi->m_noZwrite ? " | noZwrite" : "");
+}
+
 // ---- patch 93: "[far]", big buildings (LODs) cut at their draw distance where
 // the fog doesn't hide them yet: what pops in and out far away
 static uint32 ps3FarCut, ps3FarCutFrames;
 static float ps3FarWorstFog = 2.0f, ps3FarWorstDist, ps3FarWorstLod;
 static int32 ps3FarWorstModel = -1;
 static uint32 ps3FarLastFrame;
+// patch 94: by model, the most cut ones
+struct PS3FarModel { int32 model; uint32 count; float minFog, dist; };
+static PS3FarModel ps3FarModels[48];
+static int32 ps3NumFarModels;
 
 static void
 PS3_FarNoteCut(CEntity *ent, float dist)
@@ -599,6 +642,25 @@ PS3_FarNoteCut(CEntity *ent, float dist)
 	if(fog >= 0.9f)
 		return;
 	ps3FarCut++;
+	{
+		int32 id = ent->GetModelIndex(), k;
+		for(k = 0; k < ps3NumFarModels; k++)
+			if(ps3FarModels[k].model == id)
+				break;
+		if(k == ps3NumFarModels && k < 48){
+			ps3NumFarModels++;
+			ps3FarModels[k].model = id;
+			ps3FarModels[k].count = 0;
+			ps3FarModels[k].minFog = 2.0f;
+		}
+		if(k < 48){
+			ps3FarModels[k].count++;
+			if(fog < ps3FarModels[k].minFog){
+				ps3FarModels[k].minFog = fog;
+				ps3FarModels[k].dist = dist;
+			}
+		}
+	}
 	if(ps3FarLastFrame != ps3VisFrame){
 		ps3FarLastFrame = ps3VisFrame;
 		ps3FarCutFrames++;
@@ -620,6 +682,23 @@ PS3_FarReport(void)
 	         ps3FarCut, ps3FarCutFrames, ps3FarWorstModel >= 0 ? CModelInfo::GetModelInfo(ps3FarWorstModel)->GetModelName() : "-",
 	         ps3FarWorstDist, ps3FarWorstLod, ps3FarWorstFog*100.0f, Scene.camera->farPlane, Scene.camera->fogPlane,
 	         CWeather::OldWeatherType, CWeather::NewWeatherType, CWeather::InterpolationValue);
+	// the 6 most cut, with their first LOD distance (the cut is there)
+	for(int32 n = 0; n < 6; n++){
+		int32 best = -1;
+		for(int32 k = 0; k < ps3NumFarModels; k++)
+			if(ps3FarModels[k].count && (best < 0 || ps3FarModels[k].count > ps3FarModels[best].count))
+				best = k;
+		if(best < 0)
+			break;
+		PS3FarModel &f = ps3FarModels[best];
+		CSimpleModelInfo *mi = (CSimpleModelInfo*)CModelInfo::GetModelInfo(f.model);
+		PS3_Logf("[far]   %s x%u: cut from %.0f m (first LOD distance %.0f, largest %.0f, LOD x%.2f), %.0f%% fog at %.0f m",
+		         mi->GetModelName(), f.count, mi->GetLodDistance(0) + FADE_DISTANCE,
+		         mi->GetLodDistance(0), mi->GetLargestLodDistance(), TheCamera.LODDistMultiplier,
+		         f.minFog*100.0f, f.dist);
+		f.count = 0;
+	}
+	ps3NumFarModels = 0;
 	ps3FarCut = ps3FarCutFrames = 0;
 	ps3FarWorstFog = 2.0f;
 	ps3FarWorstModel = -1;
