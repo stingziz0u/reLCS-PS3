@@ -478,6 +478,11 @@ CEntity::Render(void)
 			bImBeingRendered = true;
 #ifdef __PS3__
 			// patch 93: the road shadow decals (rw::ps3 logs them, test modes)
+			extern bool PS3_AimHidden(CEntity *e);	// Renderer.cpp (patch 110)
+			if(PS3_AimHidden(this)){
+				bImBeingRendered = false;
+				return;
+			}
 			bool ps3Decal = IsBuilding() && PS3_IsShadModel(GetModelIndex());
 			PS3_NearInventory(this);	// patch 94 (logs only)
 			if(ps3Decal){

@@ -1695,6 +1695,14 @@ if(gbRenderVehicles)
 }
 #endif
 
+// patch 110: test modes 11 and 12 (R3 + Select) hide whole effect groups
+#ifdef __PS3__
+int PS3_TestMode(void);	// Renderer.cpp
+#define PS3_FXOFF(m) (PS3_TestMode() == (m))
+#else
+#define PS3_FXOFF(m) false
+#endif
+
 void
 RenderScene(void)
 {
@@ -1719,7 +1727,7 @@ RenderScene(void)
 	PS3_SCENE_STEP("roads");
 	CRenderer::RenderRoads();
 	PS3_CRUMB("scene: CCoronas::RenderReflections", 0);
-	CCoronas::RenderReflections();
+	if(!PS3_FXOFF(12)) CCoronas::RenderReflections();
 	PS3_SCENE_STEP("everything bar roads");
 	CRenderer::RenderEverythingBarRoads();
 	RwRenderStateSet(rwRENDERSTATECULLMODE, (void*)rwCULLMODECULLNONE);
@@ -1781,35 +1789,35 @@ RenderEffects(void)
 #endif
 	PUSH_RENDERGROUP("RenderEffects");
 	PS3_FX_STEP("fx: CGlass::Render");
-	CGlass::Render();
+	if(!PS3_FXOFF(11)) CGlass::Render();
 	PS3_FX_STEP("fx: CWaterCannons::Render");
-	CWaterCannons::Render();
+	if(!PS3_FXOFF(12)) CWaterCannons::Render();
 	PS3_FX_STEP("fx: CSpecialFX::Render");
-	CSpecialFX::Render();
+	if(!PS3_FXOFF(12)) CSpecialFX::Render();
 	PS3_FX_STEP("fx: CRopes::Render");
-	CRopes::Render();
+	if(!PS3_FXOFF(12)) CRopes::Render();
 	PS3_FX_STEP("fx: CShadows::RenderStaticShadows");
 	CShadows::RenderStaticShadows();
 	PS3_FX_STEP("fx: CShadows::RenderStoredShadows");
 	CShadows::RenderStoredShadows();
 	PS3_FX_STEP("fx: CSkidmarks::Render");
-	CSkidmarks::Render();
+	if(!PS3_FXOFF(11)) CSkidmarks::Render();
 	PS3_FX_STEP("fx: CAntennas::Render");
-	CAntennas::Render();
+	if(!PS3_FXOFF(12)) CAntennas::Render();
 	PS3_FX_STEP("fx: CRubbish::Render");
-	CRubbish::Render();
+	if(!PS3_FXOFF(11)) CRubbish::Render();
 	PS3_FX_STEP("fx: CCoronas::Render");
-	CCoronas::Render();
+	if(!PS3_FXOFF(12)) CCoronas::Render();
 	PS3_FX_STEP("fx: CParticle::Render");
-	CParticle::Render();
+	if(!PS3_FXOFF(12)) CParticle::Render();
 	PS3_FX_STEP("fx: CPacManPickups::Render");
 	CPacManPickups::Render();
 	PS3_FX_STEP("fx: CWeaponEffects::Render");
-	CWeaponEffects::Render();
+	if(!PS3_FXOFF(12)) CWeaponEffects::Render();
 	PS3_FX_STEP("fx: CPointLights::RenderFogEffect");
-	CPointLights::RenderFogEffect();
+	if(!PS3_FXOFF(12)) CPointLights::RenderFogEffect();
 	PS3_FX_STEP("fx: CMovingThings::Render");
-	CMovingThings::Render();
+	if(!PS3_FXOFF(12)) CMovingThings::Render();
 	PS3_FX_STEP("fx: CRenderer::RenderFirstPersonVehicle");
 	CRenderer::RenderFirstPersonVehicle();
 	POP_RENDERGROUP();

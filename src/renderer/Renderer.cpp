@@ -804,8 +804,11 @@ PS3_NearLodReport(void)
 static const char *const ps3DecalModeName[] = {
 	"0 normal", "1 depth bias", "2 no depth test", "3 hide ground overlays", "4 hide shad",
 	"5 opaque (no blend)", "6 hide every 2nd+ mesh", "7 hide near LODs",
-	"8 hide cars/peds shadows", "9 hide pools and pole shadows", "10 hide player vehicle lights"
+	"8 hide cars/peds shadows", "9 hide pools and pole shadows", "10 hide player vehicle lights",
+	"11 hide skidmarks/rubbish/glass", "12 hide coronas/lights/particles/fx",
+	"13 hide the aimed model", "14 hide the rest at the aimed point"
 };
+#define PS3_NUMTESTMODES 15
 static uint32 ps3DecalPrev;
 static wchar ps3DecalMsg[96];
 
@@ -841,6 +844,165 @@ PS3_DecalSnapshot(const char *why)
 	ps3ShadNearSum = ps3ShadVisSum = ps3ShadRenderedSum = ps3ShadSumFrames = 0;
 }
 
+// ---- patch 110: the "broken shadow" is none of CShadows (modes 8, 9). Modes 13
+// and 14 aim at the screen centre: 13 hides the model the camera ray hits
+// (the HUD names it), 14 hides every other model whose bounds hold that point
+// (overlays without collision). The [aim] log lists them all, with the
+// prelight of the hit triangle.
+static CEntity *ps3AimEnt;
+static CEntity *ps3AimOthers[16];
+static int ps3AimNumOthers;
+static uint32 ps3AimFrame;
+static wchar ps3AimMsg[200];
+
+int
+PS3_TestMode(void)
+{
+	return PS3_logsOn ? rw::ps3::decalMode : 0;
+}
+
+bool
+PS3_AimHidden(CEntity *e)
+{
+	int m = rw::ps3::decalMode;
+	if(!PS3_logsOn || (m != 13 && m != 14) || e == nil)
+		return false;
+	if(m == 13)
+		return e == ps3AimEnt;
+	for(int i = 0; i < ps3AimNumOthers; i++)
+		if(ps3AimOthers[i] == e)
+			return true;
+	return false;
+}
+
+static const char *
+PS3_AimFlags(CEntity *e)
+{
+	static char f[96];
+	f[0] = 0;
+	CBaseModelInfo *bmi = CModelInfo::GetModelInfo(e->GetModelIndex());
+	if(bmi && (bmi->GetModelType() == MITYPE_SIMPLE || bmi->GetModelType() == MITYPE_TIME)){
+		CSimpleModelInfo *mi = (CSimpleModelInfo*)bmi;
+		if(mi->m_drawLast) strcat(f, " drawLast");
+		if(mi->m_additive) strcat(f, " additive");
+		if(mi->m_noZwrite) strcat(f, " noZwrite");
+		if(mi->m_wetRoadReflection) strcat(f, " road");
+		if(mi->GetLodDistance(0) > 300.0f) strcat(f, " big");
+	}
+	if(e->bIsBIGBuilding) strcat(f, " BIG");
+	if(e->m_rwObject == nil) strcat(f, " no-rw");
+	if(!e->bIsVisible) strcat(f, " invisible");
+	if(!e->bUsesCollision) strcat(f, " no-col");
+	return f;
+}
+
+// the triangle of e under the world point p (2D in model space), its prelight
+static void
+PS3_AimTriangle(CEntity *e, const CVector &p)
+{
+	if(e->m_rwObject == nil || RwObjectGetType(e->m_rwObject) != rpATOMIC)
+		return;
+	RpGeometry *g = RpAtomicGetGeometry((RpAtomic*)e->m_rwObject);
+	if(g == nil || g->triangles == nil || g->numTriangles == 0 || g->morphTargets == nil || g->morphTargets[0].vertices == nil){
+		PS3_Logf("[aim]   (no triangles kept for %s)", CModelInfo::GetModelInfo(e->GetModelIndex())->GetModelName());
+		return;
+	}
+	CVector lp = Invert(e->GetMatrix()) * p;
+	rw::V3d *v = g->morphTargets[0].vertices;
+	int found = 0;
+	for(int32 t = 0; t < g->numTriangles && found < 3; t++){
+		rw::Triangle *tr = &g->triangles[t];
+		rw::V3d a = v[tr->v[0]], b = v[tr->v[1]], c = v[tr->v[2]];
+		float d = (b.y - c.y)*(a.x - c.x) + (c.x - b.x)*(a.y - c.y);
+		if(d > -1e-6f && d < 1e-6f)
+			continue;	// vertical
+		float l0 = ((b.y - c.y)*(lp.x - c.x) + (c.x - b.x)*(lp.y - c.y)) / d;
+		float l1 = ((c.y - a.y)*(lp.x - c.x) + (a.x - c.x)*(lp.y - c.y)) / d;
+		float l2 = 1.0f - l0 - l1;
+		if(l0 < 0.0f || l1 < 0.0f || l2 < 0.0f)
+			continue;
+		float z = l0*a.z + l1*b.z + l2*c.z;
+		if(z - lp.z > 1.5f || lp.z - z > 1.5f)
+			continue;	// another floor of the model
+		rw::Material *mat = tr->matId < g->matList.numMaterials ? g->matList.materials[tr->matId] : nil;
+		char col[96] = "no prelight";
+		if(g->colors){
+			rw::RGBA *k = g->colors;
+			snprintf(col, sizeof(col), "prelight %d %d %d %d / %d %d %d %d / %d %d %d %d",
+			         k[tr->v[0]].red, k[tr->v[0]].green, k[tr->v[0]].blue, k[tr->v[0]].alpha,
+			         k[tr->v[1]].red, k[tr->v[1]].green, k[tr->v[1]].blue, k[tr->v[1]].alpha,
+			         k[tr->v[2]].red, k[tr->v[2]].green, k[tr->v[2]].blue, k[tr->v[2]].alpha);
+		}
+		PS3_Logf("[aim]   triangle %d (z %.2f, model z %.2f): material %d %s (colour %d %d %d %d), %s",
+		         t, z, lp.z, tr->matId, mat && mat->texture ? mat->texture->name : "no texture",
+		         mat ? mat->color.red : 0, mat ? mat->color.green : 0, mat ? mat->color.blue : 0, mat ? mat->color.alpha : 0, col);
+		found++;
+	}
+	if(!found)
+		PS3_Logf("[aim]   no triangle of the model under the point");
+}
+
+static void
+PS3_AimUpdate(void)
+{
+	int m = rw::ps3::decalMode;
+	if(m != 13 && m != 14)
+		return;
+	if(ps3AimFrame++ % 10)
+		return;
+	CVector cam = TheCamera.GetPosition();
+	CVector fwd = TheCamera.GetForward();
+	CColPoint cp;
+	CEntity *hit = nil;
+	if(!CWorld::ProcessLineOfSight(cam, cam + fwd*200.0f, cp, hit, true, false, false, true, false, false, false, false) || hit == nil){
+		if(ps3AimEnt){
+			ps3AimEnt = nil;
+			ps3AimNumOthers = 0;
+			AsciiToUnicode("Apuntado: nada", ps3AimMsg);
+			CHud::SetHelpMessage(ps3AimMsg, true);
+		}
+		return;
+	}
+	CEntity *others[24];
+	int16 n = 0;
+	CWorld::FindObjectsKindaColliding(cp.point, 1.0f, false, &n, 24, others, true, false, false, true, true);
+	bool changed = hit != ps3AimEnt;
+	if(!changed){
+		// the set at the point may still change
+		int k = 0;
+		for(int i = 0; i < n; i++) if(others[i] != hit) k++;
+		changed = k != ps3AimNumOthers;
+	}
+	if(!changed)
+		return;
+	ps3AimEnt = hit;
+	ps3AimNumOthers = 0;
+	for(int i = 0; i < n && ps3AimNumOthers < 16; i++)
+		if(others[i] != hit)
+			ps3AimOthers[ps3AimNumOthers++] = others[i];
+	const char *name = CModelInfo::GetModelInfo(hit->GetModelIndex())->GetModelName();
+	float dist = (cp.point - cam).Magnitude();
+	char msg[200];
+	int len = snprintf(msg, sizeof(msg), "Apuntado: %s (%.0f m)", name, dist);
+	for(int i = 0; i < ps3AimNumOthers && len < (int)sizeof(msg) - 40; i++)
+		len += snprintf(msg + len, sizeof(msg) - len, "%s%s", i ? ", " : " + ", CModelInfo::GetModelInfo(ps3AimOthers[i]->GetModelIndex())->GetModelName());
+	AsciiToUnicode(msg, ps3AimMsg);
+	CHud::SetHelpMessage(ps3AimMsg, true);
+	CVector hp = hit->GetPosition();
+	PS3_Logf("[aim] mode %d, %02d:%02d, camera %.1f %.1f %.1f -> point %.2f %.2f %.2f (%.1f m), normal %.2f %.2f %.2f, surface %d",
+	         m, CClock::GetHours(), CClock::GetMinutes(), cam.x, cam.y, cam.z, cp.point.x, cp.point.y, cp.point.z, dist,
+	         cp.normal.x, cp.normal.y, cp.normal.z, cp.surfaceB);
+	PS3_Logf("[aim]   hit: %s (id %d) at %.1f %.1f %.1f%s", name, hit->GetModelIndex(), hp.x, hp.y, hp.z, PS3_AimFlags(hit));
+	PS3_AimTriangle(hit, cp.point);
+	for(int i = 0; i < ps3AimNumOthers; i++){
+		CEntity *e = ps3AimOthers[i];
+		CVector p = e->GetPosition();
+		PS3_Logf("[aim]   also here: %s (id %d) at %.1f %.1f %.1f%s", CModelInfo::GetModelInfo(e->GetModelIndex())->GetModelName(),
+		         e->GetModelIndex(), p.x, p.y, p.z, PS3_AimFlags(e));
+		PS3_AimTriangle(e, cp.point);
+	}
+}
+
 // CPad::UpdatePads (Pad.cpp), after pad 0: R3 + Select = next test mode
 // (the log gets a snapshot of the mode being left)
 void
@@ -849,6 +1011,7 @@ PS3_DecalTestPad(void)
 #define PS3B(b) (1u << (b))
 	if(!PS3_logsOn)
 		return;	// patch 98: a testing tool, only with logson.txt (the shadows are fixed, patch 97)
+	PS3_AimUpdate();	// patch 110
 	unsigned m = PS3_PadButtons();
 	unsigned down = m & ~ps3DecalPrev;
 	ps3DecalPrev = m;
@@ -861,7 +1024,10 @@ PS3_DecalTestPad(void)
 	CPad::GetPad(0)->NewState.Clear();	// not a camera change
 	if(PS3_logsOn)
 		PS3_DecalSnapshot("leaving the mode");
-	rw::ps3::decalMode = (rw::ps3::decalMode + 1) % 11;
+	rw::ps3::decalMode = (rw::ps3::decalMode + 1) % PS3_NUMTESTMODES;
+	ps3AimEnt = nil;
+	ps3AimNumOthers = 0;
+	ps3AimFrame = 0;
 	char msg[96];
 	snprintf(msg, sizeof(msg), "Sombras: modo %s", ps3DecalModeName[rw::ps3::decalMode]);
 	AsciiToUnicode(msg, ps3DecalMsg);
