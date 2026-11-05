@@ -140,6 +140,61 @@ static rw::Texture *(*ps3DefaultFindCB)(const char *name);
 #include "ps3_platform.h"	// PS3_Logf
 #include "KeyGen.h"
 rw::Texture *PS3_TexDepsFind(const char *name);	// ps3_texdeps.cpp (patch 83)
+int32 PS3_TexDepsCurrent(void);	// patch 99
+
+// patch 99: a building's texture that neither its TXD, generic nor its
+// texdeps TXDs have: any TXD loaded now, under its name or a near one
+// (with or without "_lod", without the HV/H/V tiling suffix). Staunton's
+// black LODs in the rain: the textures patch 83 couldn't place.
+static rw::Texture*
+PS3_FindInLoadedTxds(const char *name, const char **txdName)
+{
+	for(int32 i = 0; i < TXDSTORESIZE; i++){
+		TxdDef *def = CTxdStore::GetSlot(i);
+		if(def == nil || def->texDict == nil)
+			continue;
+		if(rw::Texture *t = def->texDict->find(name)){
+			*txdName = def->name;
+			return t;
+		}
+	}
+	return nil;
+}
+
+static rw::Texture*
+PS3_FindNear(const char *name, const char **txdName, char *used, int32 usedSize)
+{
+	char v[40];
+	int32 len = (int32)strlen(name);
+	if(len <= 0 || len > 31)
+		return nil;
+	rw::Texture *t;
+	if((t = PS3_FindInLoadedTxds(name, txdName))){
+		snprintf(used, usedSize, "%s", name);
+		return t;
+	}
+	// name_lod / name without _lod
+	if(len > 4 && strncasecmp(name + len - 4, "_lod", 4) == 0){
+		snprintf(v, sizeof(v), "%.*s", len - 4, name);
+	}else
+		snprintf(v, sizeof(v), "%s_lod", name);
+	if((t = PS3_FindInLoadedTxds(v, txdName))){
+		snprintf(used, usedSize, "%s", v);
+		return t;
+	}
+	// without the tiling suffix (HV, H, V)
+	int32 cut = len;
+	while(cut > 1 && (name[cut-1] == 'H' || name[cut-1] == 'V' || name[cut-1] == 'h' || name[cut-1] == 'v'))
+		cut--;
+	if(cut < len && cut > 2){
+		snprintf(v, sizeof(v), "%.*s", cut, name);
+		if((t = PS3_FindInLoadedTxds(v, txdName))){
+			snprintf(used, usedSize, "%s", v);
+			return t;
+		}
+	}
+	return nil;
+}
 static void
 PS3_LogMissingTexture(const char *name)
 {
@@ -176,6 +231,27 @@ PS3_GenericFindCB(const char *name)
 		tex = ps3GenericTxd->find(name);
 	if(tex == nil)
 		tex = PS3_TexDepsFind(name);	// patch 83: the other TXDs of the model being loaded
+	int32 model = PS3_TexDepsCurrent();
+	if(model >= 0 && (model >= MODELINFOSIZE || CModelInfo::GetModelInfo(model) == nil || !CModelInfo::GetModelInfo(model)->IsBuilding()))
+		model = -1;	// buildings only
+	if(tex == nil && model >= 0 && name && name[0]){
+		// patch 99: a building: any loaded TXD
+		const char *txd = "?";
+		char used[40] = "";
+		tex = PS3_FindNear(name, &txd, used, sizeof(used));
+		static int32 logged;
+		if(PS3_logsOn && logged < 80){
+			logged++;
+			CBaseModelInfo *mi = CModelInfo::GetModelInfo(model);
+			if(tex)
+				PS3_Logf("[tex] world: \"%s\" of %s (TXD %s) taken from loaded TXD %s as \"%s\"", name,
+				         mi ? mi->GetModelName() : "?", mi ? CTxdStore::GetTxdName(mi->GetTxdSlot()) : "?", txd, used);
+			else
+				PS3_Logf("[tex] world: \"%s\" of %s (TXD %s) in no loaded TXD", name,
+				         mi ? mi->GetModelName() : "?", mi ? CTxdStore::GetTxdName(mi->GetTxdSlot()) : "?");
+		}
+		return tex;	// Texture::read adds the material's reference: it outlives that TXD
+	}
 	if(tex == nil)
 		PS3_LogMissingTexture(name);
 	return tex;

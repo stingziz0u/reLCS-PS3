@@ -32,7 +32,7 @@
 
 #define PS3_TEXDEPS_MAX 4
 #define TEXDEPS_MAGIC 0x54584450	// "TXDP"
-#define TEXDEPS_VERSION 1
+#define TEXDEPS_VERSION 2	// patch 99: rebuilt once (the build log says what is in no TXD)
 #define TEXDEPS_PATH PS3_USRDIR "/texdeps.bin"
 
 struct TexDep {
@@ -316,6 +316,12 @@ Build(void)
 			missingNames++;
 			if(!anywhere){
 				nowhere++;
+				// patch 99: which ones (Staunton's black LODs aren't covered)
+				static int32 logged;
+				if(PS3_logsOn && logged < 60){
+					logged++;
+					PS3_Logf("[texdeps]   in no TXD: \"%s\" (model %s, TXD %s)", gDffNames[i], mi->GetModelName(), CTxdStore::GetTxdName(own));
+				}
 				continue;
 			}
 			if(nw < (int32)ARRAY_SIZE(want))
@@ -458,6 +464,13 @@ void
 PS3_TexDepsSetCurrent(int32 model)
 {
 	gCurrentModel = model;
+}
+
+// patch 99: the model being converted (-1: none), for the missing texture log
+int32
+PS3_TexDepsCurrent(void)
+{
+	return gCurrentModel;
 }
 
 // the texture lookup, after the model's TXD and GENERIC
