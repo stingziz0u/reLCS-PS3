@@ -2629,20 +2629,7 @@ CRenderer::SetupEntityVisibility(CEntity *ent)
 
 	RpAtomic *a = mi->GetAtomicFromDistance(dist);
 #ifdef __PS3__
-	// patch 125: a model with several detail levels (atomics by distance)
-	// picks one by the distance to its pivot. A long road piece's pivot can be
-	// 70 m from where Toni stands on it (FS_custroadA1: pivot at 294 -307, the
-	// wedge at 247 -250): its far level, low detail with dark prelight, was
-	// drawn under his feet until he got near the pivot. The level is chosen
-	// by the distance to the model's bounds (0 inside them) when that gives a
-	// more detailed one; whether it's drawn at all stays the game's rule.
-	// USRDIR/noboundlod.txt: the pivot, as before
-	if(a && gPS3BoundLod && mi->m_numAtomics > 1){
-		float nd = (ms_vecCameraPosition - ent->GetBoundCentre()).Magnitude() - ent->GetBoundRadius();
-		RpAtomic *b = mi->GetAtomicFromDistance(nd > 0.0f ? nd : 0.0f);
-		if(b)
-			a = b;
-	}
+	// patch 125's detail level by the bounds: out again (patch 130), it changed nothing
 #endif
 	if(a){
 		mi->m_isDamaged = false;
@@ -2748,6 +2735,28 @@ CRenderer::SetupEntityVisibility(CEntity *ent)
 	}
 }
 
+// patch 130: the LODs drawn over Staunton's detailed roads (the dark wedges):
+// LODcustroadpm1 and pm2 stand for a stretch of roads with no detailed model
+// of their own. Their ids, looked up once
+static bool
+PS3_IsWedgeLod(int32 id)
+{
+	static int32 ids[2] = { -2, -2 };
+	static const char *const names[2] = { "LODcustroadpm1", "LODcustroadpm2" };
+	for(int i = 0; i < 2; i++){
+		if(ids[i] == -2){
+			int idx = -1;
+			if(CModelInfo::GetModelInfo(names[i], &idx) == nil)
+				idx = -1;
+			ids[i] = idx;
+			PS3_Logf("[lod] patch 130: %s is model %d (its near test by its bounds)", names[i], idx);
+		}
+		if(ids[i] >= 0 && ids[i] == id)
+			return true;
+	}
+	return false;
+}
+
 // patch 128: mode 17, why a LOD within 250 m is drawn, when that changes
 extern bool gPS3DiffOn;
 static void
@@ -2843,10 +2852,11 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 	// near distance 136) stretches ~90 m from its pivot over Staunton's
 	// detailed roads: from the wedge (247 -254) its pivot is ~136 m away, so it
 	// was drawn over them until Toni walked closer (patch 128's log: every LOD
-	// drawn there was "beyond its near distance"). Only for LODs up to 150 m
-	// across (not the island LODs). USRDIR/noboundlod.txt: the pivot
+	// drawn there was "beyond its near distance"). Patch 130: for every LOD
+	// it showed too much (Ren); only for the LODs of the wedges now
+	// (PS3_IsWedgeLod). USRDIR/noboundlod.txt: the pivot for them too
 	float ps3PivotDist = dist;
-	if(gPS3BoundLod && ent->GetBoundRadius() < 150.0f){
+	if(gPS3BoundLod && PS3_IsWedgeLod(ent->GetModelIndex())){
 		float bd = (ms_vecCameraPosition - ent->GetBoundCentre()).Magnitude() - ent->GetBoundRadius();
 		if(bd < 0.0f) bd = 0.0f;
 		if(bd < dist) dist = bd;
