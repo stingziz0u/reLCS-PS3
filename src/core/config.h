@@ -93,7 +93,11 @@ enum Config {
 
 	NUMEXTRADIRECTIONALS = 4,
 	NUMANTENNAS = 8,
+#ifdef __PS3__
+	NUMCORONAS = 160,	// patch 107: 56 (reVC's); LCS's streets at night have more lamps (see Coronas.cpp)
+#else
 	NUMCORONAS = 56,
+#endif
 	NUMPOINTLIGHTS = 32,
 	NUM3DMARKERS = 32,
 	NUMBRIGHTLIGHTS = 32,

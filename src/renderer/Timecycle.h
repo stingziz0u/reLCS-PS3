@@ -157,6 +157,7 @@ public:
 	static float GetSpriteBrightness(void) { return m_fCurrentSpriteBrightness; }
 	static float GetSpriteSize(void) { return m_fCurrentSpriteSize; }
 	static int32 GetShadowStrength(void) { return m_nCurrentShadowStrength; }
+	static int32 GetPoleShadowStrength(void) { return m_nCurrentPoleShadowStrength; }	// patch 107
 	static int32 GetLightShadowStrength(void) { return m_nCurrentLightShadowStrength; }
 	static float GetLightOnGroundBrightness(void) { return m_fCurrentLightsOnGroundBrightness; }
 	static float GetFarClip(void) { return m_fCurrentFarClip; }

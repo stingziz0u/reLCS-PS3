@@ -3,6 +3,9 @@
 #include "ps3_platform.h"	// PS3_Logf
 #endif
 #include "../regta3ds/EffectBudget.h"	// the 3DS port's (no-op off the 3DS)
+#ifdef __PS3__
+extern int32 PS3_coronaPeak, PS3_coronaDenied;	// patch 107 (below)
+#endif
 
 #include "main.h"
 #include "General.h"
@@ -174,7 +177,16 @@ CCoronas::RegisterCorona(uint32 id, uint8 red, uint8 green, uint8 blue, uint8 al
 		int active = 0;
 		for(int slot = 0; slot < NUMCORONAS; ++slot)
 			if(aCoronas[slot].id != 0) ++active;
+#ifdef __PS3__
+		// patch 107: the street lamps' lights came on only very close (Ren):
+		// reVC's 56 coronas were taken by the near ones (traffic lights, the
+		// cars, the lamps found first) and the rest found no slot. 160 now;
+		// "[corona]" says how many were in use and how many found none
+		if(active > PS3_coronaPeak) PS3_coronaPeak = active;
+		if(active >= EffectBudget3DS::Limit(NUMCORONAS)){ PS3_coronaDenied++; return; }
+#else
 		if(active >= EffectBudget3DS::Limit(NUMCORONAS)) return;
+#endif
 		// find empty slot
 		for(i = 0; i < NUMCORONAS; i++)
 			if(aCoronas[i].id == 0)
@@ -259,6 +271,21 @@ CCoronas::UpdateCoronaCoors(uint32 id, const CVector &coors, float drawDist, flo
 }
 
 static RwIm2DVertex vertexbufferX[2];
+
+#ifdef __PS3__
+int32 PS3_coronaPeak, PS3_coronaDenied;
+// every 10 s with the [lod] report (Renderer.cpp)
+void
+PS3_CoronaReport(void)
+{
+	int32 active = 0;
+	for(int i = 0; i < NUMCORONAS; i++)
+		if(CCoronas::aCoronas[i].id != 0)
+			active++;
+	PS3_Logf("[corona] %d of %d in use now, peak %d; %d registrations found no slot", active, NUMCORONAS, PS3_coronaPeak, PS3_coronaDenied);
+	PS3_coronaPeak = PS3_coronaDenied = 0;
+}
+#endif
 
 void
 CCoronas::Render(void)

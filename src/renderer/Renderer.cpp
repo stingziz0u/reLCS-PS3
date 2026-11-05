@@ -980,6 +980,10 @@ PS3_LodReport(void)
 	PS3_WeatherReport();
 	PS3_DarkReport();
 	PS3_ShadReport();
+	{
+		extern void PS3_CoronaReport(void);	// Coronas.cpp (patch 107)
+		PS3_CoronaReport();
+	}
 }
 #define PS3_HI(r) do { if(ps3HasLod[ent->GetModelIndex()]) ps3BB[0][r]++; } while(0)
 #else

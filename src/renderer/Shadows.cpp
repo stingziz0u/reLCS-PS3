@@ -1085,7 +1085,15 @@ CShadows::StoreShadowForPole(CEntity *pPole, float fOffsetX, float fOffsetY, flo
 {
 	ASSERT(pPole != nil);
 
+#ifdef __PS3__
+	// patch 107: the poles' shadows by TIMECYC's pole shadow column (253 at
+	// noon, 0 at night and in the rain), not the peds' and cars' one (254 at
+	// night too): at night the traffic lights' and street lamps' 16 m poles
+	// threw long dark shadows across the road (Ren, Staunton at 23:00)
+	if ( CTimeCycle::GetPoleShadowStrength() != 0 )
+#else
 	if ( CTimeCycle::GetShadowStrength() != 0 )
+#endif
 	{
 		if ( pPole->GetUp().z < 0.5f )
 			return;
@@ -1104,7 +1112,11 @@ CShadows::StoreShadowForPole(CEntity *pPole, float fOffsetX, float fOffsetY, flo
 				-CTimeCycle::GetSunDirection().y * (fPoleHeight / 2),
 				CTimeCycle::GetShadowSideX()    * fPoleWidth,
 				CTimeCycle::GetShadowSideY()    * fPoleWidth,
+#ifdef __PS3__
+				2 * (int32)((pPole->GetUp().z - 0.5f) * CTimeCycle::GetPoleShadowStrength() * 2.0f) / 3,
+#else
 				2 * (int32)((pPole->GetUp().z - 0.5f) * CTimeCycle::GetShadowStrength() * 2.0f) / 3,
+#endif
 				0, 0, 0,
 				15.0f, 1.0f, 40.0f, false, 0.0f);
 	}

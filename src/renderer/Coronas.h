@@ -45,6 +45,9 @@ VALIDATE_SIZE(CRegisteredCorona, 0x68);
 class CCoronas
 {
 	static CRegisteredCorona aCoronas[NUMCORONAS];
+#ifdef __PS3__
+	friend void PS3_CoronaReport(void);	// patch 107 (Coronas.cpp)
+#endif
 public:
 	enum {
 		SUN_CORE = 1,
