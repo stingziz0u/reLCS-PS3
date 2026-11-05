@@ -805,7 +805,7 @@ static const char *const ps3DecalModeName[] = {
 	"0 normal", "1 depth bias", "2 no depth test", "3 hide ground overlays", "4 hide shad",
 	"5 opaque (no blend)", "6 hide every 2nd+ mesh", "7 hide near LODs",
 	"8 hide cars/peds shadows", "9 hide pools and pole shadows", "10 hide player vehicle lights",
-	"11 hide skidmarks/rubbish/glass", "12 hide coronas/lights/particles/fx",
+	"11 hide skidmarks, rubbish, glass", "12 hide coronas, lights, particles, fx",
 	"13 hide the aimed model", "14 hide the rest at the aimed point"
 };
 #define PS3_NUMTESTMODES 15
