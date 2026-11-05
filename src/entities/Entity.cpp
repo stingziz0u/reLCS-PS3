@@ -483,6 +483,11 @@ CEntity::Render(void)
 				bImBeingRendered = false;
 				return;
 			}
+			extern int gPS3WatchNum;	// patch 116: test mode 16, the models around the cross
+			if(gPS3WatchNum){
+				extern void PS3_WatchDrawn(CEntity *e);
+				PS3_WatchDrawn(this);
+			}
 			bool ps3Decal = IsBuilding() && PS3_IsShadModel(GetModelIndex());
 			PS3_NearInventory(this);	// patch 94 (logs only)
 			if(ps3Decal){

@@ -415,6 +415,11 @@ CVisibilityPlugins::RenderFadingEntities(CLinkList<AlphaObjectInfo> &list)
 #ifdef __PS3__
 			// patch 95: a LOD fades where its stretched draw distance ends
 			extern bool PS3_AimHidden(CEntity *e);	// Renderer.cpp (patch 110)
+			extern int gPS3WatchNum;
+			if(gPS3WatchNum){
+				extern void PS3_WatchDrawn(CEntity *e);
+				PS3_WatchDrawn(e);
+			}
 			if(!PS3_AimHidden(e))
 			RenderFadingAtomic((RpAtomic*)e->m_rwObject, node->item.sort,
 			                   e->bIsBIGBuilding ? PS3_LodFogScale((CSimpleModelInfo*)mi) : 1.0f);

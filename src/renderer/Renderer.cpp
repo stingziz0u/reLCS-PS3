@@ -1156,6 +1156,55 @@ PS3_FreeCamActive(void)
 	return ps3FreeOn && PS3_logsOn && rw::ps3::decalMode == 16;
 }
 
+// patch 116: the models around the cross, and whether each was drawn. A
+// window or a piece of road that isn't drawn can't be picked by what's drawn:
+// these are all the models within 3 m of the cross' point, drawn or not
+int gPS3WatchNum;
+static CEntity *ps3Watch[18];
+static uint32 ps3WatchDrawn[18];
+static CEntity *ps3WatchLastEnt;
+static rw::Material *ps3WatchLastMat;
+static uint32 ps3WatchSetFrame;
+
+void
+PS3_WatchDrawn(CEntity *e)
+{
+	for(int i = 0; i < gPS3WatchNum; i++)
+		if(ps3Watch[i] == e)
+			ps3WatchDrawn[i] = CTimer::GetFrameCounter();
+}
+
+static void
+PS3_WatchState(CEntity *e, uint32 drawnFrame, char *buf, int size)
+{
+	CBaseModelInfo *mi = CModelInfo::GetModelInfo(e->GetModelIndex());
+	float dist = (e->GetPosition() - TheCamera.GetPosition()).Magnitude();
+	float lodDist = 0.0f;
+	if(mi->GetModelType() == MITYPE_SIMPLE || mi->GetModelType() == MITYPE_TIME)
+		lodDist = ((CSimpleModelInfo*)mi)->GetLargestLodDistance();
+	uint32 now = CTimer::GetFrameCounter();
+	const char *drawn = drawnFrame == 0 ? "NOT DRAWN" : now - drawnFrame <= 2 ? "drawn" : "not drawn lately";
+	snprintf(buf, size, "%s: %s, %s, %s, %s, %.0f m (draws to %.0f m)%s%s%s",
+	         mi->GetModelName(), drawn,
+	         e->m_rwObject ? "loaded" : "NOT LOADED",
+	         e->GetIsOnScreen() ? "on Toni's screen" : "OFF Toni's screen",
+	         e->IsEntityOccluded() ? "OCCLUDED" : "not occluded",
+	         dist, lodDist * TheCamera.LODDistMultiplier,
+	         e->bIsVisible ? "" : ", invisible",
+	         e->bIsBIGBuilding ? ", BIG" : "", PS3_AimFlags(e));
+}
+
+static void
+PS3_WatchReport(const char *why)
+{
+	char b[256];
+	PS3_Logf("[free] %s: %d models within 3 m of the cross' point (occlusion %s)", why, gPS3WatchNum, gPS3NoOcclusion ? "OFF" : "on");
+	for(int i = 0; i < gPS3WatchNum; i++){
+		PS3_WatchState(ps3Watch[i], ps3WatchDrawn[i], b, sizeof(b));
+		PS3_Logf("[free]   %s", b);
+	}
+}
+
 // what is drawn under the cross: the ray from the free camera
 static void
 PS3_FreePick(int action)	// 0 look, 1 hide the mesh, 2 hide the model
@@ -1176,6 +1225,26 @@ PS3_FreePick(int action)	// 0 look, 1 hide the mesh, 2 hide the model
 	int k = 0;
 	for(int i = 0; i < n; i++) if(others[i] != hit) oth[k++] = others[i];
 	PS3_AimRender(hit, oth, k, cam, fwd, action != 0);
+	// patch 116: the models around the point, watched; their state logged when
+	// the cross moves to another mesh (after they had a frame to be drawn)
+	bool sameSet = gPS3WatchNum == k + 1 && ps3Watch[0] == hit;
+	if(!sameSet){
+		gPS3WatchNum = 0;
+		ps3Watch[gPS3WatchNum] = hit; ps3WatchDrawn[gPS3WatchNum++] = 0;
+		for(int i = 0; i < k && gPS3WatchNum < 18; i++){
+			ps3Watch[gPS3WatchNum] = oth[i]; ps3WatchDrawn[gPS3WatchNum++] = 0;
+		}
+		ps3WatchSetFrame = CTimer::GetFrameCounter();
+	}else if((ps3AimMatEnt != ps3WatchLastEnt || ps3AimMat != ps3WatchLastMat) &&
+	         CTimer::GetFrameCounter() - ps3WatchSetFrame > 3){
+		ps3WatchLastEnt = ps3AimMatEnt;
+		ps3WatchLastMat = ps3AimMat;
+		char why[160];
+		snprintf(why, sizeof(why), "cross on %s / %s, from %.1f %.1f %.1f looking %.2f %.2f %.2f",
+		         ps3AimMatEnt ? CModelInfo::GetModelInfo(ps3AimMatEnt->GetModelIndex())->GetModelName() : "nothing",
+		         ps3AimMat && ps3AimMat->texture ? ps3AimMat->texture->name : "-", cam.x, cam.y, cam.z, fwd.x, fwd.y, fwd.z);
+		PS3_WatchReport(why);
+	}
 	const char *model = ps3AimMatEnt ? CModelInfo::GetModelInfo(ps3AimMatEnt->GetModelIndex())->GetModelName() : "nada";
 	const char *tex = ps3AimMat && ps3AimMat->texture ? ps3AimMat->texture->name : "sin textura";
 	const char *what = "";
@@ -1203,6 +1272,9 @@ PS3_FreeCamPad(void)
 			ps3FreeOn = false;
 			ps3FreeHideEnt = nil;
 			rw::ps3::aimHideMaterial = nil;
+			gPS3WatchNum = 0;
+			ps3WatchLastEnt = nil;
+			ps3WatchLastMat = nil;
 		}
 		return;
 	}
@@ -1251,6 +1323,12 @@ PS3_FreeCamPad(void)
 			rw::ps3::aimHideMaterial = nil;
 			PS3_Log("[free] O: everything shown");
 			AsciiToUnicode("Libre: todo visible", ps3AimMsg);
+			CHud::SetHelpMessage(ps3AimMsg, true);
+		}else if(down & PS3B(GLFW_GAMEPAD_BUTTON_Y)){
+			// patch 116: the occluders on/off, live (noocclusion.txt does it from the start)
+			gPS3NoOcclusion = !gPS3NoOcclusion;
+			PS3_WatchReport(gPS3NoOcclusion ? "triangle: occlusion OFF" : "triangle: occlusion on");
+			AsciiToUnicode(gPS3NoOcclusion ? "Libre: oclusion APAGADA" : "Libre: oclusion encendida", ps3AimMsg);
 			CHud::SetHelpMessage(ps3AimMsg, true);
 		}else if(ps3FreeFrame++ % 15 == 0 && !rw::ps3::aimHideMaterial && !ps3FreeHideEnt)
 			PS3_FreePick(0);
