@@ -130,6 +130,12 @@ CBike::CBike(int32 id, uint8 CreatedBy)
 	m_pSetOnFireEntity = nil;
 	m_pBombRigger = nil;
 	m_fGasPedalAudio = 0.0f;
+	// patch 105: never set here (CAutomobile's constructor does it): a bike
+	// kept whatever the vehicle pool's memory had. With BOMBS_ON_BIKES the
+	// fire button arms m_bombType's bomb, and the pizza mission throws the
+	// pizzas with it: "Bomb armed" on the Pizza Boy and it blew up (Ren).
+	m_bombType = CARBOMB_NONE;
+	bDriverLastFrame = false;
 	m_bike_flag02 = false;
 	bWaterTight = false;
 	bIsBeingPickedUp = false;
