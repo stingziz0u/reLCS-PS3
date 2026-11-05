@@ -2184,6 +2184,12 @@ Idle(void *arg)
 		tbStartTimer(0, "RenderScene");
 		phaseStart = re3_wall_time_ms();
 		RenderScene();
+#ifdef __PS3__
+		{
+			extern void PS3_DiffEndFrame(void);	// Renderer.cpp, patch 123: test mode 17
+			PS3_DiffEndFrame();
+		}
+#endif
 		tbEndTimer("RenderScene");
 		phaseMs = re3_wall_time_ms() - phaseStart;
 		if(phaseMs >= 80.0)

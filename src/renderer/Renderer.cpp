@@ -808,9 +808,10 @@ static const char *const ps3DecalModeName[] = {
 	"11 hide skidmarks, rubbish, glass", "12 hide coronas, lights, particles, fx",
 	"13 hide the aimed model", "14 hide the rest at the aimed point",
 	"15 hide the aimed mesh",
-	"16 free camera (the view frozen)"
+	"16 free camera (the view frozen)",
+	"17 log what is drawn, loaded, removed"
 };
-#define PS3_NUMTESTMODES 17
+#define PS3_NUMTESTMODES 18
 static uint32 ps3DecalPrev;
 static wchar ps3DecalMsg[96];
 
@@ -1515,6 +1516,125 @@ PS3_FreeCamDraw2D(void)
 	CRGBA c(255, 40, 40, 255);
 	CSprite2d::DrawRect(CRect(cx - 12.0f, cy - 1.0f, cx + 12.0f, cy + 1.0f), c);
 	CSprite2d::DrawRect(CRect(cx - 1.0f, cy - 12.0f, cx + 1.0f, cy + 12.0f), c);
+}
+
+// ---- patch 123: test mode 17, what changes from frame to frame ------------------
+// Toni plays as usual. Every frame the buildings drawn are compared with the
+// frame before: [diff] lists those that appear (+) and go (-), with the camera
+// and their distance; models and TXDs streamed in and removed (Streaming.cpp);
+// and, once per model and material, a mesh drawn without a texture or with
+// one not uploaded yet (rw::ps3::diffMatHook). Stand where the bug comes and
+// goes, step back and forth: the log says what changed
+bool gPS3DiffOn;
+struct PS3DiffItem { CEntity *e; int16 model; float x, y, z; };
+static PS3DiffItem ps3DiffA[3000], ps3DiffB[3000];
+static PS3DiffItem *ps3DiffCur = ps3DiffA, *ps3DiffPrev = ps3DiffB;
+static int ps3DiffNumCur, ps3DiffNumPrev;
+static bool ps3DiffStarted;
+static int16 ps3DiffCurModel = -1;
+static uint32 ps3DiffMatSeen[512];
+
+void
+PS3_DiffDrawn(CEntity *e)
+{
+	ps3DiffCurModel = e->GetModelIndex();
+	if(!e->IsBuilding() || ps3DiffNumCur >= 3000)
+		return;
+	PS3DiffItem &it = ps3DiffCur[ps3DiffNumCur++];
+	it.e = e;
+	it.model = e->GetModelIndex();
+	it.x = e->GetPosition().x; it.y = e->GetPosition().y; it.z = e->GetPosition().z;
+}
+
+static void
+PS3_DiffMat(rw::Material *m, int why)
+{
+	// once per model and material (a small hash; a collision only skips a line)
+	uint32 h = ((uint32)(uintptr)m * 2654435761u) ^ ((uint32)ps3DiffCurModel * 40503u);
+	uint32 slot = (h >> 7) % 512;
+	if(ps3DiffMatSeen[slot] == (h | 1))
+		return;
+	ps3DiffMatSeen[slot] = h | 1;
+	const char *model = ps3DiffCurModel >= 0 ? CModelInfo::GetModelInfo(ps3DiffCurModel)->GetModelName() : "?";
+	PS3_Logf("[diff]   %s: %s drawn %s", model, why == 1 ? "a mesh" : (m->texture ? m->texture->name : "?"),
+	         why == 1 ? "WITHOUT a texture (not found when loaded)" : "with its texture NOT UPLOADED yet (white)");
+}
+
+static int
+PS3_DiffCmp(const void *a, const void *b)
+{
+	uintptr x = (uintptr)((const PS3DiffItem*)a)->e, y = (uintptr)((const PS3DiffItem*)b)->e;
+	return x < y ? -1 : x > y ? 1 : 0;
+}
+
+void
+PS3_DiffEndFrame(void)
+{
+	bool on = PS3_logsOn && rw::ps3::decalMode == 17;
+	if(!on){
+		if(gPS3DiffOn){
+			gPS3DiffOn = false;
+			rw::ps3::diffOn = false;
+			rw::ps3::diffMatHook = nil;
+			PS3_Log("[diff] off");
+		}
+		ps3DiffNumCur = ps3DiffNumPrev = 0;
+		ps3DiffStarted = false;
+		return;
+	}
+	if(!gPS3DiffOn){
+		// on from the next frame: this one wasn't recorded
+		gPS3DiffOn = true;
+		rw::ps3::diffOn = true;
+		rw::ps3::diffMatHook = PS3_DiffMat;
+		memset(ps3DiffMatSeen, 0, sizeof(ps3DiffMatSeen));
+		ps3DiffNumCur = 0;
+		return;
+	}
+	qsort(ps3DiffCur, ps3DiffNumCur, sizeof(PS3DiffItem), PS3_DiffCmp);
+	int n = 0;	// dedupe (an entity can be drawn twice)
+	for(int i = 0; i < ps3DiffNumCur; i++)
+		if(n == 0 || ps3DiffCur[n-1].e != ps3DiffCur[i].e)
+			ps3DiffCur[n++] = ps3DiffCur[i];
+	ps3DiffNumCur = n;
+	CVector cam = TheCamera.GetPosition();
+	if(!ps3DiffStarted){
+		ps3DiffStarted = true;
+		PS3_Logf("[diff] on: %d buildings drawn, camera %.1f %.1f %.1f, %02d:%02d, draw distances x%.2f",
+		         ps3DiffNumCur, cam.x, cam.y, cam.z, CClock::GetHours(), CClock::GetMinutes(), TheCamera.LODDistMultiplier);
+	}else{
+		int i = 0, j = 0, lines = 0;
+		bool head = false;
+		while((i < ps3DiffNumPrev || j < ps3DiffNumCur) && lines < 60){
+			PS3DiffItem *it;
+			char sign;
+			if(j >= ps3DiffNumCur || (i < ps3DiffNumPrev && (uintptr)ps3DiffPrev[i].e < (uintptr)ps3DiffCur[j].e)){
+				it = &ps3DiffPrev[i++]; sign = '-';
+			}else if(i >= ps3DiffNumPrev || (uintptr)ps3DiffCur[j].e < (uintptr)ps3DiffPrev[i].e){
+				it = &ps3DiffCur[j++]; sign = '+';
+			}else{
+				i++; j++;
+				continue;
+			}
+			if(!head){
+				head = true;
+				PS3_Logf("[diff] frame %u, camera %.1f %.1f %.1f looking %.2f %.2f %.2f, %d drawn:", CTimer::GetFrameCounter(),
+				         cam.x, cam.y, cam.z, TheCamera.GetForward().x, TheCamera.GetForward().y, TheCamera.GetForward().z, ps3DiffNumCur);
+			}
+			float d = (CVector(it->x, it->y, it->z) - cam).Magnitude();
+			CBaseModelInfo *mi = CModelInfo::GetModelInfo(it->model);
+			float lodDist = 0.0f;
+			if(mi->GetModelType() == MITYPE_SIMPLE || mi->GetModelType() == MITYPE_TIME)
+				lodDist = ((CSimpleModelInfo*)mi)->GetLargestLodDistance();
+			PS3_Logf("[diff]   %c %s at %.1f %.1f %.1f, %.0f m (draws to %.0f m)", sign, mi->GetModelName(), it->x, it->y, it->z, d, lodDist);
+			lines++;
+		}
+		if(lines >= 60)
+			PS3_Log("[diff]   (more changes this frame, not listed)");
+	}
+	PS3DiffItem *t = ps3DiffPrev; ps3DiffPrev = ps3DiffCur; ps3DiffCur = t;
+	ps3DiffNumPrev = ps3DiffNumCur;
+	ps3DiffNumCur = 0;
 }
 
 // CPad::UpdatePads (Pad.cpp), after pad 0: R3 + Select = next test mode

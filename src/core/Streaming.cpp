@@ -1066,6 +1066,13 @@ CStreaming::ConvertBufferToObject(int8 *buf, int32 streamId)
 	timeDiff = endTime - startTime;
 	if(timeDiff > 5)
 		debug("%s took %d ms\n", GetObjectName(streamId), timeDiff);
+#ifdef __PS3__
+	{
+		extern bool gPS3DiffOn;	// patch 123: test mode 17
+		if(gPS3DiffOn && streamId < STREAM_OFFSET_COL)
+			PS3_Logf("[diff]   streamed in: %s %s", streamId < STREAM_OFFSET_TXD ? "model" : "txd", GetObjectName(streamId));
+	}
+#endif
 
 	return true;
 }
@@ -1159,6 +1166,13 @@ CStreaming::FinishLoadingLargeFile(int8 *buf, int32 streamId)
 	timeDiff = endTime - startTime;
 	if(timeDiff > 5)
 		debug("%s took %d ms\n", GetObjectName(streamId), timeDiff);
+#ifdef __PS3__
+	{
+		extern bool gPS3DiffOn;	// patch 123: test mode 17
+		if(gPS3DiffOn && streamId < STREAM_OFFSET_COL)
+			PS3_Logf("[diff]   streamed in: %s %s", streamId < STREAM_OFFSET_TXD ? "model" : "txd", GetObjectName(streamId));
+	}
+#endif
 
 	return true;
 }
@@ -1508,6 +1522,13 @@ CStreaming::RemoveModel(int32 id)
 
 	if(ms_aInfoForModel[id].m_loadState == STREAMSTATE_NOTLOADED)
 		return;
+#ifdef __PS3__
+	{
+		extern bool gPS3DiffOn;	// patch 123: test mode 17
+		if(gPS3DiffOn && id < STREAM_OFFSET_COL && ms_aInfoForModel[id].m_loadState == STREAMSTATE_LOADED)
+			PS3_Logf("[diff]   removed: %s %s", id < STREAM_OFFSET_TXD ? "model" : "txd", GetObjectName(id));
+	}
+#endif
 
 	if(ms_aInfoForModel[id].m_loadState == STREAMSTATE_LOADED){
 #if defined(__PS3__) && defined(RW_PS3_RSX)

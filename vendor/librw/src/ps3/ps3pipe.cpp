@@ -673,6 +673,31 @@ drawInstImpl(InstanceDataHeader *header, InstanceData *inst)
 int32 decalMode;
 bool decalCur;
 Material *aimHideMaterial;
+bool diffOn;
+void (*diffMatHook)(Material *m, int why);
+
+// patch 123: test mode 17, a material drawn with no texture or one not uploaded
+static void
+diffCheckMaterial(Material *m)
+{
+	if(diffMatHook == nil)
+		return;
+	if(m->texture == nil){
+		diffMatHook(m, 1);
+		return;
+	}
+	Raster *r = m->texture->raster;
+	if(r == nil){
+		diffMatHook(m, 2);
+		return;
+	}
+	gcmTexture tex;
+	bool swz;
+	int32 levels = 0;
+	rasterBindInfo(r, &tex, &swz, &levels);
+	if(levels == 0)
+		diffMatHook(m, 2);
+}
 bool forceNoCull;
 bool decalBuilding;	// patch 96: a building is being drawn (mode 6 hides its meshes after the first)
 bool decalRoad;	// patch 95: a road is being drawn: its meshes after the first with an alpha texture (dirt, shadows) are overlays
@@ -754,6 +779,8 @@ drawInst(InstanceDataHeader *header, InstanceData *inst)
 {
 	if(aimHideMaterial && inst->material == aimHideMaterial)
 		return;	// patch 114: test mode 15
+	if(diffOn)
+		diffCheckMaterial(inst->material);	// patch 123
 	if(decalCur || inst->decal){
 		drawDecal(header, inst, inst->decal ? inst->decal : 1);
 		return;
