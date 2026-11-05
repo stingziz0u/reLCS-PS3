@@ -1,4 +1,8 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#include "src/ps3/rwps3.h"	// patch 93: decalCur
+#endif
 #ifdef _3DS
 #include "../../../../common/3ds/PS2GraphicsProfile.h"
 #endif
@@ -400,7 +404,19 @@ CVisibilityPlugins::RenderFadingEntities(CLinkList<AlphaObjectInfo> &list)
 				CRenderer::GetNew3DSWorldDistance(e, node->item.sort),
 				CRenderer::GetNew3DSWorldLodScale(mi, e->GetModelIndex(), e));
 #else
+#ifdef __PS3__
+			// patch 93: a fading road shadow is a decal too
+			bool ps3Decal = e->IsBuilding() && PS3_IsShadModel(e->GetModelIndex());
+			if(ps3Decal){
+				rw::ps3::decalCur = true;
+				gPS3ShadRendered++;
+			}
+#endif
 			RenderFadingAtomic((RpAtomic*)e->m_rwObject, node->item.sort, 1.0f);
+#ifdef __PS3__
+			if(ps3Decal)
+				rw::ps3::decalCur = false;
+#endif
 #endif
 			POP_RENDERGROUP();
 			e->bImBeingRendered = false;

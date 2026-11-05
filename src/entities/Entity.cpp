@@ -1,6 +1,7 @@
 #include "common.h"
 #ifdef __PS3__
 #include "ps3_platform.h"	// PS3_Logf (patch 90)
+#include "src/ps3/rwps3.h"	// patch 93: decalCur
 #endif
 
 #include "General.h"
@@ -475,10 +476,22 @@ CEntity::Render(void)
 			// TODO(LCS): LCS does not use bImBeingRendered here,
 			// but that may be due to the streamed world. better keep it for safety
 			bImBeingRendered = true;
+#ifdef __PS3__
+			// patch 93: the road shadow decals (rw::ps3 logs them, test modes)
+			bool ps3Decal = IsBuilding() && PS3_IsShadModel(GetModelIndex());
+			if(ps3Decal){
+				rw::ps3::decalCur = true;
+				gPS3ShadRendered++;
+			}
+#endif
 			if(RwObjectGetType(m_rwObject) == rpATOMIC)
 				RpAtomicRender((RpAtomic*)m_rwObject);
 			else
 				RpClumpRender((RpClump*)m_rwObject);
+#ifdef __PS3__
+			if(ps3Decal)
+				rw::ps3::decalCur = false;
+#endif
 			bImBeingRendered = false;
 		}
 	}

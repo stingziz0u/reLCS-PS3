@@ -35,6 +35,11 @@
 #include "Plane.h"
 #include "WaterLevel.h"
 #include "Pools.h"	// patch 91: NewShad* tracker
+#include "Hud.h"	// patch 93: the decal test mode on screen
+#include "Font.h"	// AsciiToUnicode
+#include "ps3_glfw.h"	// GLFW_GAMEPAD_BUTTON_* (PS3_PadButtons)
+#include "Pad.h"
+#include "src/ps3/rwps3.h"	// patch 93: rw::ps3::decalMode, decalStats
 #ifdef __PS3__
 #include <stdlib.h>	// qsort, bsearch (patch 28)
 #include "Timecycle.h"
@@ -406,6 +411,78 @@ PS3_ShadFind(void)
 	PS3_Logf("[shad] %d shadow buildings (%d models with \"shad\" in the name)", ps3NumShad, nm);
 }
 
+// patch 93: CEntity::Render marks the decal draws with it
+bool
+PS3_IsShadModel(int32 id)
+{
+	return ps3NumShad > 0 && id >= 0 && id < MODELINFOSIZE && ps3IsShadModel[id];
+}
+uint32 gPS3ShadRendered;	// shadow entities through CEntity::Render (Entity.cpp)
+static uint32 ps3ShadRenderedSum, ps3ShadNearSum, ps3ShadVisSum, ps3ShadSumFrames;
+static CEntity *ps3ShadInfoDone[24];
+static int32 ps3NumShadInfo;
+static float ps3ShadNearestDist;
+static CEntity *ps3ShadNearest;
+
+// once per shadow entity that comes near: what it is and how high above the road
+static void
+PS3_ShadInfo(CEntity *e)
+{
+	for(int32 i = 0; i < ps3NumShadInfo; i++)
+		if(ps3ShadInfoDone[i] == e)
+			return;
+	if(ps3NumShadInfo >= 24 || e->m_rwObject == nil || RwObjectGetType(e->m_rwObject) != rpATOMIC)
+		return;
+	ps3ShadInfoDone[ps3NumShadInfo++] = e;
+	CSimpleModelInfo *mi = (CSimpleModelInfo*)CModelInfo::GetModelInfo(e->GetModelIndex());
+	RpAtomic *a = (RpAtomic*)e->m_rwObject;
+	RpGeometry *g = RpAtomicGetGeometry(a);
+	float minZ = 1.0e9f, maxZ = -1.0e9f;
+	int32 minA = 256, maxA = -1;
+	if(g && g->morphTargets && g->morphTargets[0].vertices){
+		const CMatrix &m = e->GetMatrix();
+		for(int32 v = 0; v < g->numVertices; v++){
+			rw::V3d *p = &g->morphTargets[0].vertices[v];
+			CVector w = m * CVector(p->x, p->y, p->z);
+			minZ = Min(minZ, w.z);
+			maxZ = Max(maxZ, w.z);
+		}
+		if(g->colors)
+			for(int32 v = 0; v < g->numVertices; v++){
+				minA = Min(minA, (int32)g->colors[v].alpha);
+				maxA = Max(maxA, (int32)g->colors[v].alpha);
+			}
+	}
+	CColPoint cp;
+	CEntity *hit = nil;
+	CVector top = e->GetPosition();
+	top.z = maxZ + 3.0f;
+	float ground = -1000.0f;
+	const char *hitName = "nothing";
+	if(CWorld::ProcessVerticalLine(top, minZ - 10.0f, cp, hit, true, false, false, false, true, false, nil)){
+		ground = cp.point.z;
+		if(hit)
+			hitName = CModelInfo::GetModelInfo(hit->GetModelIndex())->GetModelName();
+	}
+	int32 meshes = 0;
+	char tex[96] = "";
+	if(g){
+		meshes = g->matList.numMaterials;
+		for(int32 k = 0; k < meshes && k < 3; k++){
+			rw::Material *mat = g->matList.materials[k];
+			char t[40];
+			snprintf(t, sizeof(t), "%s%s(a%d)", k ? "," : "", mat->texture ? mat->texture->name : "none", mat->color.alpha);
+			strncat(tex, t, sizeof(tex) - strlen(tex) - 1);
+		}
+	}
+	PS3_Logf("[shadm] %s at %.1f %.1f %.1f: z %.2f..%.2f, ground under it %.2f (%s), so %.1f cm above; %d verts, %d materials %s, vertex alpha %d..%d; "
+	         "flags drawLast %d noZwrite %d additive %d noFade %d ignoreLight %d bigBuilding %d, entity drawLast %d, lod dist %.0f",
+	         mi->GetModelName(), e->GetPosition().x, e->GetPosition().y, e->GetPosition().z, minZ, maxZ, ground, hitName,
+	         (minZ - ground)*100.0f, g ? g->numVertices : 0, meshes, tex, minA, maxA,
+	         (int)mi->m_drawLast, (int)mi->m_noZwrite, (int)mi->m_additive, (int)mi->m_noFade, (int)mi->m_ignoreLight, (int)mi->m_isBigBuilding,
+	         (int)e->bDrawLast, mi->GetLargestLodDistance());
+}
+
 // after SetupEntityVisibility in the sector scans
 static void
 PS3_ShadNoteVis(CEntity *ent, int vis)
@@ -436,28 +513,50 @@ PS3_ShadNoteVis(CEntity *ent, int vis)
 static void
 PS3_ShadEndFrame(void)
 {
-	if(!PS3_logsOn)
+	if(ps3NumShad < 0){
+		if(CPools::GetBuildingPool() && CPools::GetBuildingPool()->GetNoOfUsedSpaces() > 0)
+			PS3_ShadFind();	// patch 93: also without logs (the test modes need it)
 		return;
+	}
+	if(!PS3_logsOn){
+		gPS3ShadRendered = 0;
+		return;
+	}
 	ps3AlphaFrames++;
 	if(gPS3AlphaBldLost != ps3AlphaLastBldLost)
 		ps3AlphaFullFrames++;
 	ps3AlphaLastBldLost = gPS3AlphaBldLost;
-	if(ps3NumShad < 0){
-		if(CPools::GetBuildingPool())
-			PS3_ShadFind();
-		return;
-	}
 	CVector cam = TheCamera.GetPosition();
 	bool any = false;
+	uint32 nearN = 0, visN = 0;
+	ps3ShadNearest = nil;
+	ps3ShadNearestDist = 1.0e9f;
 	for(int32 i = 0; i < ps3NumShad; i++){
-		if((ps3Shad[i]->GetPosition() - cam).MagnitudeSqr2D() > 80.0f*80.0f)
+		float d = (ps3Shad[i]->GetPosition() - cam).Magnitude2D();
+		if(d > 80.0f)
 			continue;
 		any = true;
-		ps3ShadCount[ps3ShadFrame[i] == ps3VisFrame ? ps3ShadWhy[i] : PS3SH_NOTSCANNED]++;
+		nearN++;
+		int why = ps3ShadFrame[i] == ps3VisFrame ? ps3ShadWhy[i] : PS3SH_NOTSCANNED;
+		if(why == PS3SH_DRAWN) visN++;
+		ps3ShadCount[why]++;
+		if(d < ps3ShadNearestDist){
+			ps3ShadNearestDist = d;
+			ps3ShadNearest = ps3Shad[i];
+		}
+		PS3_ShadInfo(ps3Shad[i]);
 	}
 	if(any)
 		ps3ShadFrames++;
+	ps3ShadNearSum += nearN;
+	ps3ShadVisSum += visN;
+	ps3ShadRenderedSum += gPS3ShadRendered;
+	ps3ShadSumFrames++;
+	gPS3ShadRendered = 0;
 }
+
+static void PS3_FarReport(void);	// patch 93, below
+static void PS3_DecalSnapshot(const char *why);
 
 static void
 PS3_ShadReport(void)
@@ -470,6 +569,9 @@ PS3_ShadReport(void)
 		ps3AlphaLastBldLost = 0;
 		ps3AlphaFrames = ps3AlphaFullFrames = 0;
 	}
+	PS3_FarReport();
+	if(ps3ShadSumFrames && ps3ShadNearSum)
+		PS3_DecalSnapshot("every 10 s");
 	if(ps3ShadFrames == 0)
 		return;
 	float f = (float)ps3ShadFrames;
@@ -478,6 +580,110 @@ PS3_ShadReport(void)
 	         ps3ShadCount[PS3SH_OCCLUDED]/f, ps3ShadCount[PS3SH_INVISIBLE]/f, ps3ShadCount[PS3SH_NOTLOADED]/f, ps3ShadCount[PS3SH_ALPHALOST]/f);
 	memset(ps3ShadCount, 0, sizeof(ps3ShadCount));
 	ps3ShadFrames = 0;
+}
+
+// ---- patch 93: "[far]", big buildings (LODs) cut at their draw distance where
+// the fog doesn't hide them yet: what pops in and out far away
+static uint32 ps3FarCut, ps3FarCutFrames;
+static float ps3FarWorstFog = 2.0f, ps3FarWorstDist, ps3FarWorstLod;
+static int32 ps3FarWorstModel = -1;
+static uint32 ps3FarLastFrame;
+
+static void
+PS3_FarNoteCut(CEntity *ent, float dist)
+{
+	if(!PS3_logsOn || Scene.camera == nil || !ent->GetIsOnScreen())
+		return;
+	float fogStart = Scene.camera->fogPlane, farClip = Scene.camera->farPlane;
+	float fog = farClip > fogStart ? (dist - fogStart)/(farClip - fogStart) : 1.0f;	// 1: all fog
+	if(fog >= 0.9f)
+		return;
+	ps3FarCut++;
+	if(ps3FarLastFrame != ps3VisFrame){
+		ps3FarLastFrame = ps3VisFrame;
+		ps3FarCutFrames++;
+	}
+	if(fog < ps3FarWorstFog){
+		ps3FarWorstFog = fog;
+		ps3FarWorstDist = dist;
+		ps3FarWorstModel = ent->GetModelIndex();
+		ps3FarWorstLod = ((CSimpleModelInfo*)CModelInfo::GetModelInfo(ent->GetModelIndex()))->GetLargestLodDistance();
+	}
+}
+
+static void
+PS3_FarReport(void)
+{
+	if(ps3FarCut == 0 || Scene.camera == nil)
+		return;
+	PS3_Logf("[far] LODs cut on screen before the fog covers them: %u in 10 s (%u frames); worst %s at %.0f m (its draw distance %.0f), %.0f%% fog there; far clip %.0f, fog from %.0f, weather %d -> %d (%.2f)",
+	         ps3FarCut, ps3FarCutFrames, ps3FarWorstModel >= 0 ? CModelInfo::GetModelInfo(ps3FarWorstModel)->GetModelName() : "-",
+	         ps3FarWorstDist, ps3FarWorstLod, ps3FarWorstFog*100.0f, Scene.camera->farPlane, Scene.camera->fogPlane,
+	         CWeather::OldWeatherType, CWeather::NewWeatherType, CWeather::InterpolationValue);
+	ps3FarCut = ps3FarCutFrames = 0;
+	ps3FarWorstFog = 2.0f;
+	ps3FarWorstModel = -1;
+}
+
+// ---- patch 93: the decal test modes (R3 + Select) and the snapshot ---------------
+static const char *const ps3DecalModeName[] = {
+	"0 normal", "1 depth bias", "2 no depth test", "3 no ZCULL", "4 opaque (no blend)", "5 no fog"
+};
+static uint32 ps3DecalPrev;
+static wchar ps3DecalMsg[96];
+
+static void
+PS3_DecalSnapshot(const char *why)
+{
+	using namespace rw::ps3;
+	float f = ps3ShadSumFrames ? (float)ps3ShadSumFrames : 1.0f;
+	CVector cam = TheCamera.GetPosition();
+	CVector fwd = TheCamera.GetForward();
+	PS3_Logf("[snap] %s | mode %s, %u frames: shadow buildings within 80 m %.1f, visible %.1f, rendered %.1f per frame | camera %.1f %.1f %.1f looking %.2f %.2f %.2f, near %.2f far %.0f fog from %.0f",
+	         why, ps3DecalModeName[decalMode], ps3ShadSumFrames, ps3ShadNearSum/f, ps3ShadVisSum/f, ps3ShadRenderedSum/f,
+	         cam.x, cam.y, cam.z, fwd.x, fwd.y, fwd.z,
+	         Scene.camera ? Scene.camera->nearPlane : 0.0f, Scene.camera ? Scene.camera->farPlane : 0.0f, Scene.camera ? Scene.camera->fogPlane : 0.0f);
+	if(ps3ShadNearest){
+		CVector p = ps3ShadNearest->GetPosition();
+		PS3_Logf("[snap]   nearest: %s at %.1f m (%.1f %.1f %.1f)",
+		         CModelInfo::GetModelInfo(ps3ShadNearest->GetModelIndex())->GetModelName(), ps3ShadNearestDist, p.x, p.y, p.z);
+	}
+	DecalStats &d = decalStats;
+	if(d.meshes)
+		PS3_Logf("[snap]   drawn with (of %u meshes): textured %u (texture with alpha %u, first %s), vertex alpha %u, blend %u, z test %u, z write %u, fog %u, GS alpha test %u, no culling %u | last: blend %d/%d, alpha test %d ref %d, GS ref %d, material alpha %d",
+		         d.meshes, d.textured, d.texAlpha, d.tex[0] ? d.tex : "-", d.vertexAlpha, d.blendOn, d.ztestOn, d.zwriteOn, d.fogOn, d.gsAlphaTest, d.cullNone,
+		         d.srcBlend, d.dstBlend, d.alphaFunc, d.alphaRef, d.gsAlphaRef, d.matAlpha);
+	else
+		PS3_Logf("[snap]   no shadow mesh reached the RSX");
+	memset(&decalStats, 0, sizeof(decalStats));
+	ps3ShadNearSum = ps3ShadVisSum = ps3ShadRenderedSum = ps3ShadSumFrames = 0;
+}
+
+// CPad::UpdatePads (Pad.cpp), after pad 0: R3 + Select = next test mode
+// (the log gets a snapshot of the mode being left)
+void
+PS3_DecalTestPad(void)
+{
+#define PS3B(b) (1u << (b))
+	unsigned m = PS3_PadButtons();
+	unsigned down = m & ~ps3DecalPrev;
+	ps3DecalPrev = m;
+	unsigned want = PS3B(GLFW_GAMEPAD_BUTTON_RIGHT_THUMB) | PS3B(GLFW_GAMEPAD_BUTTON_BACK);
+	if((m & want) != want || (down & want) == 0)
+		return;
+	if(m & PS3B(GLFW_GAMEPAD_BUTTON_LEFT_THUMB))
+		return;	// L3 + Select is the mission spawner
+#undef PS3B
+	CPad::GetPad(0)->NewState.Clear();	// not a camera change
+	if(PS3_logsOn)
+		PS3_DecalSnapshot("leaving the mode");
+	rw::ps3::decalMode = (rw::ps3::decalMode + 1) % 6;
+	rw::ps3::zcullOn = rw::ps3::decalMode != 3;
+	char msg[96];
+	snprintf(msg, sizeof(msg), "Sombras: modo %s", ps3DecalModeName[rw::ps3::decalMode]);
+	AsciiToUnicode(msg, ps3DecalMsg);
+	CHud::SetHelpMessage(ps3DecalMsg, true);
+	PS3_Logf("[snap] now mode %s", ps3DecalModeName[rw::ps3::decalMode]);
 }
 
 void
@@ -1554,6 +1760,9 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 			PS3_BB(PS3BB_STREAM);
 			return ent->GetIsOnScreen() ? VIS_STREAMME : VIS_INVISIBLE;
 		}else{
+#ifdef __PS3__
+			PS3_FarNoteCut(ent, dist);	// patch 93 (before the RW object goes)
+#endif
 			ent->DeleteRwObject();
 			PS3_BB(PS3BB_TOOFAR);
 			return VIS_INVISIBLE;

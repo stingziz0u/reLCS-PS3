@@ -487,12 +487,99 @@ drawInst_GSemu(InstanceDataHeader *header, InstanceData *inst)
 }
 
 static void
-drawInst(InstanceDataHeader *header, InstanceData *inst)
+drawInstImpl(InstanceDataHeader *header, InstanceData *inst)
 {
 	if(rw::GetRenderState(rw::GSALPHATEST))
 		drawInst_GSemu(header, inst);
 	else
 		drawInst_simple(header, inst);
+}
+
+// ---- patch 93: the road shadow decals, what they're drawn with and test modes ----
+int32 decalMode;
+bool decalCur;
+DecalStats decalStats;
+
+static void
+drawDecal(InstanceDataHeader *header, InstanceData *inst)
+{
+	DecalStats &d = decalStats;
+	Material *m = inst->material;
+	d.meshes++;
+	if(m->texture){
+		d.textured++;
+		Raster *r = m->texture->raster;
+		if(r && GETPS3RASTEREXT(r)->hasAlpha)
+			d.texAlpha++;
+		if(d.tex[0] == 0){
+			strncpy(d.tex, m->texture->name, sizeof(d.tex)-1);
+			d.tex[sizeof(d.tex)-1] = 0;
+		}
+	}
+	d.matAlpha = m->color.alpha;
+	if(inst->vertexAlpha) d.vertexAlpha++;
+	if(rw::GetRenderState(rw::VERTEXALPHA)) d.blendOn++;
+	if(rw::GetRenderState(rw::ZTESTENABLE)) d.ztestOn++;
+	if(rw::GetRenderState(rw::ZWRITEENABLE)) d.zwriteOn++;
+	if(rw::GetRenderState(rw::FOGENABLE)) d.fogOn++;
+	if(rw::GetRenderState(rw::GSALPHATEST)) d.gsAlphaTest++;
+	if(rw::GetRenderState(rw::CULLMODE) == rw::CULLNONE) d.cullNone++;
+	d.srcBlend = rw::GetRenderState(rw::SRCBLEND);
+	d.dstBlend = rw::GetRenderState(rw::DESTBLEND);
+	d.alphaFunc = rw::GetRenderState(rw::ALPHATESTFUNC);
+	d.alphaRef = rw::GetRenderState(rw::ALPHATESTREF);
+	d.gsAlphaRef = rw::GetRenderState(rw::GSALPHATESTREF);
+
+	switch(decalMode){
+	case 1:	// in front of the road under it
+		if(rsxCtx){
+			rsxSetPolygonOffset(rsxCtx, -1.0f, -48.0f);
+			rsxSetPolygonOffsetFillEnable(rsxCtx, GCM_TRUE);
+		}
+		drawInstImpl(header, inst);
+		if(rsxCtx)
+			rsxSetPolygonOffsetFillEnable(rsxCtx, GCM_FALSE);
+		break;
+	case 2: {	// over everything
+		uint32 zt = rw::GetRenderState(rw::ZTESTENABLE);
+		rw::SetRenderState(rw::ZTESTENABLE, 0);
+		drawInstImpl(header, inst);
+		rw::SetRenderState(rw::ZTESTENABLE, zt);
+		break;
+	}
+	case 4: {	// a solid shape where it is
+		uint32 va = rw::GetRenderState(rw::VERTEXALPHA);
+		uint32 af = rw::GetRenderState(rw::ALPHATESTFUNC);
+		uint32 gs = rw::GetRenderState(rw::GSALPHATEST);
+		rw::SetRenderState(rw::GSALPHATEST, 0);
+		rw::SetRenderState(rw::VERTEXALPHA, 0);
+		rw::SetRenderState(rw::ALPHATESTFUNC, rw::ALPHAALWAYS);
+		drawInstImpl(header, inst);
+		rw::SetRenderState(rw::ALPHATESTFUNC, af);
+		rw::SetRenderState(rw::VERTEXALPHA, va);
+		rw::SetRenderState(rw::GSALPHATEST, gs);
+		break;
+	}
+	case 5: {
+		uint32 fog = rw::GetRenderState(rw::FOGENABLE);
+		rw::SetRenderState(rw::FOGENABLE, 0);
+		drawInstImpl(header, inst);
+		rw::SetRenderState(rw::FOGENABLE, fog);
+		break;
+	}
+	default:	// 0 and 3 (ZCULL, set for the whole frame)
+		drawInstImpl(header, inst);
+	}
+}
+
+static void
+drawInst(InstanceDataHeader *header, InstanceData *inst)
+{
+	if(decalCur){
+		drawDecal(header, inst);
+		return;
+	}
+	drawInstImpl(header, inst);
 }
 
 static int32

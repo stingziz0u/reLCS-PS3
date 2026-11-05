@@ -185,6 +185,21 @@ extern float leedsBiasFactor, leedsBiasUnits;	// their polygon offset (USRDIR/le
 extern bool leedsLighting;	// the Leeds world pipeline draws as LCS (false: as the default pipeline)
 extern uint32 leedsDraws;	// patch 33: Leeds models drawn this frame (diagnostics)
 extern bool leedsWantSample;	// log the next one drawn
+// res-PS3 patch 93: the road shadow decals (models with "shad" in the name).
+// The game sets decalCur around their Render; decalMode is the test mode
+// (R3 + Select): 0 as is, 1 depth bias, 2 no depth test, 3 no ZCULL (whole
+// frame), 4 opaque (no blend, no alpha test), 5 no fog. decalStats: what
+// they were drawn with since the last reset.
+extern int32 decalMode;
+extern bool decalCur;
+struct DecalStats
+{
+	uint32 meshes, textured, texAlpha, vertexAlpha, blendOn, ztestOn, zwriteOn, fogOn, gsAlphaTest, cullNone;
+	int32 srcBlend, dstBlend, alphaFunc, alphaRef, gsAlphaRef;
+	int32 matAlpha;
+	char tex[32];
+};
+extern DecalStats decalStats;
 // patch 46: monotonic counters for the performance test (perf.txt):
 // read twice, the difference is what happened in between
 struct PerfCounters
