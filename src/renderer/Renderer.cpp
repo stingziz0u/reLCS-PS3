@@ -831,9 +831,10 @@ static const char *const ps3DecalModeName[] = {
 	"13 hide the aimed model", "14 hide the rest at the aimed point",
 	"15 hide the aimed mesh",
 	"16 free camera (the view frozen)",
-	"17 log what is drawn, loaded, removed"
+	"17 log what is drawn, loaded, removed",
+	"18 hide every LOD (big building)"
 };
-#define PS3_NUMTESTMODES 18
+#define PS3_NUMTESTMODES 19
 static uint32 ps3DecalPrev;
 static wchar ps3DecalMsg[96];
 
@@ -1679,6 +1680,46 @@ PS3_DiffEndFrame(void)
 	ps3DiffNumCur = 0;
 }
 
+// patch 126: entering mode 18, the LODs (big buildings) within 400 m: their
+// collision bounds (what the game's checks use) against their drawn geometry's
+// bound sphere. A LOD whose collision is small or elsewhere can't be found
+// "over" the place it covers (patch 38, 124)
+static void
+PS3_BigBoundsReport(void)
+{
+	CVector cam = TheCamera.GetPosition();
+	int n = 0;
+	for(int lv = 0; lv < NUM_LEVELS; lv++){
+		CPtrList &list = CWorld::GetBigBuildingList((eLevelName)lv);
+		for(CPtrNode *node = list.first; node && n < 80; node = node->next){
+			CEntity *e = (CEntity*)node->item;
+			float d = (e->GetPosition() - cam).Magnitude();
+			if(d > 400.0f)
+				continue;
+			CVector bc = e->GetBoundCentre();
+			float br = e->GetBoundRadius();
+			char geo[128] = "no geometry loaded";
+			CBaseModelInfo *bmi = CModelInfo::GetModelInfo(e->GetModelIndex());
+			if(bmi->GetModelType() == MITYPE_SIMPLE || bmi->GetModelType() == MITYPE_TIME){
+				CSimpleModelInfo *smi = (CSimpleModelInfo*)bmi;
+				if(smi->m_atomics && smi->m_atomics[0]){
+					RpGeometry *g = RpAtomicGetGeometry(smi->m_atomics[0]);
+					if(g && g->morphTargets){
+						rw::Sphere &sp = g->morphTargets[0].boundingSphere;
+						CVector wc = e->GetMatrix() * CVector(sp.center.x, sp.center.y, sp.center.z);
+						snprintf(geo, sizeof(geo), "drawn geometry: centre %.0f %.0f %.0f, radius %.0f (%.0f m from the camera's point)",
+						         wc.x, wc.y, wc.z, sp.radius, (wc - cam).Magnitude());
+					}
+				}
+			}
+			PS3_Logf("[lods] %s at %.0f %.0f %.0f, %.0f m: collision bounds centre %.0f %.0f %.0f, radius %.0f; %s",
+			         bmi->GetModelName(), e->GetPosition().x, e->GetPosition().y, e->GetPosition().z, d, bc.x, bc.y, bc.z, br, geo);
+			n++;
+		}
+	}
+	PS3_Logf("[lods] %d LODs within 400 m of the camera (%.0f %.0f %.0f)", n, cam.x, cam.y, cam.z);
+}
+
 // CPad::UpdatePads (Pad.cpp), after pad 0: R3 + Select = next test mode
 // (the log gets a snapshot of the mode being left)
 void
@@ -1707,6 +1748,8 @@ PS3_DecalTestPad(void)
 	ps3AimFrame = 0;
 	rw::ps3::aimHideMaterial = nil;
 	char msg[96];
+	if(rw::ps3::decalMode == 18)
+		PS3_BigBoundsReport();	// patch 126
 	snprintf(msg, sizeof(msg), "Sombras: modo %s", ps3DecalModeName[rw::ps3::decalMode]);
 	AsciiToUnicode(msg, ps3DecalMsg);
 	CHud::SetHelpMessage(ps3DecalMsg, true);
@@ -2704,6 +2747,14 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 		PS3_BB(PS3BB_AREA);
 		return VIS_INVISIBLE;
 	}
+#ifdef __PS3__
+	// patch 126: test mode 18, no LOD (big building) drawn at all: holes where
+	// nothing detailed is, the far city gone. Does the road wedge go with them?
+	if(PS3_logsOn && rw::ps3::decalMode == 18){
+		PS3_BB(PS3BB_HIDDEN);
+		return VIS_INVISIBLE;
+	}
+#endif
 
 	bool request = true;
 	if(mi->GetModelType() == MITYPE_TIME){
