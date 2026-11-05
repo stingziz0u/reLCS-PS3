@@ -1048,6 +1048,45 @@ PS3_AimRender(CEntity *hit, CEntity **others, int n, const CVector &cam, const C
 		         triBest, facing > 0.0f ? "AWAY (a back face: culled)" : "the camera", n.x, n.y, n.z,
 		         wa.x, wa.y, wa.z, wb.x, wb.y, wb.z, wc.x, wc.y, wc.z, g->numVertices);
 	}
+	// patch 120: every triangle of the model the ray crosses within 10 cm of
+	// that one (two layers in the same place: one facing up, one down?)
+	{
+		CMatrix inv = Invert(eBest->GetMatrix());
+		CVector o = inv * cam;
+		CVector d = Multiply3x3(inv, fwd);
+		rw::V3d *v = g->morphTargets[0].vertices;
+		int found = 0;
+		for(int32 t = 0; t < g->numTriangles && found < 8; t++){
+			if(t == triBest) continue;
+			rw::Triangle *q = &g->triangles[t];
+			CVector a(v[q->v[0]].x, v[q->v[0]].y, v[q->v[0]].z);
+			CVector e1 = CVector(v[q->v[1]].x, v[q->v[1]].y, v[q->v[1]].z) - a;
+			CVector e2 = CVector(v[q->v[2]].x, v[q->v[2]].y, v[q->v[2]].z) - a;
+			CVector pp = CrossProduct(d, e2);
+			float det = DotProduct(e1, pp);
+			if(det > -1e-7f && det < 1e-7f) continue;
+			float id = 1.0f/det;
+			CVector sv = o - a;
+			float u = DotProduct(sv, pp)*id;
+			if(u < 0.0f || u > 1.0f) continue;
+			CVector qq = CrossProduct(sv, e1);
+			float w = DotProduct(d, qq)*id;
+			if(w < 0.0f || u + w > 1.0f) continue;
+			float tt = DotProduct(e2, qq)*id;
+			if(tt < tBest - 0.1f || tt > tBest + 0.1f) continue;
+			CVector nn = Multiply3x3(eBest->GetMatrix(), CrossProduct(e1, e2));
+			rw::Material *mm = q->matId < g->matList.numMaterials ? g->matList.materials[q->matId] : nil;
+			rw::RGBA *k = g->colors;
+			PS3_Logf("[aim]   same place: triangle %d at %.2f m faces %s, material %d %s, prelight %d %d %d / %d %d %d / %d %d %d",
+			         t, tt, DotProduct(nn, fwd) > 0.0f ? "AWAY" : "the camera", q->matId, mm && mm->texture ? mm->texture->name : "-",
+			         k ? k[q->v[0]].red : -1, k ? k[q->v[0]].green : -1, k ? k[q->v[0]].blue : -1,
+			         k ? k[q->v[1]].red : -1, k ? k[q->v[1]].green : -1, k ? k[q->v[1]].blue : -1,
+			         k ? k[q->v[2]].red : -1, k ? k[q->v[2]].green : -1, k ? k[q->v[2]].blue : -1);
+			found++;
+		}
+		if(!found)
+			PS3_Log("[aim]   same place: no other triangle of the model");
+	}
 	PS3_Logf("[aim]   drawn under the centre: %s, %.1f m, triangle %d of %d, material %d of %d (%d meshes): %s (colour %d %d %d %d%s%s), %s%s",
 	         CModelInfo::GetModelInfo(eBest->GetModelIndex())->GetModelName(), tBest, triBest, g->numTriangles,
 	         tr->matId, g->matList.numMaterials, meshes, mat && mat->texture ? mat->texture->name : "no texture",
