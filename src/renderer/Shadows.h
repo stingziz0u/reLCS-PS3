@@ -1,8 +1,17 @@
 #pragma once
 
 #define MAX_STOREDSHADOWS    48
+#ifdef __PS3__
+// patch 108: at night the street lamps' and traffic lights' light pools on
+// the road, the cars' headlights and the static shadows share these: they
+// ran out (Ren: the lamps' pools only very close, pools with a triangle
+// missing). 380 / 48 as reVC; the PS3 has the memory.
+#define MAX_POLYBUNCHES      1600
+#define MAX_STATICSHADOWS    128
+#else
 #define MAX_POLYBUNCHES      380
 #define MAX_STATICSHADOWS    48
+#endif
 #define MAX_PERMAMENTSHADOWS 48
 
 

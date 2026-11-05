@@ -59,6 +59,24 @@ CStoredShadow    CShadows::asShadowsStored  [MAX_STOREDSHADOWS];
 CPolyBunch       CShadows::aPolyBunches     [MAX_POLYBUNCHES];
 CStaticShadow    CShadows::aStaticShadows   [MAX_STATICSHADOWS];
 CPolyBunch      *CShadows::pEmptyBunchList;
+#ifdef __PS3__
+// patch 108: "[shadows]" every 10 s (with the [lod] report)
+uint32 PS3_shadBunchOut, PS3_shadNoSlot;
+void
+PS3_ShadowPoolReport(void)
+{
+	int32 freeBunches = 0;
+	for ( CPolyBunch *b = CShadows::pEmptyBunchList; b && freeBunches <= MAX_POLYBUNCHES; b = b->m_pNext )
+		freeBunches++;
+	int32 statics = 0;
+	for ( int32 i = 0; i < MAX_STATICSHADOWS; i++ )
+		if ( CShadows::aStaticShadows[i].m_pPolyBunch != nil )
+			statics++;
+	PS3_Logf("[shadows] now: static shadows and light pools %d of %d, polygon bunches %d of %d in use; in 10 s: %u triangles left out (no bunch), %u shadows with no slot",
+	         statics, MAX_STATICSHADOWS, MAX_POLYBUNCHES - freeBunches, MAX_POLYBUNCHES, PS3_shadBunchOut, PS3_shadNoSlot);
+	PS3_shadBunchOut = PS3_shadNoSlot = 0;
+}
+#endif
 CPermanentShadow CShadows::aPermanentShadows[MAX_PERMAMENTSHADOWS];
 
 #ifndef MASTER
@@ -416,6 +434,10 @@ CShadows::StoreStaticShadow(uint32 nID, uint8 ShadowType, RwTexture *pTexture, C
 			nSlot = 0;
 			while ( nSlot < MAX_STATICSHADOWS && aStaticShadows[nSlot].m_pPolyBunch != nil )
 				nSlot++;
+#ifdef __PS3__
+			if ( nSlot == MAX_STATICSHADOWS )
+				PS3_shadNoSlot++;	// patch 108
+#endif
 
 			if ( nSlot != MAX_STATICSHADOWS )
 			{
@@ -2099,6 +2121,10 @@ CShadows::CastShadowEntityXY(CEntity *pEntity,  float fStartX, float fStartY, fl
 					
 					if ( ppPolyBunch != nil )
 					{
+#ifdef __PS3__
+						if ( pEmptyBunchList == nil )
+							PS3_shadBunchOut++;	// patch 108: a triangle left out of a shadow / light pool
+#endif
 						if ( pEmptyBunchList != nil )
 						{
 							CPolyBunch *pBunch = pEmptyBunchList;
