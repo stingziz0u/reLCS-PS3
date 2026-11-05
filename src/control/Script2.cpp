@@ -1046,6 +1046,21 @@ int8 CRunningScript::ProcessCommands400To499(int32 command)
 	case COMMAND_SET_PLAYER_CONTROL:
 	{
 		CollectParameters(&m_nIp, 2);
+#ifdef __PS3__
+		{
+			// patch 106: when a script hands the controls back or takes them
+			// (only the changes), with the pad then: the false start of Go Go Faggio
+			static int32 ps3LastControl = -1;
+			if (PS3_logsOn && GET_INTEGER_PARAM(1) != ps3LastControl) {
+				ps3LastControl = GET_INTEGER_PARAM(1);
+				char name[9];
+				memcpy(name, m_abScriptName, 8);
+				name[8] = '\0';
+				PS3_Logf("[fail] %s: player control %s at ip %u (cross %d)", name, ps3LastControl ? "ON" : "OFF", m_nIp,
+				         CPad::GetPad(0)->NewState.Cross);
+			}
+		}
+#endif
 		CPlayerInfo* pPlayer = &CWorld::Players[GET_INTEGER_PARAM(0)];
 		CPlayerPed *pPlayerPed = pPlayer->m_pPed;
 		if (pPlayerPed) {

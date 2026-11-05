@@ -711,9 +711,49 @@ static CRunningScript *pScriptBroken;	// to be stopped (CTheScripts::Process)
 static int32 scriptDummyVar;		// where a broken script's writes go
 
 // the last commands run (any script), for the log when one goes wrong
-struct ScriptTrace { CRunningScript *script; uint16 op; uint32 ip; };
-static ScriptTrace scriptTrace[32];
+struct ScriptTrace { CRunningScript *script; uint16 op; uint32 ip; int8 cond; };	// patch 106: cond, the compare flag after it
+#define SCRIPT_TRACE 256	// patch 106: 32 -> 256 (a mission fail's reason, below)
+static ScriptTrace scriptTrace[SCRIPT_TRACE];
 static int scriptTraceHead;
+
+// patch 106: a mission fails (PRINT_BIG / PRINT_NOW "M_FAIL"): its last 48
+// commands with their compare flags, and the pad and the player then. Go Go
+// Faggio (Ren): holding X during the 3-2-1 failed it at once.
+static void
+PS3_LogMissionFail(CRunningScript *s, const char *how)
+{
+	char name[9];
+	memcpy(name, s->m_abScriptName, 8);
+	name[8] = '\0';
+	PS3_Logf("[fail] %s: %s \"M_FAIL\" at ip %u; its last commands, oldest first (opcode@ip=compare flag; 0x8000 = NOT):",
+	         name, how, s->m_nIp);
+	int idx[48], n = 0;
+	for (int i = SCRIPT_TRACE - 1; i >= 0 && n < 48; i--) {
+		ScriptTrace &t = scriptTrace[(scriptTraceHead + i) % SCRIPT_TRACE];
+		if (t.script == s)
+			idx[n++] = (scriptTraceHead + i) % SCRIPT_TRACE;
+	}
+	char buf[512];
+	int len = 0;
+	buf[0] = '\0';
+	for (int k = n - 1; k >= 0; k--) {
+		ScriptTrace &t = scriptTrace[idx[k]];
+		len += snprintf(buf + len, sizeof(buf) - len, " %04x@%u=%d", t.op, t.ip, t.cond);
+		if (len > 400 || k == 0) {
+			PS3_Logf("[fail]  %s", buf);
+			len = 0;
+			buf[0] = '\0';
+		}
+	}
+	CPlayerPed *p = FindPlayerPed();
+	CVehicle *v = FindPlayerVehicle();
+	CPad *pad = CPad::GetPad(0);
+	PS3_Logf("[fail]   pad: cross %d (accelerate %d), controls disabled %d (flags 0x%x); player %s, vehicle %s speed %.3f at %.1f %.1f %.1f",
+	         pad->NewState.Cross, pad->GetAccelerate(), pad->ArePlayerControlsDisabled(), (unsigned)pad->DisablePlayerControls,
+	         p ? "here" : "none", v ? CModelInfo::GetModelInfo(v->GetModelIndex())->GetModelName() : "none",
+	         v ? v->GetMoveSpeed().Magnitude() : 0.0f,
+	         p ? p->GetPosition().x : 0.0f, p ? p->GetPosition().y : 0.0f, p ? p->GetPosition().z : 0.0f);
+}
 
 void
 ScriptBroken(const char *file, int line)
@@ -731,7 +771,7 @@ ScriptBroken(const char *file, int line)
 	int n = 0;
 	buf[0] = '\0';
 	for (int i = 0; i < 32; i++) {
-		ScriptTrace &t = scriptTrace[(scriptTraceHead + i) % 32];
+		ScriptTrace &t = scriptTrace[(scriptTraceHead + SCRIPT_TRACE - 32 + i) % SCRIPT_TRACE];
 		if (t.script == pScriptRunning && n < 200)
 			n += snprintf(buf + n, sizeof(buf) - n, " %04x@%u", t.op, t.ip);
 	}
@@ -1691,7 +1731,9 @@ int8 CRunningScript::ProcessOneCommand()
 	scriptTrace[scriptTraceHead].script = this;
 	scriptTrace[scriptTraceHead].ip = m_nIp;
 	scriptTrace[scriptTraceHead].op = CTheScripts::ScriptSpace[m_nIp] | CTheScripts::ScriptSpace[m_nIp + 1] << 8;
-	scriptTraceHead = (scriptTraceHead + 1) % 32;
+	scriptTrace[scriptTraceHead].cond = -1;
+	int ps3TraceSlot = scriptTraceHead;
+	scriptTraceHead = (scriptTraceHead + 1) % SCRIPT_TRACE;
 #endif
 	++CTheScripts::CommandsExecuted;
 	int32 command = (uint16)CTheScripts::Read2BytesFromScript(&m_nIp);
@@ -1745,6 +1787,8 @@ int8 CRunningScript::ProcessOneCommand()
 		script_assert(false);
 #ifdef __PS3__
 	PS3_ScriptTime(this, command, PS3_Tb() - ps3T0);
+	if (scriptTrace[ps3TraceSlot].script == this)
+		scriptTrace[ps3TraceSlot].cond = m_bCondResult;	// patch 106
 #endif
 #ifdef USE_MISSION_REPLAY_OVERRIDE_FOR_NON_MOBILE_SCRIPT
 	if (!AlreadySavedGame)
@@ -3348,6 +3392,10 @@ int8 CRunningScript::ProcessCommands100To199(int32 command)
 	case COMMAND_PRINT_BIG:
 	{
 		const char *rawKey = (const char*)&CTheScripts::ScriptSpace[m_nIp];
+#ifdef __PS3__
+		if (PS3_logsOn && !strncmp(rawKey, "M_FAIL", KEY_LENGTH_IN_SCRIPT))
+			PS3_LogMissionFail(this, "PRINT_BIG");	// patch 106
+#endif
 		wchar* key = CTheScripts::GetTextByKeyFromScript(&m_nIp);
 		if (!CGeneral::faststricmp(m_abScriptName, "SALH5") &&
 		    !strncmp(rawKey, "M_FAIL", KEY_LENGTH_IN_SCRIPT))
