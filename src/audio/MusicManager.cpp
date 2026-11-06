@@ -1,5 +1,9 @@
 #include "common.h"
 #include <time.h>
+#ifdef __PS3__
+#include <sys/systime.h>	// patch 133
+#include "ps3_platform.h"
+#endif
 #include "soundlist.h"
 #include "MusicManager.h"
 #include "AudioManager.h"
@@ -158,6 +162,13 @@ cMusicManager::ResetMusicAfterReload()
 
 	for (int i = 0; i < NUM_RADIOS; i++) {
 		aListenTimeArray[i] = afRadioTime[i];
+#ifdef __PS3__
+		// patch 133: the MP3 player keeps the position it got at start up
+		// (SetStartingTrackPositions): the files can be others than the
+		// save's, and it always began on the same song
+		if (i == STREAMED_SOUND_RADIO_MP3_PLAYER)
+			continue;
+#endif
 		int32 trackPos = GetSavedRadioStationPosition(i);
 		if (trackPos != -1) {
 			if (trackPos > m_aTracks[i].m_nLength) {
@@ -228,7 +239,20 @@ cMusicManager::SetStartingTrackPositions(bool8 isNewGameTimer)
 			//	m_aTracks[i].m_nPosition = (pos * AudioManager.GetRandomNumber(i % 5)) % m_aTracks[i].m_nLength;
 			else
 				m_aTracks[i].m_nPosition = 0;
-			
+#ifdef __PS3__
+			// patch 133: the MP3 player (index 10) read NewGameRadioTimers[10],
+			// past the end of its 10 entries: always the same number, so
+			// always the same song first. As on the PC (sampman's start up
+			// draw), a place of the whole playlist drawn from the clock: the
+			// order stays the files', the first song changes.
+			if (i == STREAMED_SOUND_RADIO_MP3_PLAYER) {
+				uint32 r = (uint32)sysGetSystemTime() * 2654435761u ^ (uint32)time(0) * 40503u ^ (uint32)pos;
+				m_aTracks[i].m_nPosition = m_aTracks[i].m_nLength ? r % m_aTracks[i].m_nLength : 0;
+				PS3_Logf("[radio] MP3 player: starts at %u:%02u of %u min",
+				         m_aTracks[i].m_nPosition / 60000, m_aTracks[i].m_nPosition / 1000 % 60, m_aTracks[i].m_nLength / 60000);
+			}
+#endif
+
 			m_aTracks[i].m_nLastPosCheckTimer = CTimer::GetTimeInMillisecondsPauseMode();
 		}
 	}

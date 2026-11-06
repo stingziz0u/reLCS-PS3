@@ -604,6 +604,12 @@ logStats(void)
 		rsxLog("[rscene]   atomics / meshes a frame: buildings (Leeds) %u / %u, default %u / %u, skinned %u / %u, cars (matfx) %u / %u",
 		       r.atomics[RSP_LEEDS]/n, r.meshes[RSP_LEEDS]/n, r.atomics[RSP_DEFAULT]/n, r.meshes[RSP_DEFAULT]/n,
 		       r.atomics[RSP_SKIN]/n, r.meshes[RSP_SKIN]/n, r.atomics[RSP_MATFX]/n, r.meshes[RSP_MATFX]/n);
+		// patch 133: flushCache's parts (everywhere: the pipelines and Im2D/Im3D)
+		rsxLog("[rscene]   flushCache (ms): %u a frame, the vertex cache invalidated %u times (with a sync) %.2f, "
+		       "render states %.2f, texture samplers %.2f, programs %.2f, matrices / lights / fog worked out %.2f, "
+		       "constants uploaded %.2f (%u registers a frame)",
+		       r.flushes/n, r.invalidates/n, r.tb[RS_F_INVALIDATE]*k, r.tb[RS_F_STATES]*k, r.tb[RS_F_SAMPLERS]*k,
+		       r.tb[RS_F_PROGRAMS]*k, r.tb[RS_F_DERIVED]*k, r.tb[RS_F_UPLOAD]*k, drawStats.constUploads/n);
 		memset(&rscene, 0, sizeof(rscene));
 		gPS3RSceneTb = gPS3REffectsTb = 0;
 	}

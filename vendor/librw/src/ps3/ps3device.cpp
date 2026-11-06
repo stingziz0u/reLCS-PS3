@@ -1289,6 +1289,7 @@ static void
 applyProgramsAndConstants(void)
 {
 	gcmContextData *ctx = rsxCtx;
+	RS_T(rsp);	// patch 133: the programs
 
 	if(curVP != wantVP){
 		VertexProgram *p = &vps[wantVP];
@@ -1308,7 +1309,10 @@ applyProgramsAndConstants(void)
 	bool usesLights = curVP == VP_DEFAULT || curVP == VP_SKIN || curVP == VP_ENV || curVP == VP_LEEDS;
 	bool usesDirLights = usesLights && !(curVP == VP_LEEDS && optLeedsNoDirLights);
 	bool usesEnv = curVP == VP_ENV;
+	RS_ADD(RS_F_PROGRAMS, rsp);
+	uint64 rst = rsp;	// patch 133
 	computeDerivedConstants(usesLights, usesEnv, usesDirLights);
+	RS_ADD(RS_F_DERIVED, rst);
 
 	if(curVP != VP_IM2D)
 		uploadConsts(C_MVP, 4);
@@ -1325,6 +1329,7 @@ applyProgramsAndConstants(void)
 	}
 	if(usesEnv)
 		uploadConsts(C_ENVROW, 4);
+	RS_ADD(RS_F_UPLOAD, rst);	// patch 133
 }
 
 // The RSX keeps the vertex (and index) data it fetched in a cache, and
@@ -1362,12 +1367,19 @@ flushCacheImpl(void)
 		drawStats.dropped++;
 		return false;
 	}
+	RS_T(rst);	// patch 133: flushCache's parts
+	if(rsceneOn)
+		rscene.flushes++;
 	if(vtxCacheDirty){
 		__asm__ volatile("sync" ::: "memory");
 		rsxInvalidateVertexCache(rsxCtx);
 		vtxCacheDirty = false;
+		if(rsceneOn)
+			rscene.invalidates++;
 	}
+	RS_ADD(RS_F_INVALIDATE, rst);
 	applyStates();
+	RS_ADD(RS_F_STATES, rst);
 	// Additive draws (rain streaks, coronas, headlights...) through a
 	// program that kills the fragments that would add nothing: the RSX
 	// then skips their blend. The rain streaks are a dozen quads covering
@@ -1381,6 +1393,7 @@ flushCacheImpl(void)
 			drawFP = FP_ADDALPHA;
 	}
 	applySamplers(fps[drawFP].numSamplers);
+	RS_ADD(RS_F_SAMPLERS, rst);
 	applyProgramsAndConstants();
 	return true;
 }

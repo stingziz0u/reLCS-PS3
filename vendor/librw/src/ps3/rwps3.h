@@ -233,7 +233,10 @@ extern PerfCounters perfCounters;
 // pipelines; RenderScene and RenderEffects as a whole (main.cpp) for the
 // rest, the game's own work around them.
 enum { RS_INSTANCE, RS_LTM, RS_WORLDMAT, RS_LIGHTS, RS_ATTRIBS, RS_PROGRAMS, RS_SKIN,
-       RS_MATERIAL, RS_TEXTURE, RS_STATES, RS_DRAW, RS_MATFXMESH, RS_NUM };
+       RS_MATERIAL, RS_TEXTURE, RS_STATES, RS_DRAW, RS_MATFXMESH,
+       // patch 133: inside flushCache (everywhere)
+       RS_F_INVALIDATE, RS_F_STATES, RS_F_SAMPLERS, RS_F_PROGRAMS, RS_F_DERIVED, RS_F_UPLOAD,
+       RS_NUM };
 enum { RSP_DEFAULT, RSP_LEEDS, RSP_SKIN, RSP_MATFX, RSP_NUM };
 struct RSceneStats
 {
@@ -241,6 +244,7 @@ struct RSceneStats
 	uint64 pipeTb, flushTb, cmdTb;	// all the pipelines; inside RS_DRAW: flushCache, the draw command and its kick
 	uint32 atomics[RSP_NUM], meshes[RSP_NUM];
 	uint32 lights;			// lights set (directionals + locals)
+	uint32 flushes, invalidates;	// patch 133
 };
 extern RSceneStats rscene;
 extern bool rsceneOn;
