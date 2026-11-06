@@ -302,8 +302,9 @@ and unconverted assets from other games or platforms don't.
   `USRDIR/nospuaudio.txt` mixes the audio on the PPU again,
   `USRDIR/nospuparticles.txt` builds the particles on the PPU again, and
   `USRDIR/spuparticles_ram.txt` keeps them on the SPU but has it write to
-  main memory (the PPU copies them for the RSX). Report which one changes
-  it, with the log.
+  main memory (the PPU copies them for the RSX). Peds that move wrong:
+  `USRDIR/nospuanim.txt` works their bones out on the PPU again. Report
+  which one changes it, with the log.
 - `USRDIR/perf.txt` runs a performance test (load a save outdoors, not on a
   mission, and leave the pad alone; it starts 10 s later and takes about 6
   minutes in Portland): it measures every frame at a few busy places, clear,

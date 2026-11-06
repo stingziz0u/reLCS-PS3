@@ -582,6 +582,31 @@ logStats(void)
 	       vramEvictions, rasterStats.noVram, rasterStats.packedDXT);
 	rsxLog("[rsx]   frames over 20 ms: %u, over 50 ms: %u, worst %.1f ms",
 	       slowFrames, verySlowFrames, worstFrameUs/1000.0);
+	{
+		// patch 132: RenderScene's breakdown
+		RSceneStats &r = rscene;
+		double k = 1000.0 / (double)sysGetTimebaseFrequency() / n;
+		uint32 at = 0, me = 0;
+		for(int i = 0; i < RSP_NUM; i++){
+			at += r.atomics[i];
+			me += r.meshes[i];
+		}
+		double sc = gPS3RSceneTb*k, fx = gPS3REffectsTb*k, pipe = r.pipeTb*k;
+		rsxLog("[rscene] per frame: RenderScene %.2f ms + RenderEffects %.2f ms; the atomic pipelines %.2f ms of them "
+		       "(%u atomics, %u meshes, %.2f us an atomic), the rest %.2f ms (the game's lists, sorting and callbacks, Im3D/Im2D)",
+		       sc, fx, pipe, at/n, me/n, at ? r.pipeTb*k*n*1000.0/at : 0.0, sc + fx - pipe);
+		rsxLog("[rscene]   in the pipelines (ms): instance %.2f, frame LTM %.2f, world matrix %.2f, lights %.2f (%u a frame), "
+		       "vertex arrays %.2f, programs %.2f, skin bones %.2f, materials %.2f, textures %.2f, states %.2f, "
+		       "draws %.2f (the draw command and its kick %.2f), car meshes (matfx, all of it) %.2f; flushCache everywhere %.2f",
+		       r.tb[RS_INSTANCE]*k, r.tb[RS_LTM]*k, r.tb[RS_WORLDMAT]*k, r.tb[RS_LIGHTS]*k, r.lights/n,
+		       r.tb[RS_ATTRIBS]*k, r.tb[RS_PROGRAMS]*k, r.tb[RS_SKIN]*k, r.tb[RS_MATERIAL]*k, r.tb[RS_TEXTURE]*k,
+		       r.tb[RS_STATES]*k, r.tb[RS_DRAW]*k, r.cmdTb*k, r.tb[RS_MATFXMESH]*k, r.flushTb*k);
+		rsxLog("[rscene]   atomics / meshes a frame: buildings (Leeds) %u / %u, default %u / %u, skinned %u / %u, cars (matfx) %u / %u",
+		       r.atomics[RSP_LEEDS]/n, r.meshes[RSP_LEEDS]/n, r.atomics[RSP_DEFAULT]/n, r.meshes[RSP_DEFAULT]/n,
+		       r.atomics[RSP_SKIN]/n, r.meshes[RSP_SKIN]/n, r.atomics[RSP_MATFX]/n, r.meshes[RSP_MATFX]/n);
+		memset(&rscene, 0, sizeof(rscene));
+		gPS3RSceneTb = gPS3REffectsTb = 0;
+	}
 	if(windFixGeos)
 		rsxLog("[rsx]   windings (patch 119): %u triangles turned in %u geometries so far", windFixTris, windFixGeos);
 	TexProfile &t = texProfile;

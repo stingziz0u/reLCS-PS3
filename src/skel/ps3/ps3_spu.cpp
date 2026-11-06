@@ -122,6 +122,7 @@ PS3_SpuTaskWait(PS3SpuTask *t, uint32_t seq, uint32_t timeoutUs, uint64_t *waitU
 		PS3_Logf("[spu] %s didn't answer job %u (%08x): the PPU does it from now on", t->name, seq, (unsigned)r);
 		return false;
 	}
+	t->lastData1 = ev.data_3;	// patch 132
 	__asm__ volatile("sync" ::: "memory");
 	return true;
 }

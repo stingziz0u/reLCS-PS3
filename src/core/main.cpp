@@ -95,6 +95,11 @@
 #include "GitSHA1.h"
 #endif
 
+#ifdef __PS3__
+namespace rw { namespace ps3 { extern bool rsceneOn; } }	// patch 132
+extern "C" unsigned long long gPS3RSceneTb, gPS3REffectsTb;
+#endif
+
 GlobalScene Scene;
 
 #if defined(RW_3DS) && defined(RESTORIES_3DS_BUILD)
@@ -2183,7 +2188,15 @@ Idle(void *arg)
 
 		tbStartTimer(0, "RenderScene");
 		phaseStart = re3_wall_time_ms();
+#ifdef __PS3__
+		// patch 132: RenderScene's breakdown ([rscene], librw's ps3video.cpp)
+		rw::ps3::rsceneOn = PS3_logsOn != 0;
+		unsigned long long ps3rs0 = PS3_Ticks();
 		RenderScene();
+		gPS3RSceneTb += PS3_Ticks() - ps3rs0;
+#else
+		RenderScene();
+#endif
 #ifdef __PS3__
 		{
 			extern void PS3_DiffEndFrame(void);	// Renderer.cpp, patch 123: test mode 17
@@ -2201,7 +2214,15 @@ Idle(void *arg)
 
 		RenderDebugShit();
 		tbStartTimer(0, "RenderEffects");
+#ifdef __PS3__
+		{
+			unsigned long long ps3re0 = PS3_Ticks();
+			RenderEffects();
+			gPS3REffectsTb += PS3_Ticks() - ps3re0;
+		}
+#else
 		RenderEffects();
+#endif
 		tbEndTimer("RenderEffects");
 
 		if((TheCamera.m_BlurType == MOTION_BLUR_NONE || TheCamera.m_BlurType == MOTION_BLUR_LIGHT_SCENE) &&

@@ -97,7 +97,7 @@ GAME_SRCS := $(filter-out \
 
 PS3_SRCS := $(addprefix $(SRC)/skel/ps3/, \
   ps3.cpp ps3_log.cpp ps3_fs.cpp ps3_pad.cpp ps3_cdstream.cpp ps3_prof.cpp ps3_autotest.cpp ps3_carspawn.cpp ps3_missionspawn.cpp ps3_mods.cpp \
-  ps3_perftest.cpp ps3_spu.cpp ps3_pctest.cpp ps3_texdeps.cpp)
+  ps3_perftest.cpp ps3_spu.cpp ps3_pctest.cpp ps3_texdeps.cpp ps3_animspu.cpp)
 
 GAME_INCS := $(foreach d,$(GAME_DIRS),-I$(SRC)/$(d)) -I$(SRC)/skel/ps3 -I$(SRC)/audio/eax
 
@@ -181,8 +181,12 @@ SPU_OBJ := $(OBJDIR)/spu/spumix_elf.o
 # spuparticles_elf (Particle.cpp)
 SPU_PART_ELF := $(OBJDIR)/spu/spuparticles.elf
 SPU_PART_OBJ := $(OBJDIR)/spu/spuparticles_elf.o
+# patch 132: the peds' bones' SPU program (ps3/spu/spuanim.c), symbol
+# spuanim_elf (ps3_animspu.cpp)
+SPU_ANIM_ELF := $(OBJDIR)/spu/spuanim.elf
+SPU_ANIM_OBJ := $(OBJDIR)/spu/spuanim_elf.o
 ifneq ($(STAGE),1)
-  GAME_OBJS += $(SPU_OBJ) $(SPU_PART_OBJ)
+  GAME_OBJS += $(SPU_OBJ) $(SPU_PART_OBJ) $(SPU_ANIM_OBJ)
 endif
 
 ELF := $(OBJDIR)/$(TARGET).elf
@@ -335,6 +339,15 @@ $(SPU_PART_ELF): $(CURDIR)/spu/spuparticles.c $(CURDIR)/spu/spuparticles.h $(CUR
 
 $(SPU_PART_OBJ): $(SPU_PART_ELF)
 	@printf '\t.section .rodata\n\t.align 7\n\t.global spuparticles_elf\nspuparticles_elf:\n\t.incbin "%s"\n\t.global spuparticles_elf_end\nspuparticles_elf_end:\n' '$<' > $(@:.o=.S)
+	@$(AS) $(@:.o=.S) -o $@
+
+$(SPU_ANIM_ELF): $(CURDIR)/spu/spuanim.c $(CURDIR)/spu/spuanim.h $(CURDIR)/Makefile
+	@mkdir -p $(dir $@)
+	@echo "SPU ps3/spu/spuanim.c"
+	@$(SPU_CC) -O2 -Wall -mdual-nops -fmodulo-sched -I$(PSL1GHT)/spu/include $< -L$(PSL1GHT)/spu/lib -lsputhread -lm -o $@
+
+$(SPU_ANIM_OBJ): $(SPU_ANIM_ELF)
+	@printf '\t.section .rodata\n\t.align 7\n\t.global spuanim_elf\nspuanim_elf:\n\t.incbin "%s"\n\t.global spuanim_elf_end\nspuanim_elf_end:\n' '$<' > $(@:.o=.S)
 	@$(AS) $(@:.o=.S) -o $@
 
 # Which patch level the tree and the built PKG are at

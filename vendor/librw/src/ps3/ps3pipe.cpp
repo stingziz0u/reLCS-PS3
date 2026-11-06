@@ -388,7 +388,17 @@ render(rw::ObjPipeline *rwpipe, Atomic *atomic)
 	renderImpl(rwpipe, atomic);
 	__asm__ volatile("mftb %0" : "=r"(t1));
 	perfCounters.renderTb += t1 - t0;
+	if(rsceneOn)
+		rscene.pipeTb += t1 - t0;	// patch 132
 }
+
+RSceneStats rscene;	// patch 132
+bool rsceneOn;
+}
+}
+unsigned long long gPS3RSceneTb, gPS3REffectsTb;	// main.cpp
+namespace rw {
+namespace ps3 {
 
 static void
 renderImpl(rw::ObjPipeline *rwpipe, Atomic *atomic)
@@ -396,7 +406,9 @@ renderImpl(rw::ObjPipeline *rwpipe, Atomic *atomic)
 	ObjPipeline *pipe = (ObjPipeline*)rwpipe;
 	Geometry *geo = atomic->geometry;
 	RW_CRUMB("rw: atomic, vertices", geo ? geo->numVertices : -1);
+	RS_T(rst);
 	pipe->instance(atomic);
+	RS_ADD(RS_INSTANCE, rst);
 	InstanceDataHeader *header = (InstanceDataHeader*)geo->instData;
 	if(header == nil || header->platform != PLATFORM_PS3 || header->vb.ptr == nil || header->ib.ptr == nil)
 		return;
@@ -604,10 +616,13 @@ bindImmediateAttribs(uint32 offset, uint32 stride, int posSize, uint32 colorOff,
 void
 drawIndexed(uint32 prim, uint32 ibOffset, uint32 numIndices, uint32 numVertices)
 {
+	RS_T(rst);
 	rsxDrawIndexArray(rsxCtx, prim, ibOffset, numIndices, GCM_INDEX_TYPE_16B, GCM_LOCATION_RSX);
 	drawStats.indices += numIndices;
 	drawStats.verts += numVertices;
 	countDraw();
+	if(rsceneOn)
+		rscene.cmdTb += rsTb() - rst;	// patch 132
 }
 
 // the RSX starts on the frame while the CPU still builds it: commands are
@@ -810,6 +825,8 @@ lightingCB(Atomic *atomic)
 			lightData.numDirectionals = 0;
 			lightData.numLocals = 0;
 		}
+		if(rsceneOn)
+			rscene.lights += lightData.numDirectionals + lightData.numLocals;	// patch 132
 		return setLights(&lightData);
 	}else{
 		memset(&lightData, 0, sizeof(lightData));
@@ -826,23 +843,38 @@ defaultRenderCB(Atomic *atomic, InstanceDataHeader *header)
 	Material *m;
 
 	uint32 flags = atomic->geometry->flags;
-	setWorldMatrix(atomic->getFrame()->getLTM());
+	RS_T(rst);
+	Matrix *ltm = atomic->getFrame()->getLTM();
+	RS_ADD(RS_LTM, rst);
+	setWorldMatrix(ltm);
+	RS_ADD(RS_WORLDMAT, rst);
 	lightingCB(atomic);
 	if(liftAmbient)
 		liftAmbientToWorld(0.9f);	// ~ a prelit model of mid prelight x 255/128
+	RS_ADD(RS_LIGHTS, rst);
 
 	bindAttribs(header);
+	RS_ADD(RS_ATTRIBS, rst);
 	setVertexProgram(VP_DEFAULT);
 	setFragmentProgram(FP_SIMPLE);
+	RS_ADD(RS_PROGRAMS, rst);
 
 	InstanceData *inst = header->inst;
 	int32 n = header->numMeshes;
+	if(rsceneOn){
+		rscene.atomics[RSP_DEFAULT]++;
+		rscene.meshes[RSP_DEFAULT] += n;
+	}
 	while(n--){
 		m = inst->material;
 		setMaterial(flags, m->color, m->surfaceProps);
+		RS_ADD(RS_MATERIAL, rst);
 		setTexture(0, m->texture);
+		RS_ADD(RS_TEXTURE, rst);
 		rw::SetRenderState(VERTEXALPHA, inst->vertexAlpha || m->color.alpha != 0xFF);
+		RS_ADD(RS_STATES, rst);
 		drawInst(header, inst);
+		RS_ADD(RS_DRAW, rst);
 		inst++;
 	}
 }
@@ -875,7 +907,11 @@ leedsRenderCB(Atomic *atomic, InstanceDataHeader *header)
 	}
 	Material *m;
 
-	setWorldMatrix(atomic->getFrame()->getLTM());
+	RS_T(rst);
+	Matrix *ltm = atomic->getFrame()->getLTM();
+	RS_ADD(RS_LTM, rst);
+	setWorldMatrix(ltm);
+	RS_ADD(RS_WORLDMAT, rst);
 	lightingCB(atomic);	// the ambient light: the emissive part
 	// patch 101: the emission has a floor of 0.2 x the time cycle ambient.
 	// TIMECYC's emission at night is 34,31,40 clear and 2,3,5 in the rain:
@@ -887,13 +923,20 @@ leedsRenderCB(Atomic *atomic, InstanceDataHeader *header)
 		liftAmbientToWorld(0.2f);
 	if(leedsDebug)
 		leedsDebugLights();	// patch 121
+	RS_ADD(RS_LIGHTS, rst);
 
 	bindAttribs(header);
+	RS_ADD(RS_ATTRIBS, rst);
 	setVertexProgram(VP_LEEDS);
+	RS_ADD(RS_PROGRAMS, rst);
 
 	InstanceData *inst = header->inst;
 	int32 n = header->numMeshes;
 	leedsDraws++;
+	if(rsceneOn){
+		rscene.atomics[RSP_LEEDS]++;
+		rscene.meshes[RSP_LEEDS] += n;
+	}
 	if(leedsWantSample){
 		// patch 33: what one Leeds model is drawn with (setWorldAmbient asks)
 		leedsWantSample = false;
@@ -918,11 +961,17 @@ leedsRenderCB(Atomic *atomic, InstanceDataHeader *header)
 		// only the material's alpha (distance fading) is used, the time
 		// cycle ambient goes in its place; textured meshes x255/128 in
 		// rw_leeds.fcg, untextured ones as they are (rw_simple.fcg)
+		RS_ADD(RS_STATES, rst);	// the bias above
 		setLeedsMaterial(m->color.alpha, m->surfaceProps);
+		RS_ADD(RS_MATERIAL, rst);
 		setFragmentProgram(m->texture ? FP_LEEDS : FP_SIMPLE);
+		RS_ADD(RS_PROGRAMS, rst);
 		setTexture(0, m->texture);
+		RS_ADD(RS_TEXTURE, rst);
 		rw::SetRenderState(VERTEXALPHA, inst->vertexAlpha || m->color.alpha != 0xFF);
+		RS_ADD(RS_STATES, rst);
 		drawInst(header, inst);
+		RS_ADD(RS_DRAW, rst);
 		inst++;
 	}
 	if(biased)
@@ -991,23 +1040,39 @@ skinRenderCB(Atomic *atomic, InstanceDataHeader *header)
 	Material *m;
 
 	uint32 flags = atomic->geometry->flags;
-	setWorldMatrix(atomic->getFrame()->getLTM());
+	RS_T(rst);
+	Matrix *ltm = atomic->getFrame()->getLTM();
+	RS_ADD(RS_LTM, rst);
+	setWorldMatrix(ltm);
+	RS_ADD(RS_WORLDMAT, rst);
 	lightingCB(atomic);
+	RS_ADD(RS_LIGHTS, rst);
 
 	bindAttribs(header);
+	RS_ADD(RS_ATTRIBS, rst);
 	setVertexProgram(VP_SKIN);
 	setFragmentProgram(FP_SIMPLE);
+	RS_ADD(RS_PROGRAMS, rst);
 
 	uploadSkinMatrices(atomic);
+	RS_ADD(RS_SKIN, rst);
 
 	InstanceData *inst = header->inst;
 	int32 n = header->numMeshes;
+	if(rsceneOn){
+		rscene.atomics[RSP_SKIN]++;
+		rscene.meshes[RSP_SKIN] += n;
+	}
 	while(n--){
 		m = inst->material;
 		setMaterial(flags, m->color, m->surfaceProps);
+		RS_ADD(RS_MATERIAL, rst);
 		setTexture(0, m->texture);
+		RS_ADD(RS_TEXTURE, rst);
 		rw::SetRenderState(VERTEXALPHA, inst->vertexAlpha || m->color.alpha != 0xFF);
+		RS_ADD(RS_STATES, rst);
 		drawInst(header, inst);
+		RS_ADD(RS_DRAW, rst);
 		inst++;
 	}
 }
@@ -1085,14 +1150,25 @@ static void
 matfxRenderCB(Atomic *atomic, InstanceDataHeader *header)
 {
 	uint32 flags = atomic->geometry->flags;
-	setWorldMatrix(atomic->getFrame()->getLTM());
+	RS_T(rst);
+	Matrix *ltm = atomic->getFrame()->getLTM();
+	RS_ADD(RS_LTM, rst);
+	setWorldMatrix(ltm);
+	RS_ADD(RS_WORLDMAT, rst);
 	lightingCB(atomic);
+	RS_ADD(RS_LIGHTS, rst);
 
 	bindAttribs(header);
+	RS_ADD(RS_ATTRIBS, rst);
 
 	InstanceData *inst = header->inst;
 	int32 n = header->numMeshes;
+	if(rsceneOn){
+		rscene.atomics[RSP_MATFX]++;
+		rscene.meshes[RSP_MATFX] += n;
+	}
 	while(n--){
+		RS_ADD(RS_MATFXMESH, rst);
 		MatFX *matfx = MatFX::get(inst->material);
 
 		if(matfx == nil)
@@ -1107,6 +1183,7 @@ matfxRenderCB(Atomic *atomic, InstanceDataHeader *header)
 		}
 		inst++;
 	}
+	RS_ADD(RS_MATFXMESH, rst);
 }
 
 static void*

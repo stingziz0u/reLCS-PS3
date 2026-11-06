@@ -538,6 +538,9 @@ RpAnimBlendClumpUpdateAnimations(RpClump *clump, float timeDelta, bool doRender)
 		else
 			clumpData->ForAllFrames(FrameUpdateCallBackNonSkinned, &updateData);
 		clumpData->frames[0].flag &= ~AnimBlendFrameData::UPDATE_KEYFRAMES;
+#ifdef __PS3__
+		PS3_AnimSpuPublish();	// patch 132: this clump's bones to the SPU
+#endif
 	}else{
 		clumpData->ForAllFrames(FrameUpdateCallBackOffscreen, &updateData);
 		clumpData->frames[0].flag |= AnimBlendFrameData::UPDATE_KEYFRAMES;

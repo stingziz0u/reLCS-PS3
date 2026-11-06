@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"	// patch 132
+#endif
 
 #include "NodeName.h"
 #include "VisibilityPlugins.h"
@@ -249,6 +252,12 @@ FrameUpdateCallBackSkinned(AnimBlendFrameData *frame, void *arg)
 			FrameUpdateCallBackWithVelocityExtractionSkinned(frame, arg);
 		return;
 	}
+#ifdef __PS3__
+	// patch 132: in CWorld::Process's animation loop the bone goes to the
+	// SPU (ps3_animspu.cpp); the root, with its velocity, stays above
+	if(gPS3AnimCollect && PS3_AnimSpuCollect(frame, updateData))
+		return;
+#endif
 
 	if(updateData->foobar)
 		for(node = updateData->nodes; *node; node++)

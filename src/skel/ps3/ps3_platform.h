@@ -86,11 +86,20 @@ struct PS3SpuTask
 	uint32_t image[4];	// sysSpuImage
 	uint32_t group, thread;
 	uint64_t queue;
+	uint64_t lastData1;	// patch 132: the last event's second word (the program's own use)
 };
 bool PS3_SpuTaskStart(PS3SpuTask *t, const void *elf, const char *name, uint8_t port);
 bool PS3_SpuTaskKick(PS3SpuTask *t, uint32_t jobEa);
 bool PS3_SpuTaskWait(PS3SpuTask *t, uint32_t seq, uint32_t timeoutUs, uint64_t *waitUs);	// false: gave up on it
 void PS3_SpuTaskStop(PS3SpuTask *t);
+// patch 132: the peds' bones on an SPU (ps3_animspu.cpp)
+struct AnimBlendFrameData;
+struct AnimBlendFrameUpdateData;
+extern bool gPS3AnimCollect;
+void PS3_AnimSpuBegin(void);
+bool PS3_AnimSpuCollect(AnimBlendFrameData *frame, AnimBlendFrameUpdateData *updateData);
+void PS3_AnimSpuPublish(void);
+void PS3_AnimSpuEnd(void);
 
 // ps3_carspawn.cpp (L3 + R3)
 bool PS3_IsShadModel(int id);		// patch 93: model with "shad" in the name (Renderer.cpp)

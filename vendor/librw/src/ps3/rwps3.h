@@ -6,6 +6,9 @@
 //   - DXT1/3/5: the blocks exactly as they come from the PC TXDs
 // Palettized and 16/24 bit images are expanded to 32 bit on the way in.
 
+// patch 132: RenderScene / RenderEffects as a whole, timebase ticks (main.cpp)
+extern "C" unsigned long long gPS3RSceneTb, gPS3REffectsTb;
+
 namespace rw {
 
 #ifdef RW_PS3
@@ -225,6 +228,25 @@ struct PerfCounters
 	uint64 texThreadUs;	// the texture thread's busy time (ps3raster)
 };
 extern PerfCounters perfCounters;
+// patch 132: RenderScene's breakdown, [rscene] every 10 s after the [rsx]
+// lines (with the log on: rsceneOn). Timebase ticks in each part of the atomic
+// pipelines; RenderScene and RenderEffects as a whole (main.cpp) for the
+// rest, the game's own work around them.
+enum { RS_INSTANCE, RS_LTM, RS_WORLDMAT, RS_LIGHTS, RS_ATTRIBS, RS_PROGRAMS, RS_SKIN,
+       RS_MATERIAL, RS_TEXTURE, RS_STATES, RS_DRAW, RS_MATFXMESH, RS_NUM };
+enum { RSP_DEFAULT, RSP_LEEDS, RSP_SKIN, RSP_MATFX, RSP_NUM };
+struct RSceneStats
+{
+	uint64 tb[RS_NUM];
+	uint64 pipeTb, flushTb, cmdTb;	// all the pipelines; inside RS_DRAW: flushCache, the draw command and its kick
+	uint32 atomics[RSP_NUM], meshes[RSP_NUM];
+	uint32 lights;			// lights set (directionals + locals)
+};
+extern RSceneStats rscene;
+extern bool rsceneOn;
+static inline uint64 rsTb(void) { uint64 tb; __asm__ volatile("mftb %0" : "=r"(tb)); return tb; }
+#define RS_T(v) uint64 v = rsceneOn ? rsTb() : 0
+#define RS_ADD(k, v) do { if(rsceneOn){ uint64 rsn_ = rsTb(); rscene.tb[k] += rsn_ - (v); (v) = rsn_; } } while(0)
 extern bool optLeedsNoDirLights;
 // patch 50: space in this frame's vertex ring for vertices written by an SPU
 // (ringAlloc: CPU address, nil when the segment is full; *offset for the

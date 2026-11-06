@@ -2254,6 +2254,9 @@ CWorld::Process(void)
 		CRecordDataForChase::ProcessControlCars();
 		CRecordDataForChase::SaveOrRetrieveCarPositions();
 	} else {
+#ifdef __PS3__
+		PS3_AnimSpuBegin();	// patch 132: the peds' bones on an SPU
+#endif
 		for(CPtrNode *node = ms_listMovingEntityPtrs.first; node; node = node->next) {
 			CEntity *movingEnt = (CEntity *)node->item;
 			if(!movingEnt->bRemoveFromWorld){
@@ -2266,6 +2269,14 @@ CWorld::Process(void)
 #endif
 			}
 		}
+#ifdef __PS3__
+		{
+			// patch 132: the SPU's bones in their frames before any ProcessControl
+			PS3_ENT_T0();
+			PS3_AnimSpuEnd();
+			PS3_ProfAdd(PS3_PROF_WORLD, "anims: waiting for the SPU's bones", PS3_Ticks() - ps3t0);
+		}
+#endif
 		for(CPtrNode *node = ms_listMovingEntityPtrs.first; node; node = node->next) {
 			CPhysical *movingEnt = (CPhysical *)node->item;
 			if(movingEnt->bRemoveFromWorld) {

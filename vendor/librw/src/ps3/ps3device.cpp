@@ -1348,7 +1348,10 @@ flushCache(void)
 {
 	uint64 t0 = tbNow();
 	bool r = flushCacheImpl();
-	perfCounters.flushTb += tbNow() - t0;
+	uint64 dt = tbNow() - t0;
+	perfCounters.flushTb += dt;
+	if(rsceneOn)
+		rscene.flushTb += dt;	// patch 132
 	return r;
 }
 
