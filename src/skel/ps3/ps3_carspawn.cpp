@@ -79,6 +79,10 @@ BuildList(void)
 		// trains, the police heli and the dead planes can't be driven
 		if (type == VEHICLE_TYPE_TRAIN || type == VEHICLE_TYPE_HELI || type == VEHICLE_TYPE_PLANE)
 			continue;
+		// res-PS3 patch 131: nor the ferry (a CFerry on its route, made by
+		// the game; built here as a CAutomobile it crashed)
+		if (type == VEHICLE_TYPE_FERRY)
+			continue;
 		if (IsRCModel(i))
 			continue;
 		spList[spCount++] = i;

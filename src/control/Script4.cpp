@@ -1,6 +1,7 @@
 #include "common.h"
 #ifdef __PS3__
 #include "ps3_platform.h"
+#include <sys/systime.h>
 #endif
 
 #include "Script.h"
@@ -44,6 +45,7 @@
 #include "Zones.h"
 #include "Bike.h"
 #include "Wanted.h"
+#include "CutsceneMgr.h"
 
 // LCS: file done except TODOs
 
@@ -2037,11 +2039,38 @@ int8 CRunningScript::ProcessCommands900To999(int32 command)
 		CTimer::Stop();
 #endif
 		CStreaming::LoadSceneCollision(pos);
-#if defined(_3DS) || defined(__PS3__)	// reLCS-PS3: a game fix of the 3DS port
+#if defined(_3DS)	// a game fix of the 3DS port
 		/* The LCS port reduced LOAD_SCENE to collision-only loading.  Desktop
 		 * storage usually hides that omission, but a cutscene camera jump on SD
 		 * reaches the destination before its buildings are resident. */
 		CStreaming::LoadScene(pos);
+#elif defined(__PS3__)
+		// res-PS3 patch 131: the 3DS fix above loads the whole scene there
+		// at once: 50-70 ms each time (neds1 and interio call it twice in a
+		// row during play: frames of 100-145 ms). Only where the buildings
+		// can be missing: far from the camera, or in a cutscene or with the
+		// screen faded out (a camera jump). Close to the camera the streaming
+		// already has them, as in LCS (collision only).
+		{
+			const CVector &cam = TheCamera.GetPosition();
+			float d = (pos - cam).Magnitude();
+			bool hidden = CCutsceneMgr::IsRunning() || TheCamera.GetScreenFadeStatus() == FADE_2;
+			bool full = d > 120.0f || hidden;
+			uint64 t0, t1;
+			__asm__ volatile("mftb %0" : "=r"(t0));
+			if(full)
+				CStreaming::LoadScene(pos);
+			__asm__ volatile("mftb %0" : "=r"(t1));
+			static int ps3LoadSceneLogs;
+			if(PS3_logsOn && ps3LoadSceneLogs < 200){
+				ps3LoadSceneLogs++;
+				PS3_Logf("[script] %s LOAD_SCENE %.0f %.0f %.0f, %.0f m from the camera%s: %s, %.1f ms",
+				         m_abScriptName, pos.x, pos.y, pos.z, d,
+				         CCutsceneMgr::IsRunning() ? ", cutscene" : TheCamera.GetScreenFadeStatus() == FADE_2 ? ", faded out" : "",
+				         full ? "the whole scene loaded" : "collision only (close to the camera)",
+				         (double)(t1 - t0) * 1000.0 / (double)sysGetTimebaseFrequency());
+			}
+		}
 #endif
 #ifdef FIX_BUGS
 		CTimer::Resume();
