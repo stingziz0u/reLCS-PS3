@@ -1070,7 +1070,13 @@ CStats::ConstructStatLine(int rowIdx)
 			STAT_LINE_1(float, "FEST_DC", DistanceTravelledByCar * MILES_IN_METER, 1);
 			STAT_LINE_1(float, "DISTBIK", DistanceTravelledByBike * MILES_IN_METER, 1);
 			STAT_LINE_1(float, "DISTBOA", DistanceTravelledByBoat * MILES_IN_METER, 1);
+#ifdef __PS3__
+			if (DistanceTravelledByGolfCart > 0.0f)	// patch 139: VC's golf carts and helicopters
+#endif
 			STAT_LINE_1(float, "DISTGOL", DistanceTravelledByGolfCart * MILES_IN_METER, 1);
+#ifdef __PS3__
+			if (DistanceTravelledByHelicoptor > 0.0f)	// patch 139: VC's golf carts and helicopters
+#endif
 			STAT_LINE_1(float, "DISTHEL", DistanceTravelledByHelicoptor * MILES_IN_METER, 1);
 #ifdef FIX_BUGS
 			STAT_LINE_1(float, "TOT_DIS", (DistanceTravelledOnFoot + DistanceTravelledByCar + DistanceTravelledByBoat + DistanceTravelledByBike
@@ -1096,7 +1102,13 @@ CStats::ConstructStatLine(int rowIdx)
 			STAT_LINE_1(float, "FESTDCM", DistanceTravelledByCar, 1);
 			STAT_LINE_1(float, "DISTBIM", DistanceTravelledByBike, 1);
 			STAT_LINE_1(float, "DISTBOM", DistanceTravelledByBoat, 1);
+#ifdef __PS3__
+			if (DistanceTravelledByGolfCart > 0.0f)	// patch 139: VC's golf carts and helicopters
+#endif
 			STAT_LINE_1(float, "DISTGOM", DistanceTravelledByGolfCart, 1);
+#ifdef __PS3__
+			if (DistanceTravelledByHelicoptor > 0.0f)	// patch 139: VC's golf carts and helicopters
+#endif
 			STAT_LINE_1(float, "DISTHEM", DistanceTravelledByHelicoptor, 1);
 #ifdef FIX_BUGS
 			STAT_LINE_1(float, "TOTDISM", DistanceTravelledOnFoot + DistanceTravelledByCar + DistanceTravelledByBoat
@@ -1170,12 +1182,18 @@ CStats::ConstructStatLine(int rowIdx)
 	STAT_LINE_1(int, "FEST_FE", FiresExtinguished, 0);
 	STAT_LINE_1(int, "FIRELVL", HighestLevelFireMission, 0);
 
+#ifndef __PS3__
+	// patch 139: VC's: LCS has no stores to rob nor assassinations (its
+	// scripts' commands for them are empty, Script7.cpp): always 0 of 15 / 5
 	STAT_LINE_2(int, "ST_STOR", StoresKnockedOff, 0, 15, 0);
+#endif
 
 	if (MovieStunts > 0.0f)
 		STAT_LINE_1(int, "ST_MOVI", MovieStunts, 0);
 
+#ifndef __PS3__
 	STAT_LINE_2(int, "ST_ASSI", Assassinations, 0, 5, 0);
+#endif
 
 	if (PhotosTaken > 0)
 		STAT_LINE_1(int, "ST_PHOT", PhotosTaken, 0);
@@ -1243,6 +1261,9 @@ CStats::ConstructStatLine(int rowIdx)
 
 	int flightMinute = (FlightTime / 60000) % 60;
 	int flightHour = (FlightTime / 60000) / 60;
+#ifdef __PS3__
+	if (FlightTime > 0)	// patch 139: VC's, LCS flies nothing
+#endif
 	STAT_LINE_2(int, "ST_FTIM", flightHour, 0, flightMinute, 1);
 
 	// We always have pilot rank if we flew more then 5 minutes
@@ -1399,9 +1420,16 @@ CStats::ConstructStatLine(int rowIdx)
 	STAT_LINE_1(int, "SPRAYIN", Sprayings, 0);
 	STAT_LINE_1(float, "ST_WEAP", WeaponBudget, 3);
 	STAT_LINE_1(float, "ST_FASH", FashionBudget, 3);
+#ifdef __PS3__
+	if (PropertyBudget > 0.0f)	// patch 139: VC's property, nothing to buy in LCS
+#endif
 	STAT_LINE_1(float, "ST_PROP", PropertyBudget, 3);
 	STAT_LINE_1(float, "ST_AUTO", AutoPaintingBudget, 3);
+#ifdef __PS3__
+	STAT_LINE_1(float, "ST_DAMA", PropertyDestroyed, 3);	// patch 139: the property destroyed, not the property bought
+#else
 	STAT_LINE_1(float, "ST_DAMA", PropertyBudget, 3);
+#endif
 
 	if (NumPropertyOwned > 0) {
 		STAT_LINE_1(int, "PROPOWN", NumPropertyOwned, 0);

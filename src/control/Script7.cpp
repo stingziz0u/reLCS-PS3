@@ -1283,6 +1283,10 @@ int8 CRunningScript::ProcessCommands1300To1399(int32 command)
 		pPlayerInfo->m_nMaxHealth += GET_INTEGER_PARAM(1);
 		pPlayerInfo->m_pPed->m_fHealth = pPlayerInfo->m_nMaxHealth;
 		CHud::m_ItemToFlash = ITEM_HEALTH;
+#ifdef __PS3__
+		if (PS3_logsOn)	// patch 139
+			PS3_Logf("[health] %.8s INCREASE_PLAYER_MAX_HEALTH +%d: the max now %d", m_abScriptName, GET_INTEGER_PARAM(1), pPlayerInfo->m_nMaxHealth);
+#endif
 		return 0;
 	}
 	case COMMAND_INCREASE_PLAYER_MAX_ARMOUR:
@@ -1292,6 +1296,10 @@ int8 CRunningScript::ProcessCommands1300To1399(int32 command)
 		pPlayerInfo->m_nMaxArmour += GET_INTEGER_PARAM(1);
 		pPlayerInfo->m_pPed->m_fArmour = pPlayerInfo->m_nMaxArmour;
 		CHud::m_ItemToFlash = ITEM_ARMOUR;
+#ifdef __PS3__
+		if (PS3_logsOn)	// patch 139
+			PS3_Logf("[health] %.8s INCREASE_PLAYER_MAX_ARMOUR +%d: the max now %d", m_abScriptName, GET_INTEGER_PARAM(1), pPlayerInfo->m_nMaxArmour);
+#endif
 		return 0;
 	}
 	case COMMAND_CREATE_RANDOM_CHAR_AS_DRIVER:

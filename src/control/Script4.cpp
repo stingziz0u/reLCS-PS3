@@ -783,7 +783,20 @@ int8 CRunningScript::ProcessCommands800To899(int32 command)
 		CollectParameters(&m_nIp, 2);
 		CPlayerPed* pPlayerPed = CWorld::Players[GET_INTEGER_PARAM(0)].m_pPed;
 		script_assert(pPlayerPed);
+#ifdef __PS3__
+		{
+			// patch 139: 100 or more is "full" (Crazy '69', Cam-Pain): the max
+			// the side jobs gave, not 100
+			float maxA = CWorld::Players[GET_INTEGER_PARAM(0)].m_nMaxArmour;
+			pPlayerPed->m_fArmour = GET_INTEGER_PARAM(1) >= 100 ? maxA :
+				Clamp(pPlayerPed->m_fArmour + GET_INTEGER_PARAM(1), 0.0f, maxA);
+			if (PS3_logsOn)
+				PS3_Logf("[health] %.8s ADD_ARMOUR_TO_PLAYER %d: armour %.0f (max %.0f)", m_abScriptName,
+				         GET_INTEGER_PARAM(1), pPlayerPed->m_fArmour, maxA);
+		}
+#else
 		pPlayerPed->m_fArmour = Clamp(pPlayerPed->m_fArmour + GET_INTEGER_PARAM(1), 0.0f, CWorld::Players[GET_INTEGER_PARAM(0)].m_nMaxArmour);
+#endif
 		return 0;
 	}
 	case COMMAND_ADD_ARMOUR_TO_CHAR:
@@ -791,6 +804,18 @@ int8 CRunningScript::ProcessCommands800To899(int32 command)
 		CollectParameters(&m_nIp, 2);
 		CPed* pPed = CPools::GetPedPool()->GetAt(GET_INTEGER_PARAM(0));
 		script_assert(pPed);
+#ifdef __PS3__
+		if (pPed->IsPlayer()) {
+			// patch 139: the player's char: up to his max (the side jobs'), 100
+			// or more fills it
+			float maxA = CWorld::Players[0].m_nMaxArmour;
+			pPed->m_fArmour = GET_INTEGER_PARAM(1) >= 100 ? maxA : Clamp(pPed->m_fArmour + GET_INTEGER_PARAM(1), 0.0f, maxA);
+			if (PS3_logsOn)
+				PS3_Logf("[health] %.8s ADD_ARMOUR_TO_CHAR (the player) %d: armour %.0f (max %.0f)", m_abScriptName,
+				         GET_INTEGER_PARAM(1), pPed->m_fArmour, maxA);
+			return 0;
+		}
+#endif
 		pPed->m_fArmour = Clamp(pPed->m_fArmour + GET_INTEGER_PARAM(1), 0.0f, 100.0f);
 		return 0;
 	}

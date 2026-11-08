@@ -43,6 +43,10 @@
 #ifdef __PS3__
 #include <stdlib.h>	// qsort, bsearch (patch 28)
 #include "Timecycle.h"
+#ifdef __PS3__
+extern int8 gPS3Ps2Lighting, gPS3Gamma, gPS3ColourFilter;	// patch 139
+void PS3_WeatherReport(void);
+#endif
 #endif
 
 // maybe some day...
@@ -844,9 +848,11 @@ static const char *const ps3DecalModeName[] = {
 	"15 hide the aimed mesh",
 	"16 free camera (the view frozen)",
 	"17 log what is drawn, loaded, removed",
-	"18 hide every LOD (big building)"
+	"18 hide every LOD (big building)",
+	"19 no fog in the rain (patch 80 off)",
+	"20 no light added to buildings (patches 100, 101 off)"
 };
-#define PS3_NUMTESTMODES 19
+#define PS3_NUMTESTMODES 21
 static uint32 ps3DecalPrev;
 static wchar ps3DecalMsg[96];
 
@@ -1754,7 +1760,24 @@ PS3_DecalTestPad(void)
 	CPad::GetPad(0)->NewState.Clear();	// not a camera change
 	if(PS3_logsOn)
 		PS3_DecalSnapshot("leaving the mode");
-	rw::ps3::decalMode = (rw::ps3::decalMode + 1) % PS3_NUMTESTMODES;
+	{
+		// patch 139: mode 20 turns off the light patches 100 and 101 add (the
+		// grey rain and night: against the pictures with them on)
+		static bool savedLift, savedFloor;
+		if (rw::ps3::decalMode == 20) {
+			rw::ps3::leedsUnlitLift = savedLift;
+			rw::ps3::leedsEmissionFloor = savedFloor;
+		}
+		rw::ps3::decalMode = (rw::ps3::decalMode + 1) % PS3_NUMTESTMODES;
+		if (rw::ps3::decalMode == 20) {
+			savedLift = rw::ps3::leedsUnlitLift;
+			savedFloor = rw::ps3::leedsEmissionFloor;
+			rw::ps3::leedsUnlitLift = false;
+			rw::ps3::leedsEmissionFloor = false;
+		}
+		if (rw::ps3::decalMode == 19 || rw::ps3::decalMode == 20 || rw::ps3::decalMode == 0)
+			PS3_WeatherReport();	// what the picture is made of, with the mode
+	}
 	ps3AimEnt = nil;
 	ps3AimNumOthers = 0;
 	ps3AimFrame = 0;
@@ -1773,7 +1796,8 @@ PS3_WeatherReport(void)
 {
 	PS3_Logf("[weather] %d -> %d (%.2f), %02d:%02d, rain %.2f, fog %.2f, extra colour %s%d (%.2f); "
 	         "ambient %.2f %.2f %.2f, objects %.2f %.2f %.2f, directional %.2f %.2f %.2f; "
-	         "sky %d %d %d / %d %d %d, fog colour %d %d %d, far clip %.0f, fog start %.0f",
+	         "sky %d %d %d / %d %d %d, fog colour %d %d %d, far clip %.0f, fog start %.0f; "
+	         "colour filter %d (its colour %d %d %d), PS2 lighting %d, gamma %d, light added: unlit %d, emission floor %d, test mode %d",
 	         CWeather::OldWeatherType, CWeather::NewWeatherType, CWeather::InterpolationValue,
 	         CClock::GetHours(), CClock::GetMinutes(), CWeather::Rain, CWeather::Foggyness,
 	         CTimeCycle::m_bExtraColourOn ? "on " : "off ", CTimeCycle::m_ExtraColour, CTimeCycle::m_ExtraColourInter,
@@ -1783,7 +1807,10 @@ PS3_WeatherReport(void)
 	         CTimeCycle::GetSkyTopRed(), CTimeCycle::GetSkyTopGreen(), CTimeCycle::GetSkyTopBlue(),
 	         CTimeCycle::GetSkyBottomRed(), CTimeCycle::GetSkyBottomGreen(), CTimeCycle::GetSkyBottomBlue(),
 	         CTimeCycle::GetFogRed(), CTimeCycle::GetFogGreen(), CTimeCycle::GetFogBlue(),
-	         CTimeCycle::GetFarClip(), CTimeCycle::GetFogStart());
+	         CTimeCycle::GetFarClip(), CTimeCycle::GetFogStart(),
+	         (int)gPS3ColourFilter, CTimeCycle::GetBlurRed(), CTimeCycle::GetBlurGreen(), CTimeCycle::GetBlurBlue(),
+	         (int)gPS3Ps2Lighting, (int)gPS3Gamma, (int)rw::ps3::leedsUnlitLift, (int)rw::ps3::leedsEmissionFloor,
+	         (int)rw::ps3::decalMode);
 }
 
 enum { PS3DARK_UNKNOWN, PS3DARK_OK, PS3DARK_PRELIT, PS3DARK_UNLIT, PS3DARK_NOTEX, PS3DARK_NOPRELIT };
@@ -2104,7 +2131,8 @@ CRenderer::RenderEverythingBarRoads(void)
 	// clip (650 m) cut buildings in the open (Ren: pop-in at the draw
 	// distance only with weather 2) and dark LODs stayed black instead of
 	// fading into the fog. reVC turns it on here.
-	RwRenderStateSet(rwRENDERSTATEFOGENABLE, (void*)TRUE);
+	if (rw::ps3::decalMode != 19)	// patch 139: test mode 19, as before patch 80
+		RwRenderStateSet(rwRENDERSTATEFOGENABLE, (void*)TRUE);
 #else
 //	RwRenderStateSet(rwRENDERSTATEFOGENABLE, (void*)TRUE);
 #endif

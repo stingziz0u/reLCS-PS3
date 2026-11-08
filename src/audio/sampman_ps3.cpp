@@ -966,6 +966,35 @@ struct Mp3Entry
 static Mp3Entry *mp3List;
 static uint32 curMp3Index;
 static bool mp3Active;		// stream 0 plays one of them (its end: the next one)
+// patch 139: the MP3 player as III's: a playlist that goes on where it was.
+// Each time the station was tuned again (a car, a cutscene, the menu) the
+// game handed its own station clock (GetTrackStartPos: the position kept,
+// plus the time since, at most 4.5 min) and the file was looked up from it:
+// Ren, 12 files, always the same 3. Now the file and the place in it are
+// kept when it stops, and the next tuning goes on from there; the station's
+// position is used only the first time (the start up draw, patch 133).
+static int32 mp3ResumeIndex = -1;
+static uint32 mp3ResumeMs;
+static int32 Mp3PosInFile(void);
+static void
+Mp3Remember(const char *why)
+{
+	if(!mp3Active || curMp3Index >= nNumMP3s)
+		return;
+	int32 p = Mp3PosInFile();
+	mp3ResumeIndex = curMp3Index;
+	mp3ResumeMs = p > 0 ? p : 0;
+	// it had ended (or all but): the next file, from its start
+	uint32 len = mp3List[curMp3Index].lengthMs;
+	if(!SampleManager.IsStreamPlaying(0) || (len && mp3ResumeMs + 500 >= len)){
+		mp3ResumeIndex = (curMp3Index + 1) % nNumMP3s;
+		mp3ResumeMs = 0;
+	}
+	if(PS3_logsOn)
+		PS3_Logf("[mp3] %s: file %u of %u (%s) at %u:%02u kept", why, mp3ResumeIndex + 1, nNumMP3s,
+		         strrchr(mp3List[mp3ResumeIndex].path, '/') ? strrchr(mp3List[mp3ResumeIndex].path, '/') + 1 : mp3List[mp3ResumeIndex].path,
+		         mp3ResumeMs / 60000, mp3ResumeMs / 1000 % 60);
+}
 
 static int
 CmpMp3(const void *a, const void *b)
@@ -2562,8 +2591,10 @@ cSampleManager::PreloadStreamedFile(uint32 nFile, uint8 nStream)
 	PS3_AUDIO_SLOW("cSampleManager::PreloadStreamedFile");
 	if(nFile >= TOTAL_STREAMED_SOUNDS || nStream >= MAX_STREAMS)
 		return;
-	if(nStream == 0)
+	if(nStream == 0){
+		Mp3Remember("another track preloaded");	// patch 139
 		mp3Active = false;
+	}
 	if(gStreamAsync){
 		StreamRequest(nStream, nFile, 0, 1, false);	// patch 69
 		return;
@@ -2609,14 +2640,25 @@ cSampleManager::StartStreamedFile(uint32 nFile, uint32 nPos, uint8 nStream)
 	if(nFile >= TOTAL_STREAMED_SOUNDS || nStream >= MAX_STREAMS)
 		return false;
 	if(nFile == STREAMED_SOUND_RADIO_MP3_PLAYER){
+		bool wasActive = mp3Active;
 		StreamCancel(nStream);	// patch 69: done right here
 		// sampman_oal: started again while one plays (it ended) = the next
 		// file; else the file and position of nPos in the station
 		for(uint32 tries = 0; tries < nNumMP3s; tries++){
 			uint32 pos = 0;
-			if(mp3Active || tries > 0)
+			const char *how;
+			if(mp3Active || tries > 0){
 				curMp3Index = (curMp3Index + 1) % nNumMP3s;
-			else{
+				how = tries > 0 ? "the next one (the last didn't open)" : "the next one (the last ended)";
+				mp3ResumeIndex = -1;
+			}else if(mp3ResumeIndex >= 0 && (uint32)mp3ResumeIndex < nNumMP3s){
+				// patch 139: where it was
+				curMp3Index = mp3ResumeIndex;
+				pos = mp3ResumeMs;
+				mp3ResumeIndex = -1;
+				how = "where it was";
+			}else{
+				how = "the station's position (the first time)";
 				uint32 p = nPos < nStreamLength[STREAMED_SOUND_RADIO_MP3_PLAYER] ? nPos : 0;
 				uint32 i = 0;
 				while(i + 1 < nNumMP3s && p >= mp3List[i+1].streamPos)
@@ -2624,6 +2666,11 @@ cSampleManager::StartStreamedFile(uint32 nFile, uint32 nPos, uint8 nStream)
 				curMp3Index = i;
 				pos = p - mp3List[i].streamPos;
 			}
+			if(PS3_logsOn)
+				PS3_Logf("[mp3] start (%s, asked %u:%02u%s): file %u of %u (%s) at %u:%02u", how, nPos / 60000, nPos / 1000 % 60,
+				         wasActive ? ", one was playing" : "", curMp3Index + 1, nNumMP3s,
+				         strrchr(mp3List[curMp3Index].path, '/') ? strrchr(mp3List[curMp3Index].path, '/') + 1 : mp3List[curMp3Index].path,
+				         pos / 60000, pos / 1000 % 60);
 			Stream *s = StreamCreate(mp3List[curMp3Index].path);
 			if(s == nil){
 				mp3Active = false;
@@ -2647,8 +2694,10 @@ cSampleManager::StartStreamedFile(uint32 nFile, uint32 nPos, uint8 nStream)
 		nFile = 0;
 		nPos = 0;
 	}
-	if(nStream == 0)
+	if(nStream == 0){
+		Mp3Remember("another track started");	// patch 139
 		mp3Active = false;
+	}
 	// sampman_oal: looped unless SetStreamedFileLoopFlag(0) came right before
 	int32 loops = nStreamLoopedFlag[nStream] ? 0 : 1;
 	nStreamLoopedFlag[nStream] = 1;
@@ -2679,6 +2728,8 @@ void
 cSampleManager::StopStreamedFile(uint8 nStream)
 {
 	PS3_AUDIO_SLOW("cSampleManager::StopStreamedFile");
+	if(nStream == 0)
+		Mp3Remember("stopped");	// patch 139
 	if(nStream < MAX_STREAMS){
 		if(gStreamAsync)
 			StreamRequest(nStream, -1, 0, 1, false);	// patch 69
@@ -2687,6 +2738,16 @@ cSampleManager::StopStreamedFile(uint8 nStream)
 	}
 	if(nStream == 0)
 		mp3Active = false;
+}
+
+// patch 139: the place in the MP3 player's file now (ms)
+static int32
+Mp3PosInFile(void)
+{
+	int32 p = SampleManager.GetStreamedFilePosition(0);
+	if(curMp3Index < nNumMP3s)
+		p -= mp3List[curMp3Index].streamPos;
+	return p;
 }
 
 int32

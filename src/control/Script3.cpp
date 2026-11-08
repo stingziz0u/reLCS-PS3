@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"	// patch 139
+#endif
 
 #include "Script.h"
 #include "ScriptCommands.h"
@@ -409,7 +412,19 @@ int8 CRunningScript::ProcessCommands500To599(int32 command)
 		CollectParameters(&m_nIp, 2);
 		CPlayerPed* pPed = CWorld::Players[GET_INTEGER_PARAM(0)].m_pPed;
 		script_assert(pPed);
+#ifdef __PS3__
+		{
+			// patch 139: 100 is "full" to LCS's scripts (Crazy '69', Cam-Pain):
+			// with the side jobs' extra health, the bar was left part empty
+			int32 maxH = CWorld::Players[GET_INTEGER_PARAM(0)].m_nMaxHealth;
+			int32 want = GET_INTEGER_PARAM(1);
+			pPed->m_fHealth = want >= 100 ? maxH : Min(want, maxH);
+			if (PS3_logsOn)
+				PS3_Logf("[health] %.8s SET_PLAYER_HEALTH %d: health %.0f (max %d)", m_abScriptName, want, pPed->m_fHealth, maxH);
+		}
+#else
 		pPed->m_fHealth = Min(GET_INTEGER_PARAM(1), CWorld::Players[GET_INTEGER_PARAM(0)].m_nMaxHealth);
+#endif
 		return 0;
 	}
 	case COMMAND_SET_CHAR_HEALTH:
@@ -419,6 +434,16 @@ int8 CRunningScript::ProcessCommands500To599(int32 command)
 		script_assert(pPed);
 		if (GET_INTEGER_PARAM(1)) {
 			pPed->m_fHealth = GET_INTEGER_PARAM(1);
+#ifdef __PS3__
+			if (pPed->IsPlayer()) {
+				// patch 139: the player's char, as SET_PLAYER_HEALTH
+				int32 maxH = CWorld::Players[0].m_nMaxHealth;
+				pPed->m_fHealth = GET_INTEGER_PARAM(1) >= 100 ? maxH : Min(GET_INTEGER_PARAM(1), maxH);
+				if (PS3_logsOn)
+					PS3_Logf("[health] %.8s SET_CHAR_HEALTH (the player) %d: health %.0f (max %d)", m_abScriptName,
+					         GET_INTEGER_PARAM(1), pPed->m_fHealth, maxH);
+			}
+#endif
 		}
 		else if (pPed->bInVehicle) {
 			pPed->SetDead();
