@@ -1,4 +1,5 @@
 #include "common.h"
+#include "Pools.h"	// patch 134
 
 #include "main.h"
 #include "RpAnimBlend.h"
@@ -42,7 +43,8 @@ PS3_LogKill(CPed *victim, CEntity *by, eWeaponType method, bool byPlayer)
 	                  by == FindPlayerVehicle() ? "the player's vehicle" :
 	                  by->IsPed() ? "a ped" : by->IsVehicle() ? "a vehicle" : "something";
 	CVector pos = victim->GetPosition();
-	PS3_Logf("[kill] ped model %d type %d%s killed by %s, weapon %d: %s (at %.0f %.0f %.0f, state %d)",
+	PS3_Logf("[kill] ped %d, model %d type %d%s killed by %s, weapon %d: %s (at %.0f %.0f %.0f, state %d)",
+	         CPools::GetPedRef(victim),	// patch 134: the script's handle
 	         victim->GetModelIndex(), victim->m_nPedType, victim->CharCreatedBy == MISSION_CHAR ? " (mission)" : "",
 	         who, (int)method, byPlayer ? "the player's kill" : "not the player's",
 	         pos.x, pos.y, pos.z, victim->GetPedState());

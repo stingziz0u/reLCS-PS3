@@ -291,10 +291,69 @@ void CRadar::ChangeBlipScale(int32 i, int32 scale)
 		ms_RadarTrace[index].m_wScale = scale;
 }
 
+#ifdef __PS3__
+// patch 134: who made each blip ([blip] lines, log on): the script running
+// then, "code" outside the scripts, "the save" for the ones loaded. A blip
+// left on the map after a mission says which mission made it.
+static char ps3BlipOwner[NUMRADARBLIPS][9];
+
+static const char*
+PS3_BlipKind(uint32 t)
+{
+	switch (t) {
+	case BLIP_CAR: return "car";
+	case BLIP_CHAR: return "char";
+	case BLIP_OBJECT: return "object";
+	case BLIP_COORD: return "coord";
+	case BLIP_CONTACT_POINT: return "contact point";
+	default: return "?";
+	}
+}
+
+static void
+PS3_LogBlip(const char *what, int i)
+{
+	if (!PS3_logsOn)
+		return;
+	sRadarTrace &t = CRadar::ms_RadarTrace[i];
+	PS3_Logf("[blip] %s #%d (%s) by %s: %s, handle %d, at %.0f %.0f %.0f, colour %u, display %u, sprite %u%s%s",
+	         what, i, t.m_bInUse ? "in use" : "free", ps3BlipOwner[i][0] ? ps3BlipOwner[i] : "?",
+	         PS3_BlipKind(t.m_eBlipType), t.m_nEntityHandle, t.m_vecPos.x, t.m_vecPos.y, t.m_vecPos.z,
+	         t.m_nColor, t.m_eBlipDisplay, t.m_eRadarSprite, t.m_bShortRange ? ", short range" : "", t.m_bDim ? ", dim" : "");
+}
+
+static void
+PS3_NoteBlipOwner(int i)
+{
+	const char *n = PS3_ScriptRunningName();
+	strncpy(ps3BlipOwner[i], n ? n : "code", 8);
+	ps3BlipOwner[i][8] = '\0';
+}
+
+// every 30 s off a mission: the blips without a sprite (a mission's)
+static void
+PS3_LogLooseBlips(void)
+{
+	static uint32 last;
+	uint32 now = CTimer::GetTimeInMillisecondsPauseMode();
+	if (!PS3_logsOn || now - last < 30000)
+		return;
+	last = now;
+	if (CTheScripts::OnAMissionFlag && *(int32*)&CTheScripts::ScriptSpace[CTheScripts::OnAMissionFlag])
+		return;
+	for (int i = 0; i < NUMRADARBLIPS; i++)
+		if (CRadar::ms_RadarTrace[i].m_bInUse && CRadar::ms_RadarTrace[i].m_eRadarSprite == RADAR_SPRITE_NONE)
+			PS3_LogBlip("off a mission, still on the map:", i);
+}
+#endif
+
 void CRadar::ClearBlip(int32 i)
 {
 	int index = GetActualBlipArrayIndex(i);
 	if (index != -1) {
+#ifdef __PS3__
+		PS3_LogBlip("removed", index);	// patch 134
+#endif
 		SetRadarMarkerState(index, false);
 		ms_RadarTrace[index].m_bInUse = false;
 		ms_RadarTrace[index].m_eBlipType = BLIP_NONE;
@@ -307,6 +366,9 @@ void CRadar::ClearBlipForEntity(eBlipType type, int32 id)
 {
 	for (int i = 0; i < NUMRADARBLIPS; i++) {
 		if (type == ms_RadarTrace[i].m_eBlipType && id == ms_RadarTrace[i].m_nEntityHandle) {
+#ifdef __PS3__
+			PS3_LogBlip("removed with its entity", i);	// patch 134
+#endif
 			SetRadarMarkerState(i, false);
 			ms_RadarTrace[i].m_bInUse = false;
 			ms_RadarTrace[i].m_eBlipType = BLIP_NONE;
@@ -832,6 +894,9 @@ PS3_DrawCollectibles(void)
 
 void CRadar::DrawBlips()
 {
+#ifdef __PS3__
+	PS3_LogLooseBlips();	// patch 134
+#endif
 	if (!TheCamera.m_WideScreenOn && CHud::m_Wants_To_Draw_Hud) {
 #ifdef SECUROM
 		extern uint8 roadBlocksPirateCheck;
@@ -1310,6 +1375,13 @@ INITSAVEBUF
 	}
 
 VALIDATESAVEBUF(size);
+#ifdef __PS3__
+	for (int i = 0; i < NUMRADARBLIPS; i++) {	// patch 134
+		strcpy(ps3BlipOwner[i], ms_RadarTrace[i].m_bInUse ? "the save" : "");
+		if (ms_RadarTrace[i].m_bInUse)
+			PS3_LogBlip("loaded", i);
+	}
+#endif
 }
 
 void CRadar::SaveAllRadarBlips(uint8 *buf, uint32 *size)
@@ -1462,6 +1534,9 @@ int CRadar::SetCoordBlip(eBlipType type, CVector pos, uint32 color, eBlipDisplay
 	if (nextBlip == NUMRADARBLIPS)
 		return -1;
 #endif
+#ifdef __PS3__
+	PS3_NoteBlipOwner(nextBlip);	// patch 134
+#endif
 	ms_RadarTrace[nextBlip].m_eBlipType = type;
 	ms_RadarTrace[nextBlip].m_nColor = RADAR_TRACE_MAGENTA;
 	ms_RadarTrace[nextBlip].m_bDim = true;
@@ -1474,6 +1549,10 @@ int CRadar::SetCoordBlip(eBlipType type, CVector pos, uint32 color, eBlipDisplay
 	ms_RadarTrace[nextBlip].m_wScale = 1;
 	ms_RadarTrace[nextBlip].m_eBlipDisplay = display;
 	ms_RadarTrace[nextBlip].m_eRadarSprite = RADAR_SPRITE_NONE;
+#ifdef __PS3__
+	if (PS3_logsOn)
+		PS3_Logf("[blip] made #%d by %s: coord %.0f %.0f %.0f, the colour asked %u", nextBlip, ps3BlipOwner[nextBlip], pos.x, pos.y, pos.z, color);
+#endif
 	return CRadar::GetNewUniqueBlipIndex(nextBlip);
 }
 
@@ -1497,6 +1576,9 @@ int CRadar::SetEntityBlip(eBlipType type, int32 handle, uint32 color, eBlipDispl
 	if (nextBlip == NUMRADARBLIPS)
 		return -1;
 #endif
+#ifdef __PS3__
+	PS3_NoteBlipOwner(nextBlip);	// patch 134
+#endif
 	ms_RadarTrace[nextBlip].m_eBlipType = type;
 	ms_RadarTrace[nextBlip].m_nColor = RADAR_TRACE_YELLOW;
 	ms_RadarTrace[nextBlip].m_bDim = true;
@@ -1507,6 +1589,10 @@ int CRadar::SetEntityBlip(eBlipType type, int32 handle, uint32 color, eBlipDispl
 	ms_RadarTrace[nextBlip].m_wScale = 1;
 	ms_RadarTrace[nextBlip].m_eBlipDisplay = display;
 	ms_RadarTrace[nextBlip].m_eRadarSprite = RADAR_SPRITE_NONE;
+#ifdef __PS3__
+	if (PS3_logsOn)
+		PS3_Logf("[blip] made #%d by %s: %s %d, the colour asked %u", nextBlip, ps3BlipOwner[nextBlip], PS3_BlipKind(type), handle, color);
+#endif
 	return GetNewUniqueBlipIndex(nextBlip);
 }
 

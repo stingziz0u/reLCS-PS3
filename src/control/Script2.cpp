@@ -368,7 +368,18 @@ int8 CRunningScript::ProcessCommands300To399(int32 command)
 		CVehicle* pVehicle = CPools::GetVehiclePool()->GetAt(GET_INTEGER_PARAM(0));
 		script_assert(pVehicle);
 		CRadar::GetActualBlipArrayIndex(CollectNextParameterWithoutIncreasingPC(m_nIp));
+#ifdef __PS3__
+		{
+			// patch 134: the colour the script asks for (SetEntityBlip gives
+			// every one yellow, as for VC's scripts, which set it after)
+			int32 colour = GET_INTEGER_PARAM(1);
+			SET_INTEGER_PARAM(0, CRadar::SetEntityBlip(BLIP_CAR, GET_INTEGER_PARAM(0), colour, (eBlipDisplay)GET_INTEGER_PARAM(2)));
+			if (GET_INTEGER_PARAM(0) != -1)
+				CRadar::ChangeBlipColour(GET_INTEGER_PARAM(0), colour);
+		}
+#else
 		SET_INTEGER_PARAM(0, CRadar::SetEntityBlip(BLIP_CAR, GET_INTEGER_PARAM(0), GET_INTEGER_PARAM(1), (eBlipDisplay)GET_INTEGER_PARAM(2)));
+#endif
 		StoreParameters(&m_nIp, 1);
 		return 0;
 	}
@@ -378,7 +389,16 @@ int8 CRunningScript::ProcessCommands300To399(int32 command)
 		CPed* pPed = CPools::GetPedPool()->GetAt(GET_INTEGER_PARAM(0));
 		script_assert(pPed);
 		CRadar::GetActualBlipArrayIndex(CollectNextParameterWithoutIncreasingPC(m_nIp));
+#ifdef __PS3__
+		{
+			int32 colour = GET_INTEGER_PARAM(1);	// patch 134
+			SET_INTEGER_PARAM(0, CRadar::SetEntityBlip(BLIP_CHAR, GET_INTEGER_PARAM(0), colour, (eBlipDisplay)GET_INTEGER_PARAM(2)));
+			if (GET_INTEGER_PARAM(0) != -1)
+				CRadar::ChangeBlipColour(GET_INTEGER_PARAM(0), colour);
+		}
+#else
 		SET_INTEGER_PARAM(0, CRadar::SetEntityBlip(BLIP_CHAR, GET_INTEGER_PARAM(0), GET_INTEGER_PARAM(1), (eBlipDisplay)GET_INTEGER_PARAM(2)));
+#endif
 		StoreParameters(&m_nIp, 1);
 		return 0;
 	}
@@ -413,7 +433,19 @@ int8 CRunningScript::ProcessCommands300To399(int32 command)
 		if (pos.z <= MAP_Z_LOW_LIMIT)
 			pos.z = CWorld::FindGroundZForCoord(pos.x, pos.y);
 		CRadar::GetActualBlipArrayIndex(CollectNextParameterWithoutIncreasingPC(m_nIp));
+#ifdef __PS3__
+		{
+			// patch 134: the colour the script asks for (SetCoordBlip gives
+			// every one magenta: "Go to the Pier", the Pier in yellow, the
+			// blip pink)
+			int32 colour = GET_INTEGER_PARAM(3);
+			SET_INTEGER_PARAM(0, CRadar::SetCoordBlip(BLIP_COORD, pos, colour, (eBlipDisplay)GET_INTEGER_PARAM(4)));
+			if (GET_INTEGER_PARAM(0) != -1)
+				CRadar::ChangeBlipColour(GET_INTEGER_PARAM(0), colour);
+		}
+#else
 		SET_INTEGER_PARAM(0, CRadar::SetCoordBlip(BLIP_COORD, pos, GET_INTEGER_PARAM(3), (eBlipDisplay)GET_INTEGER_PARAM(4)));
+#endif
 		StoreParameters(&m_nIp, 1);
 		return 0;
 	}

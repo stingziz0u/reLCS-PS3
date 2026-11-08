@@ -711,7 +711,7 @@ static CRunningScript *pScriptBroken;	// to be stopped (CTheScripts::Process)
 static int32 scriptDummyVar;		// where a broken script's writes go
 
 // the last commands run (any script), for the log when one goes wrong
-struct ScriptTrace { CRunningScript *script; uint16 op; uint32 ip; int8 cond; };	// patch 106: cond, the compare flag after it
+struct ScriptTrace { CRunningScript *script; uint16 op; uint32 ip; int8 cond; int32 a0, a1; };	// patch 106: cond, the compare flag after it; patch 134: its first two parameters
 #define SCRIPT_TRACE 256	// patch 106: 32 -> 256 (a mission fail's reason, below)
 static ScriptTrace scriptTrace[SCRIPT_TRACE];
 static int scriptTraceHead;
@@ -753,6 +753,76 @@ PS3_LogMissionFail(CRunningScript *s, const char *how)
 	         p ? "here" : "none", v ? CModelInfo::GetModelInfo(v->GetModelIndex())->GetModelName() : "none",
 	         v ? v->GetMoveSpeed().Magnitude() : 0.0f,
 	         p ? p->GetPosition().x : 0.0f, p ? p->GetPosition().y : 0.0f, p ? p->GetPosition().z : 0.0f);
+}
+
+// patch 134: the script running a command now (nil outside them), for the
+// blips' owners
+const char*
+PS3_ScriptRunningName(void)
+{
+	static char name[9];
+	if (pScriptRunning == nil)
+		return nil;
+	memcpy(name, pScriptRunning->m_abScriptName, 8);
+	name[8] = '\0';
+	return name;
+}
+
+// patch 134: the text a mission script showed last (its GXT key)
+char gPS3MissionTextKey[9];
+void
+PS3_NoteScriptText(const char *key)
+{
+	if (pScriptRunning && pScriptRunning->m_bIsMissionScript) {
+		memcpy(gPS3MissionTextKey, key, 8);
+		gPS3MissionTextKey[8] = '\0';
+	}
+}
+
+// patch 134: every 15 s on a mission (log on): the mission script, where it
+// is, the text it showed last and its last 40 commands with their compare
+// flags and first two parameters (a handle, a number): what a loop waits for
+// when a mission doesn't go on (The Sicilian Gambit, "Take out that Sicilian
+// wise guy!": the kill wasn't counted)
+static void
+PS3_LogMissionLoop(void)
+{
+	static uint32 last;
+	uint32 now = CTimer::GetTimeInMillisecondsPauseMode();
+	if (!PS3_logsOn || now - last < 15000)
+		return;
+	last = now;
+	if (!CTheScripts::OnAMissionFlag || !*(int32*)&CTheScripts::ScriptSpace[CTheScripts::OnAMissionFlag])
+		return;
+	CRunningScript *s;
+	for (s = CTheScripts::pActiveScripts; s; s = s->GetNext())
+		if (s->m_bIsMissionScript)
+			break;
+	if (s == nil)
+		return;
+	char name[9];
+	memcpy(name, s->m_abScriptName, 8);
+	name[8] = '\0';
+	PS3_Logf("[mission] %s at ip %u, the last text \"%s\"; its last commands, oldest first (opcode@ip=compare flag(param 1, param 2); 0x8000 = NOT):",
+	         name, s->m_nIp, gPS3MissionTextKey);
+	int idx[40], n = 0;
+	for (int i = SCRIPT_TRACE - 1; i >= 0 && n < 40; i--) {
+		ScriptTrace &t = scriptTrace[(scriptTraceHead + i) % SCRIPT_TRACE];
+		if (t.script == s)
+			idx[n++] = (scriptTraceHead + i) % SCRIPT_TRACE;
+	}
+	char buf[512];
+	int len = 0;
+	buf[0] = '\0';
+	for (int k = n - 1; k >= 0; k--) {
+		ScriptTrace &t = scriptTrace[idx[k]];
+		len += snprintf(buf + len, sizeof(buf) - len, " %04x@%u=%d(%d,%d)", t.op, t.ip, t.cond, (int)t.a0, (int)t.a1);
+		if (len > 400 || k == 0) {
+			PS3_Logf("[mission]  %s", buf);
+			len = 0;
+			buf[0] = '\0';
+		}
+	}
 }
 
 void
@@ -1564,6 +1634,7 @@ void CTheScripts::Process()
 	}
 	InTheScripts = false;
 #ifdef __PS3__
+	PS3_LogMissionLoop();	// patch 134
 	uint64 ps3P2 = PS3_Tb();
 	ps3SegTicks[1] += ps3P2 - ps3P1;
 #endif
@@ -1787,8 +1858,11 @@ int8 CRunningScript::ProcessOneCommand()
 		script_assert(false);
 #ifdef __PS3__
 	PS3_ScriptTime(this, command, PS3_Tb() - ps3T0);
-	if (scriptTrace[ps3TraceSlot].script == this)
+	if (scriptTrace[ps3TraceSlot].script == this) {
 		scriptTrace[ps3TraceSlot].cond = m_bCondResult;	// patch 106
+		scriptTrace[ps3TraceSlot].a0 = ScriptParams[0];	// patch 134 (the last parameters collected)
+		scriptTrace[ps3TraceSlot].a1 = ScriptParams[1];
+	}
 #endif
 #ifdef USE_MISSION_REPLAY_OVERRIDE_FOR_NON_MOBILE_SCRIPT
 	if (!AlreadySavedGame)

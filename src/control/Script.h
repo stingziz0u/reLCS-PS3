@@ -521,6 +521,11 @@ enum {
 	MAX_ALLOWED_COLLISIONS = 2
 };
 
+#ifdef __PS3__
+void PS3_NoteScriptText(const char *key);	// patch 134 (Script.cpp)
+const char *PS3_ScriptRunningName(void);
+#endif
+
 class CTheScripts
 {
 public:
@@ -628,6 +633,9 @@ public:
 		strncpy(buf, (const char*)&CTheScripts::ScriptSpace[*pIp], KEY_LENGTH_IN_SCRIPT);
 	}
 	static wchar* GetTextByKeyFromScript(uint32* pIp) {
+#ifdef __PS3__
+		PS3_NoteScriptText((const char*)&CTheScripts::ScriptSpace[*pIp]);	// patch 134
+#endif
 		wchar* text = TheText.Get((const char*)&CTheScripts::ScriptSpace[*pIp]);
 		*pIp += KEY_LENGTH_IN_SCRIPT;
 		return text;
