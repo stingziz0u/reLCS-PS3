@@ -711,6 +711,12 @@ int8 CRunningScript::ProcessCommands300To399(int32 command)
 		script_assert(pPed);
 		CRadar::GetActualBlipArrayIndex(CollectNextParameterWithoutIncreasingPC(m_nIp));
 		int handle = CRadar::SetEntityBlip(BLIP_CHAR, GET_INTEGER_PARAM(0), 1, BLIP_DISPLAY_BOTH);
+#ifdef __PS3__
+		// patch 137: LCS's ped blips are red (its texts: "Take out that ~r~
+		// Sicilian wise guy"), not VC's yellow; a script wanting another
+		// colour changes it after (Salvatore: CHANGE_BLIP_COLOUR blue)
+		CRadar::ChangeBlipColour(handle, RADAR_TRACE_RED);
+#endif
 		CRadar::ChangeBlipScale(handle, 3);
 		SET_INTEGER_PARAM(0, handle);
 		StoreParameters(&m_nIp, 1);
@@ -749,6 +755,11 @@ int8 CRunningScript::ProcessCommands300To399(int32 command)
 			pos.z = CWorld::FindGroundZForCoord(pos.x, pos.y);
 		CRadar::GetActualBlipArrayIndex(CollectNextParameterWithoutIncreasingPC(m_nIp));
 		int handle = CRadar::SetCoordBlip(BLIP_COORD, pos, 5, BLIP_DISPLAY_BOTH);
+#ifdef __PS3__
+		// patch 137: LCS's place blips are yellow ("Head for the ~y~Pier"),
+		// not VC's pink; a script wanting another colour changes it after
+		CRadar::ChangeBlipColour(handle, RADAR_TRACE_YELLOW);
+#endif
 		CRadar::ChangeBlipScale(handle, 3);
 		SET_INTEGER_PARAM(0, handle);
 		StoreParameters(&m_nIp, 1);

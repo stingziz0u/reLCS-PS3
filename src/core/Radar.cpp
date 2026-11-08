@@ -270,11 +270,22 @@ void CRadar::ChangeBlipBrightness(int32 i, int32 bright)
 		ms_RadarTrace[index].m_bDim = bright != 1;
 }
 
+#ifdef __PS3__
+const char *PS3_ScriptRunningName(void);	// Script.cpp
+#endif
 void CRadar::ChangeBlipColour(int32 i, int32 color)
 {
 	int index = GetActualBlipArrayIndex(i);
-	if (index != -1)
+	if (index != -1) {
+#ifdef __PS3__
+		// patch 137: a script's own colour (CHANGE_BLIP_COLOUR), to see LCS's
+		// colours against its texts'
+		const char *by = PS3_ScriptRunningName();
+		if (PS3_logsOn && by && ms_RadarTrace[index].m_nColor != (uint32)color)
+			PS3_Logf("[blip] #%d's colour %u -> %d by %s", index, ms_RadarTrace[index].m_nColor, color, by);
+#endif
 		ms_RadarTrace[index].m_nColor = color;
+	}
 }
 
 void CRadar::ChangeBlipDisplay(int32 i, eBlipDisplay display)
@@ -1244,6 +1255,18 @@ int32 CRadar::GetActualBlipArrayIndex(int32 i)
 
 int32 CRadar::GetNewUniqueBlipIndex(int32 i)
 {
+#ifdef __PS3__
+	// patch 137: the handle is index | count << 16, and scripts test a blip
+	// handle with "> 0" (The Sicilian Gambit: "IS_INT_VAR_GREATER_THAN_NUMBER
+	// wise guy's blip 0" before it looks at his death). Past 0x7FFF the
+	// handle is negative: the kill was never seen (Ren's 99% save, slot 6 at
+	// 0x8484). The count starts over at 1 before that.
+	if (ms_RadarTrace[i].m_BlipIndex >= 0x7FFF)
+		ms_RadarTrace[i].m_BlipIndex = 1;
+	else
+		ms_RadarTrace[i].m_BlipIndex++;
+	return i | (ms_RadarTrace[i].m_BlipIndex << 16);
+#endif
 	if (ms_RadarTrace[i].m_BlipIndex >= UINT16_MAX - 1)
 		ms_RadarTrace[i].m_BlipIndex = 1;
 	else
@@ -1380,6 +1403,33 @@ VALIDATESAVEBUF(size);
 		strcpy(ps3BlipOwner[i], ms_RadarTrace[i].m_bInUse ? "the save" : "");
 		if (ms_RadarTrace[i].m_bInUse)
 			PS3_LogBlip("loaded", i);
+	}
+	{
+		// patch 137: counts past 0x7FFF (negative handles, above) from a save:
+		// a free slot's starts over; a slot in use gets a new count and the
+		// script variables holding its old handle get the new one
+		int32 varSpace = CTheScripts::GetSizeOfVariableSpace();
+		for (int i = 0; i < NUMRADARBLIPS; i++) {
+			sRadarTrace &t = ms_RadarTrace[i];
+			if (t.m_BlipIndex < 0x7FFF)
+				continue;
+			uint16 was = t.m_BlipIndex;
+			if (!t.m_bInUse) {
+				t.m_BlipIndex = 0;
+				PS3_Logf("[blip] slot %d: its count %u from the save starts over (handles past 0x7FFF are negative)", i, was);
+				continue;
+			}
+			int32 oldHandle = i | (was << 16);
+			t.m_BlipIndex = 1;
+			int32 newHandle = i | (1 << 16);
+			int n = 0;
+			for (int32 v = 8; v + 4 <= varSpace; v += 4)
+				if (*(int32*)&CTheScripts::ScriptSpace[v] == oldHandle) {
+					*(int32*)&CTheScripts::ScriptSpace[v] = newHandle;
+					n++;
+				}
+			PS3_Logf("[blip] slot %d (in use): its count %u from the save is now 1, %d script variables with its handle changed", i, was, n);
+		}
 	}
 	{
 		// patch 135: a game is saved off a mission, so a blip a mission
