@@ -30,6 +30,7 @@
 #include "Lines.h"
 #include "Messages.h"
 #include "CutsceneMgr.h"
+#include "Darkel.h"
 #include "Pad.h"
 #include "Pickups.h"
 #include "Pools.h"
@@ -1783,6 +1784,32 @@ void CTheScripts::Process()
 	}
 	InTheScripts = false;
 #ifdef __PS3__
+	{
+		// patch 140: the on-a-mission flag at 1 with no mission running: Ren's
+		// 100% save had it so from the start (the rampages hidden from the map,
+		// IsPlayerOnAMission). A mission runs in the mission space (past the
+		// main part); stuntj and bikef, the main script's helpers launched as
+		// missions, run in the main part. 8 s at 1 with none there (no rampage,
+		// cutscene or stadium event either): back to 0.
+		static uint32 ps3FlagSince;
+		int32 *flag = OnAMissionFlag ? (int32*)&ScriptSpace[OnAMissionFlag] : nil;
+		bool missionRuns = false;
+		for (CRunningScript *r = pActiveScripts; r && !missionRuns; r = r->GetNext())
+			if (r->m_nIp >= MainScriptSize)
+				missionRuns = true;
+		uint32 now = CTimer::GetTimeInMilliseconds();
+		if (flag && *flag == 1 && !missionRuns && !CCutsceneMgr::IsRunning() && !CDarkel::FrenzyOnGoing() &&
+		    !bPlayerIsInTheStatium) {
+			if (ps3FlagSince == 0)
+				ps3FlagSince = now;
+			else if (now - ps3FlagSince > 8000) {
+				*flag = 0;
+				ps3FlagSince = 0;
+				PS3_Log("[mission] the on-a-mission flag was 1 for 8 s with no mission running: set back to 0");
+			}
+		} else
+			ps3FlagSince = 0;
+	}
 	PS3_LogMissionLoop();	// patch 134
 	uint64 ps3P2 = PS3_Tb();
 	ps3SegTicks[1] += ps3P2 - ps3P1;

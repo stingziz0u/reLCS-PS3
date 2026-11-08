@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#endif
 
 #include "main.h"
 #include "Draw.h"
@@ -1312,6 +1315,32 @@ CCam::Process_FollowPed(const CVector &CameraTarget, float TargetOrientation, fl
 
 	CVector OrigSource = Source;
 	TheCamera.AvoidTheGeometry(OrigSource, TargetCoors, Source, FOV);
+#ifdef __PS3__
+	// patch 140: [cam] the locked (PS2) camera in interiors (Ren: it goes
+	// mad in the small flats): a frame where the camera jumps more than a
+	// metre, or where AvoidTheGeometry moves it by more than 1.5 m, with
+	// where it wanted to be and where the walls left it; 40 lines in 10 s
+	// at most
+	if(PS3_logsOn && CGame::IsInInterior()){
+		static CVector ps3PrevSource;
+		static uint32 ps3CamWindow, ps3CamLines;
+		uint32 now = CTimer::GetTimeInMilliseconds();
+		if(now - ps3CamWindow > 10000){
+			ps3CamWindow = now;
+			ps3CamLines = 0;
+		}
+		float jump = (Source - ps3PrevSource).Magnitude();
+		float pushed = (Source - OrigSource).Magnitude();
+		if((jump > 1.0f || pushed > 1.5f) && ps3CamLines < 40){
+			ps3CamLines++;
+			PS3_Logf("[cam] interior %d: jumped %.2f m, the walls moved it %.2f m: wanted %.1f %.1f %.1f, now %.1f %.1f %.1f, "
+			         "target %.1f %.1f %.1f, distance %.2f, beta %.2f alpha %.2f, fov %.0f",
+			         CGame::currArea, jump, pushed, OrigSource.x, OrigSource.y, OrigSource.z, Source.x, Source.y, Source.z,
+			         TargetCoors.x, TargetCoors.y, TargetCoors.z, Distance, Beta, Alpha, FOV);
+		}
+		ps3PrevSource = Source;
+	}
+#endif
 	float TargetDist = (TargetCoors - Source).Magnitude();
 	if(TargetDist < Distance)
 		Distance = TargetDist;
