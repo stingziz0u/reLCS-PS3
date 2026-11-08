@@ -906,6 +906,25 @@ PS3_GameMain(void)
 		}
 		PS3_Logf("[5] true colour TXD textures: %s", rw::ps3::txdDirect ? "read straight (notxddirect.txt turns it off)" : "librw's way (notxddirect.txt)");
 	}
+	// patch 151: the overlay materials named in USRDIR/overlaymats.txt
+	{
+		FILE *om = fopen(PS3_USRDIR "/overlaymats.txt", "rb");
+		int n = 0;
+		if (om) {
+			char line[64];
+			while (fgets(line, sizeof(line), om)) {
+				char *e = line + strlen(line);
+				while (e > line && (e[-1] == '\n' || e[-1] == '\r' || e[-1] == ' ' || e[-1] == '\t'))
+					*--e = '\0';
+				if (line[0]) {
+					rw::ps3::addOverlayMaterial(line);
+					n++;
+				}
+			}
+			fclose(om);
+		}
+		PS3_Logf("[5] overlay materials a step in front: grn_window2_16%s (%d more from overlaymats.txt)", n ? " and others" : "", n);
+	}
 	// patch 147: patch 146's depth steps (overlays, LODs), on unless these say
 	{
 		// patch 150: the overlay steps off again (the decals on the ground and

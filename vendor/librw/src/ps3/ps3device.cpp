@@ -324,6 +324,11 @@ struct HwSampler {
 	int32 filter, addrU, addrV;
 	int32 aniso;
 	bool enabled;
+	// patch 151: the words last written to the unit's CONTROL0, FILTER and
+	// WRAP registers (~0: unknown). They're separate RSX registers from the
+	// ones rsxLoadTexture writes, and most textures share them: only those
+	// that change are written
+	uint32 ctlWord, filterWord, wrapWord;
 };
 static HwSampler hwSampler[MAXNUMSTAGES];
 
@@ -672,6 +677,7 @@ resetRenderState(void)
 	for(int i = 0; i < MAXNUMSTAGES; i++){
 		hwSampler[i].raster = (Raster*)~(uintptr)0;
 		hwSampler[i].enabled = true;
+		hwSampler[i].ctlWord = hwSampler[i].filterWord = hwSampler[i].wrapWord = ~0u;
 	}
 	constValid = 0;
 	curVP = curFP = -1;
@@ -986,6 +992,7 @@ applySamplers(int32 numSamplers)
 				rsxTextureControl(ctx, i, GCM_FALSE, 0, 0, 0);
 				h.enabled = false;
 				h.raster = (Raster*)~(uintptr)0;
+				h.ctlWord = ~0u;
 			}
 			continue;
 		}
@@ -1026,12 +1033,49 @@ applySamplers(int32 numSamplers)
 		}
 		rsxLoadTexture(ctx, i, &tex);
 		// maxlod is 4.8 fixed point
-		rsxTextureControl(ctx, i, GCM_TRUE, 0, (levels-1) << 8, gcmAniso(aniso));
-		rsxTextureFilter(ctx, i, 0, minFilter(filter, levels), magFilter(filter),
-		                 GCM_TEXTURE_CONVOLUTION_QUINCUNX);
-		rsxTextureWrapMode(ctx, i, wrapMode(addrU, swizzled), wrapMode(addrV, swizzled),
-		                   GCM_TEXTURE_CLAMP_TO_EDGE, GCM_TEXTURE_UNSIGNED_REMAP_NORMAL,
-		                   GCM_TEXTURE_ZFUNC_NEVER, 0);
+		{
+			uint8 an = gcmAniso(aniso), mn = minFilter(filter, levels), mg = magFilter(filter);
+			uint8 ws = wrapMode(addrU, swizzled), wt = wrapMode(addrV, swizzled);
+			uint32 ctlW = (uint32)((levels-1) << 8) | (uint32)an << 24 | 1;
+			uint32 filW = (uint32)mn | (uint32)mg << 8;
+			uint32 wrpW = (uint32)ws | (uint32)wt << 8;
+			if(ctlW != h.ctlWord){
+				rsxTextureControl(ctx, i, GCM_TRUE, 0, (levels-1) << 8, an);
+				h.ctlWord = ctlW;
+			}else if(rsceneOn)
+				rscene.sampRegsSkipped++;
+			if(filW != h.filterWord){
+				rsxTextureFilter(ctx, i, 0, mn, mg, GCM_TEXTURE_CONVOLUTION_QUINCUNX);
+				h.filterWord = filW;
+			}else if(rsceneOn)
+				rscene.sampRegsSkipped++;
+			if(wrpW != h.wrapWord){
+				rsxTextureWrapMode(ctx, i, ws, wt,
+				                   GCM_TEXTURE_CLAMP_TO_EDGE, GCM_TEXTURE_UNSIGNED_REMAP_NORMAL,
+				                   GCM_TEXTURE_ZFUNC_NEVER, 0);
+				h.wrapWord = wrpW;
+			}else if(rsceneOn)
+				rscene.sampRegsSkipped++;
+		}
+		// patch 151: how many different textures a frame binds (what sorting
+		// the draws by texture could save)
+		if(rsceneOn){
+			rscene.texBinds++;
+			static Raster *seen[2048];
+			static uint32 seenFrame[2048];
+			uint32 slot = ((uint32)(uintptr)raster >> 4) * 2654435761u >> 21;
+			for(int32 p = 0; p < 2048; p++){
+				uint32 s2 = (slot + p) & 2047;
+				if(seenFrame[s2] != rsceneFrame){
+					seenFrame[s2] = rsceneFrame;
+					seen[s2] = raster;
+					rscene.texDistinct++;
+					break;
+				}
+				if(seen[s2] == raster)
+					break;
+			}
+		}
 		h.enabled = true;
 		h.raster = raster;
 		h.offset = tex.offset;
@@ -1539,6 +1583,7 @@ forgetHardwareState(void)
 	for(int i = 0; i < MAXNUMSTAGES; i++){
 		hwSampler[i].raster = (Raster*)~(uintptr)0;
 		hwSampler[i].enabled = true;
+		hwSampler[i].ctlWord = hwSampler[i].filterWord = hwSampler[i].wrapWord = ~0u;
 	}
 	constValid = 0;
 	curVP = curFP = -1;

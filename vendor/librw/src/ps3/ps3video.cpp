@@ -559,6 +559,7 @@ logStats(void)
 		if(dt > 50000) verySlowFrames++;
 	}
 	lastPresentUs = now;
+	rsceneFrame++;	// patch 151
 	if(statStart == 0){
 		statStart = now;
 		return;
@@ -610,6 +611,9 @@ logStats(void)
 		       "constants uploaded %.2f (%u registers a frame)",
 		       r.flushes/n, r.invalidates/n, r.tb[RS_F_INVALIDATE]*k, r.tb[RS_F_STATES]*k, r.tb[RS_F_SAMPLERS]*k,
 		       r.tb[RS_F_PROGRAMS]*k, r.tb[RS_F_DERIVED]*k, r.tb[RS_F_UPLOAD]*k, drawStats.constUploads/n);
+		rsxLog("[rscene]   textures: %u bound a frame, %u different ones (sorted by texture, about that many binds); "
+		       "%u sampler register writes left out (unchanged)",
+		       r.texBinds/n, r.texDistinct/n, r.sampRegsSkipped/n);	// patch 151
 		memset(&rscene, 0, sizeof(rscene));
 		gPS3RSceneTb = gPS3REffectsTb = 0;
 	}

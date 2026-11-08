@@ -3429,18 +3429,23 @@ CRenderer::ConstructRenderList(void)
 {
 #ifdef __PS3__
 	PS3_InspFrame();	// patch 143
-#endif
+	// patch 151: CnstrRenderList by part ("[prof] scene")
+	PS3_PROF_CALL(PS3_PROF_SCENE, "cnstr: occluders (ProcessBeforeRendering)", COcclusion::ProcessBeforeRendering());
+#else
 	COcclusion::ProcessBeforeRendering();
+#endif
 	ms_vecCameraPosition = TheCamera.GetPosition();
 
 	// unused
 	TestCloseThings = 0;
 	TestBigThings = 0;
 
-	ScanWorld();
 #ifdef __PS3__
+	PS3_PROF_CALL(PS3_PROF_SCENE, "cnstr: ScanWorld (all of it)", ScanWorld());
 	if(ps3InspState == 2)
 		PS3_InspLists(ms_aVisibleEntityPtrs, ms_nNoOfVisibleEntities, ms_aInVisibleEntityPtrs, ms_nNoOfInVisibleEntities);
+#else
+	ScanWorld();
 #endif
 
 	// LCS: mobile has a bunch of code after this,
@@ -3573,7 +3578,7 @@ CRenderer::ScanWorld(void)
 				poly[1].y = CWorld::GetSectorY(vectors[CORNER_PRIO_LEFT].y);
 				poly[2].x = CWorld::GetSectorX(vectors[CORNER_PRIO_RIGHT].x);
 				poly[2].y = CWorld::GetSectorY(vectors[CORNER_PRIO_RIGHT].y);
-				ScanSectorPoly(poly, 3, ScanSectorList_Priority);
+				PS3_PROF_CALL(PS3_PROF_SCENE, "cnstr:   sector scan, priority", ScanSectorPoly(poly, 3, ScanSectorList_Priority));
 
 				// below LOD
 				poly[0].x = CWorld::GetSectorX(vectors[CORNER_CAM].x);
@@ -3582,7 +3587,7 @@ CRenderer::ScanWorld(void)
 				poly[1].y = CWorld::GetSectorY(vectors[CORNER_LOD_LEFT].y);
 				poly[2].x = CWorld::GetSectorX(vectors[CORNER_LOD_RIGHT].x);
 				poly[2].y = CWorld::GetSectorY(vectors[CORNER_LOD_RIGHT].y);
-				ScanSectorPoly(poly, 3, ScanSectorList);
+				PS3_PROF_CALL(PS3_PROF_SCENE, "cnstr:   sector scan, below the LOD distance", ScanSectorPoly(poly, 3, ScanSectorList));
 			}else{
 				poly[0].x = CWorld::GetSectorX(vectors[CORNER_CAM].x);
 				poly[0].y = CWorld::GetSectorY(vectors[CORNER_CAM].y);
@@ -3590,7 +3595,7 @@ CRenderer::ScanWorld(void)
 				poly[1].y = CWorld::GetSectorY(vectors[CORNER_FAR_TOPLEFT].y);
 				poly[2].x = CWorld::GetSectorX(vectors[CORNER_FAR_TOPRIGHT].x);
 				poly[2].y = CWorld::GetSectorY(vectors[CORNER_FAR_TOPRIGHT].y);
-				ScanSectorPoly(poly, 3, ScanSectorList);
+				PS3_PROF_CALL(PS3_PROF_SCENE, "cnstr:   sector scan, the whole view", ScanSectorPoly(poly, 3, ScanSectorList));
 			}
 
 #ifndef GTA_WORLDSTREAM
@@ -3605,9 +3610,9 @@ CRenderer::ScanWorld(void)
 #ifdef FIX_BUGS
 			if(CCollision::ms_collisionInMemory != LEVEL_GENERIC)
 #endif
-				ScanBigBuildingList(CWorld::GetBigBuildingList(CGame::currLevel));
+				PS3_PROF_CALL(PS3_PROF_SCENE, "cnstr:   big building lists", ScanBigBuildingList(CWorld::GetBigBuildingList(CGame::currLevel)));
 			}
-			ScanBigBuildingList(CWorld::GetBigBuildingList(LEVEL_GENERIC));
+			PS3_PROF_CALL(PS3_PROF_SCENE, "cnstr:   big building lists", ScanBigBuildingList(CWorld::GetBigBuildingList(LEVEL_GENERIC)));
 #endif
 		}
 	}

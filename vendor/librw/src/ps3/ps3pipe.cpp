@@ -393,6 +393,7 @@ render(rw::ObjPipeline *rwpipe, Atomic *atomic)
 }
 
 RSceneStats rscene;	// patch 132
+uint32 rsceneFrame = 1;	// patch 151
 bool rsceneOn;
 }
 }
@@ -716,6 +717,41 @@ diffCheckMaterial(Material *m)
 bool forceNoCull;
 bool decalLod;	// patch 146
 bool decalStepOk;	// patch 149
+// patch 151: the materials drawn a step in front of their wall, by texture
+// name: the overlay that fought with the rest of its building (Ren found
+// skyscrapenew's grn_window2_16 with the free camera). The steps for every
+// overlay (patches 146-149) moved the ground decals and light cones too.
+// USRDIR/overlaymats.txt adds names, one a line.
+static char overlayMatNames[32][32] = { "grn_window2_16" };
+static int32 numOverlayMats = 1;
+void
+addOverlayMaterial(const char *name)
+{
+	if(numOverlayMats < 32 && name && name[0]){
+		strncpy(overlayMatNames[numOverlayMats], name, 31);
+		overlayMatNames[numOverlayMats][31] = '\0';
+		numOverlayMats++;
+	}
+}
+static bool
+isOverlayMaterial(Material *m)
+{
+	if(m == nil || m->texture == nil)
+		return false;
+	// the texture pointers already looked at (a direct mapped cache)
+	static Texture *seenTex[512];
+	static uint8 seenAns[512];
+	uint32 slot = ((uint32)(uintptr)m->texture >> 4) * 2654435761u >> 23;
+	if(seenTex[slot] == m->texture)
+		return seenAns[slot] != 0;
+	bool yes = false;
+	for(int32 i = 0; i < numOverlayMats && !yes; i++)
+		if(strncasecmp(m->texture->name, overlayMatNames[i], 32) == 0)
+			yes = true;
+	seenTex[slot] = m->texture;
+	seenAns[slot] = yes;
+	return yes;
+}
 bool overlayStep = false, lodBehind = true;	// patch 147; patch 150: the overlay steps off again (the ground decals and light cones slid)
 bool decalBuilding;	// patch 96: a building is being drawn (mode 6 hides its meshes after the first)
 bool decalRoad;	// patch 95: a road is being drawn: its meshes after the first with an alpha texture (dirt, shadows) are overlays
@@ -826,9 +862,15 @@ drawInst(InstanceDataHeader *header, InstanceData *inst)
 	bool step = (overlayStep != (decalMode == 21)) && decalBuilding && decalStepOk && inst != header->inst &&
 	            rw::GetRenderState(rw::ZWRITEENABLE) && rw::GetRenderState(rw::DESTBLEND) != rw::BLENDONE &&
 	            !rw::GetRenderState(rw::VERTEXALPHA);
+	// patch 151: the named overlays a step in front, whatever mesh they are
+	bool named = !step && decalBuilding && isOverlayMaterial(inst->material);
 	bool back = (lodBehind != (decalMode == 22)) && decalLod;
-	if((step || back) && rsxCtx){
+	if((step || back || named) && rsxCtx){
 		float factor = 0.0f, units = 0.0f;
+		if(named){
+			factor -= 1.0f;
+			units -= 32.0f;
+		}
 		if(step){
 			int32 k = (int32)(inst - header->inst);
 			factor -= 0.5f * (k < 8 ? k : 8);

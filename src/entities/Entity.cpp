@@ -614,13 +614,23 @@ PS3_RenderSphere(CEntity *e, CVector *centre, float *radius)
 	if(mi->m_ps3RenderRadius <= 0.0f)
 		return false;
 	CColModel *col = bmi->GetColModel();
-	CVector rc = e->GetMatrix() * mi->m_ps3RenderCentre;
-	if(col){
-		CVector cc = e->GetBoundCentre();
-		float cr = col->boundingSphere.radius;
-		if((rc - cc).Magnitude() + mi->m_ps3RenderRadius <= cr + 0.25f)
-			return false;	// inside its collision sphere: as the game
+	// patch 151: whether the drawn sphere is inside the collision one is the
+	// model's (both are in its own space; the buildings aren't scaled): worked
+	// out once, not with two matrix products and a square root a call (the
+	// sector scan asks for every building it looks at)
+	static uint8 inside[MODELINFOSIZE];	// 0 not known, 1 inside, 2 outside
+	int32 mid = e->GetModelIndex();
+	if(mid >= 0 && mid < MODELINFOSIZE && inside[mid] == 0){
+		bool in = false;
+		if(col){
+			CVector d = mi->m_ps3RenderCentre - CVector(col->boundingSphere.center);
+			in = d.Magnitude() + mi->m_ps3RenderRadius <= col->boundingSphere.radius + 0.25f;
+		}
+		inside[mid] = in ? 1 : 2;
 	}
+	if(mid >= 0 && mid < MODELINFOSIZE && inside[mid] == 1)
+		return false;	// inside its collision sphere: as the game
+	CVector rc = e->GetMatrix() * mi->m_ps3RenderCentre;
 	static uint8 logged[MODELINFOSIZE];
 	static int32 numLogged;
 	int32 id = e->GetModelIndex();
