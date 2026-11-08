@@ -191,7 +191,17 @@ CCam::Process(void)
 		else
 #endif
 #ifdef FREE_CAM
+#ifdef __PS3__
+			// patch 142: in an interior the free camera's way even when it's
+			// off. The locked (PS2) camera's AvoidTheGeometry, made for the
+			// streets, can't settle in a small flat: pulled to 0.5 m, out
+			// again, into the walls (Ren's video of Toni's flat, patch 141's
+			// fix wasn't enough); the free one drags behind the player and
+			// stops in front of walls, and it's fine there (Ren).
+			if(CCamera::bFreeCam || CGame::IsInInterior())
+#else
 			if(CCamera::bFreeCam)
+#endif
 				Process_FollowPed_Rotation(CameraTarget, TargetOrientation, SpeedVar, TargetSpeedVar);
 			else
 #endif
