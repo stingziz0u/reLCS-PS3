@@ -39,6 +39,7 @@ class CPtrList;
 class CRenderer
 {
 #ifdef __PS3__
+	friend void PS3_InspDump(void);
 #endif
 	static int32 ms_nNoOfVisibleEntities;
 	static CEntity *ms_aVisibleEntityPtrs[NUMVISIBLEENTITIES];

@@ -493,6 +493,8 @@ CEntity::Render(void)
 				extern void PS3_DiffDrawn(CEntity *e);
 				PS3_DiffDrawn(this);
 			}
+			extern void PS3_InspDrawn(CEntity *e);	// patch 143: the inspector
+			PS3_InspDrawn(this);
 			extern int gPS3WatchNum;	// patch 116: test mode 16, the models around the cross
 			if(gPS3WatchNum){
 				extern void PS3_WatchDrawn(CEntity *e);

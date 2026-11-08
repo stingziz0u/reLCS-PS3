@@ -2545,6 +2545,223 @@ CRenderer::RenderCollisionLines(void)
 #define OTHERUNAVAILABLE (other != -1 && CModelInfo::GetModelInfo(other)->GetRwObject() == nil)
 #define CANTIMECULL (!OTHERUNAVAILABLE)
 
+// ---- patch 143: the visibility inspector (L3 + R3, with the log) ------------------
+// One frame of the world's choice of what to draw, recorded: every
+// SetupEntityVisibility / SetupBigBuildingVisibility answer (which return,
+// by its line here), the render lists, what CEntity::Render drew. The frame
+// after, [insp] lists the models along the line of sight (the screen's
+// centre; the free camera's in test mode 16), nearest first, each with: LOD
+// or detailed and its pair, loaded, area and level, draw distance, the
+// IDE's flags and hours, the answer and its line, the lists it went in,
+// drawn or not; and the answers within 80 m counted by line. Ren: Toshiko's
+// flat in its cutscene, graffiti, the blue tents, the subway, Phil's
+// Ammu-Nation, the windows: what hid each one.
+#include "CutsceneMgr.h"
+#include "Game.h"
+#include "TimeModelInfo.h"
+static int ps3InspState;	// 0 off, 2 this frame is recorded
+static uint32 ps3InspPrev;
+struct PS3InspRec { CEntity *e; int16 vis; int16 line; };
+#define PS3_INSP_MAX 16384
+static PS3InspRec ps3InspRecs[PS3_INSP_MAX];
+static int ps3InspN;
+static CEntity *ps3InspDrawn[8192];
+static int ps3InspNDrawn;
+static CVector ps3InspPos, ps3InspFwd;
+
+static int32
+PS3_InspVis(CEntity *ent, int32 v, int line)
+{
+	if(ps3InspState == 2 && ps3InspN < PS3_INSP_MAX){
+		ps3InspRecs[ps3InspN].e = ent;
+		ps3InspRecs[ps3InspN].vis = v;
+		ps3InspRecs[ps3InspN].line = line;
+		ps3InspN++;
+	}
+	return v;
+}
+
+void
+PS3_InspDrawn(CEntity *e)	// CEntity::Render
+{
+	if(ps3InspState == 2 && ps3InspNDrawn < (int)ARRAY_SIZE(ps3InspDrawn))
+		ps3InspDrawn[ps3InspNDrawn++] = e;
+}
+
+static const char*
+PS3_VisName(int v)
+{
+	switch(v){
+	case 0: return "INVISIBLE";
+	case 1: return "VISIBLE";
+	case 2: return "OFFSCREEN";
+	case 3: return "STREAMME";
+	case 4: return "CULLED";
+	default: return "?";
+	}
+}
+
+struct PS3InspHit { CEntity *e; float t; };
+
+static void
+PS3_InspAddPool(PS3InspHit *hits, int &n, int max, CEntity *e)
+{
+	if(e == nil || n >= max)
+		return;
+	CVector c = e->GetBoundCentre();
+	float r = e->GetBoundRadius();
+	CVector oc = c - ps3InspPos;
+	float t = DotProduct(oc, ps3InspFwd);
+	if(t < -r || t > 400.0f)
+		return;
+	CVector p = ps3InspPos + ps3InspFwd*t;
+	if((c - p).MagnitudeSqr() > r*r)
+		return;
+	hits[n].e = e;
+	hits[n].t = Max(t - r, 0.0f);
+	n++;
+}
+
+void
+PS3_InspDump(void)
+{
+	static PS3InspHit hits[512];
+	int n = 0;
+	for(int i = 0; i < CPools::GetBuildingPool()->GetSize(); i++)
+		PS3_InspAddPool(hits, n, 512, CPools::GetBuildingPool()->GetSlot(i));
+	for(int i = 0; i < CPools::GetTreadablePool()->GetSize(); i++)
+		PS3_InspAddPool(hits, n, 512, CPools::GetTreadablePool()->GetSlot(i));
+	for(int i = 0; i < CPools::GetObjectPool()->GetSize(); i++)
+		PS3_InspAddPool(hits, n, 512, CPools::GetObjectPool()->GetSlot(i));
+	for(int i = 0; i < CPools::GetDummyPool()->GetSize(); i++)
+		PS3_InspAddPool(hits, n, 512, CPools::GetDummyPool()->GetSlot(i));
+	for(int a = 1; a < n; a++){	// nearest first
+		PS3InspHit h = hits[a];
+		int b = a - 1;
+		for(; b >= 0 && hits[b].t > h.t; b--)
+			hits[b+1] = hits[b];
+		hits[b+1] = h;
+	}
+	PS3_Logf("[insp] camera at %.1f %.1f %.1f, the line of sight from %.1f %.1f %.1f towards %.2f %.2f %.2f%s; area %d, level %d, %02d:%02d, %s; "
+	         "LOD x%.2f (draw distance %.2f), near clip %.2f, far clip %.0f, fog from %.0f; this frame %d answers, lists: visible %d, invisible %d; drawn %d",
+	         TheCamera.GetPosition().x, TheCamera.GetPosition().y, TheCamera.GetPosition().z,
+	         ps3InspPos.x, ps3InspPos.y, ps3InspPos.z, ps3InspFwd.x, ps3InspFwd.y, ps3InspFwd.z,
+	         PS3_FreeCamActive() ? " (the free camera's; the choice is Toni's camera's)" : "",
+	         CGame::currArea, (int)CGame::currLevel, CClock::GetHours(), CClock::GetMinutes(),
+	         CCutsceneMgr::IsRunning() ? "in a cutscene" : "no cutscene",
+	         TheCamera.LODDistMultiplier, CRenderer::ms_lodDistScale,
+	         TheCamera.m_pRwCamera ? RwCameraGetNearClipPlane(TheCamera.m_pRwCamera) : 0.0f,
+	         TheCamera.m_pRwCamera ? RwCameraGetFarClipPlane(TheCamera.m_pRwCamera) : 0.0f, CTimeCycle::GetFogStart(),
+	         ps3InspN, CRenderer::ms_nNoOfVisibleEntities, CRenderer::ms_nNoOfInVisibleEntities,
+	         ps3InspNDrawn);
+	PS3_Logf("[insp] %d models along it (bounding spheres it goes through), nearest first:", n);
+	for(int k = 0; k < n && k < 60; k++){
+		CEntity *e = hits[k].e;
+		CBaseModelInfo *bmi = CModelInfo::GetModelInfo(e->GetModelIndex());
+		CSimpleModelInfo *mi = bmi && (bmi->GetModelType() == MITYPE_SIMPLE || bmi->GetModelType() == MITYPE_TIME) ? (CSimpleModelInfo*)bmi : nil;
+		const char *answer = "not scanned";
+		int line = 0;
+		char ans[48];
+		for(int i = ps3InspN - 1; i >= 0; i--)
+			if(ps3InspRecs[i].e == e){
+				snprintf(ans, sizeof(ans), "%s (line %d)", PS3_VisName(ps3InspRecs[i].vis), ps3InspRecs[i].line);
+				answer = ans;
+				line = ps3InspRecs[i].line;
+				break;
+			}
+		(void)line;
+		bool inV = false, inI = false, inB = false, drawn = false;
+		for(int i = 0; i < CRenderer::ms_nNoOfVisibleEntities && !inV; i++) inV = CRenderer::ms_aVisibleEntityPtrs[i] == e;
+		for(int i = 0; i < CRenderer::ms_nNoOfInVisibleEntities && !inI; i++) inI = CRenderer::ms_aInVisibleEntityPtrs[i] == e;
+		for(int i = 0; i < ps3InspNDrawn && !drawn; i++) drawn = ps3InspDrawn[i] == e;
+		char flags[96] = "";
+		char times[24] = "";
+		float lodDist = 0.0f;
+		const char *related = "-";
+		if(mi){
+			snprintf(flags, sizeof(flags), "%s%s%s%s%s%s%s%s",
+			         mi->m_drawLast ? " drawLast" : "", mi->m_noZwrite ? " noZwrite" : "", mi->m_additive ? " additive" : "",
+			         mi->m_ignoreLight ? " ignoreLight" : "", mi->m_noFade ? " noFade" : "", mi->m_isSubway ? " subway" : "",
+			         mi->m_ignoreDrawDist ? " ignoreDrawDist" : "", mi->m_isCodeGlass || mi->m_isArtistGlass ? " glass" : "");
+			lodDist = mi->GetLargestLodDistance();
+			if(mi->m_relatedModel)
+				related = mi->m_relatedModel->GetModelName();
+			if(bmi->GetModelType() == MITYPE_TIME){
+				CTimeModelInfo *ti = (CTimeModelInfo*)bmi;
+				snprintf(times, sizeof(times), " hours %d-%d (%s)", ti->GetTimeOn(), ti->GetTimeOff(),
+				         CClock::GetIsTimeInRange(ti->GetTimeOn(), ti->GetTimeOff()) ? "on" : "off");
+			}
+		}
+		CVector c = e->GetBoundCentre();
+		PS3_Logf("[insp] %5.1f m: %d %s, %s%s, %s, area %d level %d, %.0f m from the camera, draw distance %.0f%s%s; %s; lists%s%s%s%s; %s; pair %s",
+		         hits[k].t, e->GetModelIndex(), bmi ? bmi->GetModelName() : "?",
+		         e->IsBuilding() ? (e->bIsBIGBuilding ? "LOD" : "building") : e->IsObject() ? "object" : e->IsDummy() ? "dummy" : "other",
+		         e->bIsVisible ? "" : " (not visible)", e->m_rwObject ? "loaded" : "NOT LOADED",
+		         e->m_area, e->m_level, (c - TheCamera.GetPosition()).Magnitude() - e->GetBoundRadius(), lodDist,
+		         flags, times, answer, inV ? " visible" : "", inI ? " invisible" : "", inB ? " buildings" : "",
+		         !inV && !inI && !inB ? " none" : "", drawn ? "DRAWN" : "not drawn", related);
+	}
+	// the answers within 80 m, by line
+	struct Cnt { int line, vis, n; } cnt[128];
+	int nc = 0;
+	for(int i = 0; i < ps3InspN; i++){
+		CEntity *e = ps3InspRecs[i].e;
+		if((e->GetBoundCentre() - TheCamera.GetPosition()).Magnitude() - e->GetBoundRadius() > 80.0f)
+			continue;
+		int j;
+		for(j = 0; j < nc; j++)
+			if(cnt[j].line == ps3InspRecs[i].line)
+				break;
+		if(j == nc){
+			if(nc == 128)
+				continue;
+			cnt[nc].line = ps3InspRecs[i].line;
+			cnt[nc].vis = ps3InspRecs[i].vis;
+			cnt[nc].n = 0;
+			nc++;
+		}
+		cnt[j].n++;
+	}
+	char buf[600];
+	int len = snprintf(buf, sizeof(buf), "[insp] the answers within 80 m (line = n):");
+	for(int j = 0; j < nc && len < (int)sizeof(buf) - 40; j++)
+		len += snprintf(buf + len, sizeof(buf) - len, " %s@%d=%d", PS3_VisName(cnt[j].vis), cnt[j].line, cnt[j].n);
+	PS3_Log(buf);
+}
+
+// ConstructRenderList: the frame after a recorded one, the dump; L3 + R3 pressed, this one recorded
+static void
+PS3_InspFrame(void)
+{
+	if(ps3InspState == 2){
+		PS3_InspDump();
+		ps3InspState = 0;
+	}
+	if(!PS3_logsOn)
+		return;
+#define PS3B(b) (1u << (b))
+	unsigned m = PS3_PadButtons();
+	unsigned both = PS3B(GLFW_GAMEPAD_BUTTON_LEFT_THUMB) | PS3B(GLFW_GAMEPAD_BUTTON_RIGHT_THUMB);
+	bool pressed = (m & both) == both && (ps3InspPrev & both) != both;
+	ps3InspPrev = m;
+#undef PS3B
+	if(!pressed)
+		return;
+	ps3InspState = 2;
+	ps3InspN = 0;
+	ps3InspNDrawn = 0;
+	if(PS3_FreeCamActive()){
+		ps3InspPos = ps3FreePos;
+		ps3InspFwd = PS3_FreeForward();
+	}else{
+		ps3InspPos = TheCamera.GetPosition();
+		ps3InspFwd = TheCamera.GetForward();
+	}
+	AsciiToUnicode("Inspector: guardado en el log", ps3AimMsg);
+	CHud::SetHelpMessage(ps3AimMsg, true);
+}
+
+
 int32
 CRenderer::SetupEntityVisibility(CEntity *ent)
 {
@@ -2568,7 +2785,7 @@ CRenderer::SetupEntityVisibility(CEntity *ent)
 			// Hide if possible
 			if(CANTIMECULL){
 				ent->DeleteRwObject();
-				return VIS_INVISIBLE;
+				return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 			}
 			// can't cull, so we'll try to draw this one, but don't request
 			// it since what we really want is the other one.
@@ -2591,49 +2808,49 @@ CRenderer::SetupEntityVisibility(CEntity *ent)
 				   TheCamera.m_bInATunnelAndABigVehicle ||
 				   direction == LOOKING_BEHIND && veh->pHandling->Flags & HANDLING_UNKNOWN){
 					ent->bNoBrightHeadLights = true;
-					return VIS_OFFSCREEN;
+					return PS3_InspVis(ent, (VIS_OFFSCREEN), __LINE__);
 				}
 
 				if(direction != LOOKING_BEHIND ||
 				   !veh->IsBoat() || model == MI_REEFER || model == MI_PREDATOR){
 					m_pFirstPersonVehicle = (CVehicle*)ent;
 					ent->bNoBrightHeadLights = false;
-					return VIS_OFFSCREEN;
+					return PS3_InspVis(ent, (VIS_OFFSCREEN), __LINE__);
 				}
 			}
 
 			// All sorts of Clumps
 			if(ent->m_rwObject == nil || !ent->bIsVisible)
-				return VIS_INVISIBLE;
+				return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 			if(!ent->GetIsOnScreen() || ent->IsEntityOccluded())
-				return VIS_OFFSCREEN;
+				return PS3_InspVis(ent, (VIS_OFFSCREEN), __LINE__);
 			if(ent->bDrawLast){
 				dist = (ent->GetPosition() - ms_vecCameraPosition).Magnitude();
 				CVisibilityPlugins::InsertEntityIntoSortedList(ent, dist);
 				ent->bDistanceFade = false;
-				return VIS_INVISIBLE;
+				return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 			}
-			return VIS_VISIBLE;
+			return PS3_InspVis(ent, (VIS_VISIBLE), __LINE__);
 		}
 		if(ent->bDontStream){
 			if(ent->m_rwObject == nil || !ent->bIsVisible)
-				return VIS_INVISIBLE;
+				return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 			if(!ent->GetIsOnScreen() || ent->IsEntityOccluded())
-				return VIS_OFFSCREEN;
+				return PS3_InspVis(ent, (VIS_OFFSCREEN), __LINE__);
 			if(ent->bDrawLast){
 				dist = (ent->GetPosition() - ms_vecCameraPosition).Magnitude();
 				CVisibilityPlugins::InsertEntityIntoSortedList(ent, dist);
 				ent->bDistanceFade = false;
-				return VIS_INVISIBLE;
+				return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 			}
-			return VIS_VISIBLE;
+			return PS3_InspVis(ent, (VIS_VISIBLE), __LINE__);
 		}
 	}
 
 	// Simple ModelInfo
 
 	if(!IsAreaVisible(ent->m_area))
-		return VIS_INVISIBLE;
+		return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 
 	dist = (ent->GetPosition() - ms_vecCameraPosition).Magnitude();
 
@@ -2671,7 +2888,7 @@ CRenderer::SetupEntityVisibility(CEntity *ent)
 			RpAtomicSetGeometry(rwobj, RpAtomicGetGeometry(a), rpATOMICSAMEBOUNDINGSPHERE); // originally 5 (mistake?)
 		mi->IncreaseAlpha();
 		if(ent->m_rwObject == nil || !ent->bIsVisible)
-			return VIS_INVISIBLE;
+			return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 
 #ifdef __PS3__
 		if(!ent->GetIsOnScreen() || ent->IsEntityOccluded()){
@@ -2680,14 +2897,14 @@ CRenderer::SetupEntityVisibility(CEntity *ent)
 		if(!ent->GetIsOnScreen() || ent->IsEntityOccluded()){
 #endif
 			mi->m_alpha = 255;
-			return VIS_OFFSCREEN;
+			return PS3_InspVis(ent, (VIS_OFFSCREEN), __LINE__);
 		}
 
 		if(mi->m_alpha != 255){
 			CVisibilityPlugins::InsertEntityIntoSortedList(ent, dist);
 			ent->bDistanceFade = true;
 			PS3_HI(PS3HI_FADING);
-			return VIS_INVISIBLE;
+			return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 		}
 #ifdef __PS3__
 		// patch 28: drawn from here on (opaque, or in the sorted list)
@@ -2713,10 +2930,10 @@ CRenderer::SetupEntityVisibility(CEntity *ent)
 #endif
 			if(CVisibilityPlugins::InsertEntityIntoSortedList(ent, dist)){
 				ent->bDistanceFade = false;
-				return VIS_INVISIBLE;
+				return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 			}
 		}
-		return VIS_VISIBLE;
+		return PS3_InspVis(ent, (VIS_VISIBLE), __LINE__);
 	}
 #ifdef __PS3__
 	PS3_HI(PS3HI_NOTLOADED);
@@ -2728,8 +2945,8 @@ CRenderer::SetupEntityVisibility(CEntity *ent)
 		mi->m_isDamaged = false;
 		// request model
 		if(dist - STREAM_DISTANCE < mi->GetLargestLodDistance() && request)
-			return VIS_STREAMME;
-		return VIS_INVISIBLE;
+			return PS3_InspVis(ent, (VIS_STREAMME), __LINE__);
+		return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 	}
 
 	// We might be fading
@@ -2739,8 +2956,8 @@ CRenderer::SetupEntityVisibility(CEntity *ent)
 	if(a == nil){
 		// request model
 		if(dist - FADE_DISTANCE - STREAM_DISTANCE < mi->GetLargestLodDistance() && request)
-			return VIS_STREAMME;
-		return VIS_INVISIBLE;
+			return PS3_InspVis(ent, (VIS_STREAMME), __LINE__);
+		return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 	}
 
 	if(ent->m_rwObject == nil)
@@ -2751,15 +2968,15 @@ CRenderer::SetupEntityVisibility(CEntity *ent)
 		RpAtomicSetGeometry(rwobj, RpAtomicGetGeometry(a), rpATOMICSAMEBOUNDINGSPHERE); // originally 5 (mistake?)
 	mi->IncreaseAlpha();
 	if(ent->m_rwObject == nil || !ent->bIsVisible)
-		return VIS_INVISIBLE;
+		return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 
 	if(!ent->GetIsOnScreen() || ent->IsEntityOccluded()){
 		mi->m_alpha = 255;
-		return VIS_OFFSCREEN;
+		return PS3_InspVis(ent, (VIS_OFFSCREEN), __LINE__);
 	}else{
 		CVisibilityPlugins::InsertEntityIntoSortedList(ent, dist);
 		ent->bDistanceFade = true;
-		return VIS_OFFSCREEN;	// Why this?
+		return PS3_InspVis(ent, (VIS_OFFSCREEN), __LINE__);	// Why this?
 	}
 }
 
@@ -2823,14 +3040,14 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 
 	if(!IsAreaVisible(ent->m_area)){
 		PS3_BB(PS3BB_AREA);
-		return VIS_INVISIBLE;
+		return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 	}
 #ifdef __PS3__
 	// patch 126: test mode 18, no LOD (big building) drawn at all: holes where
 	// nothing detailed is, the far city gone. Does the road wedge go with them?
 	if(PS3_logsOn && rw::ps3::decalMode == 18){
 		PS3_BB(PS3BB_HIDDEN);
-		return VIS_INVISIBLE;
+		return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 	}
 #endif
 
@@ -2847,7 +3064,7 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 			if(CANTIMECULL){
 				ent->DeleteRwObject();
 				PS3_BB(PS3BB_TIME);
-				return VIS_INVISIBLE;
+				return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 			}
 			// can't cull, so we'll try to draw this one, but don't request
 			// it since what we really want is the other one.
@@ -2862,9 +3079,9 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 		// game thread (patch 22-24 logs). As InsertEntityIntoList: no model,
 		// nothing to draw.
 		PS3_BB(PS3BB_PLANE);
-		return ent->IsVisible() && ent->m_rwObject ? VIS_VISIBLE : VIS_INVISIBLE;
+		return PS3_InspVis(ent, (ent->IsVisible() && ent->m_rwObject ? VIS_VISIBLE : VIS_INVISIBLE), __LINE__);
 #else
-		return ent->IsVisible() ? VIS_VISIBLE : VIS_INVISIBLE;
+		return PS3_InspVis(ent, (ent->IsVisible() ? VIS_VISIBLE : VIS_INVISIBLE), __LINE__);
 #endif
 	}
 
@@ -2903,19 +3120,19 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 		// patch 28: and the detailed instance at this place was drawn
 		if(nonLOD == nil){
 			PS3_BB(PS3BB_HIGH_DRAWN);
-			return VIS_INVISIBLE;
+			return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 		}
 		if(nonLOD->GetRwObject() && nonLOD->m_alpha == 255){
 			if(PS3_LodMayHide(ent)){
 				PS3_BB(PS3BB_HIGH_DRAWN);
-				return VIS_INVISIBLE;
+				return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 			}
 			PS3_BB(PS3BB_KEPT);
 		}
 #else
 		if(nonLOD == nil ||
 		   nonLOD->GetRwObject() && nonLOD->m_alpha == 255)
-			return VIS_INVISIBLE;
+			return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 #endif
 
 		// But if it is a time object, we'd rather draw the wrong
@@ -2924,7 +3141,7 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 			ti = (CTimeModelInfo*)nonLOD;
 			other = ti->GetOtherTimeModel();
 			if(other != -1 && CModelInfo::GetModelInfo(other)->GetRwObject())
-				return VIS_INVISIBLE;
+				return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 		}
 	}
 
@@ -2933,7 +3150,7 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 	// patch 96: test mode 7, no LOD near the camera (holes where one was)
 	if(rw::ps3::decalMode == 7 && dist < 100.0f){
 		PS3_BB(PS3BB_HIDDEN);
-		return VIS_INVISIBLE;
+		return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 	}
 	// patch 95: the distance the draw distance is compared with (the fog)
 	float lodDist = dist / PS3_LodFogScale(mi);
@@ -2959,7 +3176,7 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 		if(!ent->IsVisible() || !ent->GetIsOnScreenComplex() || ent->IsEntityOccluded()){
 #endif
 			mi->m_alpha = 255;
-			return VIS_INVISIBLE;
+			return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 		}
 
 		if(mi->m_alpha != 255){
@@ -2970,7 +3187,7 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 			if(gPS3DiffOn)
 				PS3_LodWhyLog(ent, mi, nonLOD, dist, ps3Why);	// patch 128
 #endif
-			return VIS_INVISIBLE;
+			return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 		}
 
 #ifdef __PS3__
@@ -2985,7 +3202,7 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 			if(gPS3DiffOn)
 				PS3_LodWhyLog(ent, mi, nonLOD, dist, ps3Why);	// patch 128
 #endif
-			return VIS_INVISIBLE;
+			return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 		}
 		PS3_BB(PS3BB_VISIBLE);
 #ifdef __PS3__
@@ -2993,13 +3210,13 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 		if(gPS3DiffOn)
 			PS3_LodWhyLog(ent, mi, nonLOD, dist, ps3Why);	// patch 128
 #endif
-		return VIS_VISIBLE;
+		return PS3_InspVis(ent, (VIS_VISIBLE), __LINE__);
 	}
 
 	if(mi->m_noFade){
 		ent->DeleteRwObject();
 		PS3_BB(PS3BB_TOOFAR);
-		return VIS_INVISIBLE;
+		return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 	}
 
 
@@ -3008,14 +3225,14 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 	if(a == nil){
 		if(ent->bStreamBIGBuilding && lodDist-STREAM_DISTANCE-FADE_DISTANCE < mi->GetLodDistance(0) && request){
 			PS3_BB(PS3BB_STREAM);
-			return ent->GetIsOnScreen() ? VIS_STREAMME : VIS_INVISIBLE;
+			return PS3_InspVis(ent, (ent->GetIsOnScreen() ? VIS_STREAMME : VIS_INVISIBLE), __LINE__);
 		}else{
 #ifdef __PS3__
 			PS3_FarNoteCut(ent, dist);	// patch 93 (before the RW object goes)
 #endif
 			ent->DeleteRwObject();
 			PS3_BB(PS3BB_TOOFAR);
-			return VIS_INVISIBLE;
+			return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 		}
 	}
 
@@ -3030,17 +3247,20 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 	if(!ent->IsVisible() || !ent->GetIsOnScreenComplex() || ent->IsEntityOccluded()){
 		mi->m_alpha = 255;
 		PS3_BB(PS3BB_OFFSCREEN);
-		return VIS_INVISIBLE;
+		return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 	}
 	CVisibilityPlugins::InsertEntityIntoSortedList(ent, dist);
 	ent->bDistanceFade = true;
 	PS3_BB(PS3BB_FADING);
-	return VIS_INVISIBLE;
+	return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
 }
 
 void
 CRenderer::ConstructRenderList(void)
 {
+#ifdef __PS3__
+	PS3_InspFrame();	// patch 143
+#endif
 	COcclusion::ProcessBeforeRendering();
 	ms_vecCameraPosition = TheCamera.GetPosition();
 
