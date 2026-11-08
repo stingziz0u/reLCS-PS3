@@ -209,6 +209,7 @@ extern bool diffOn;	// patch 123: test mode 17, materials drawn without texture 
 extern void (*diffMatHook)(Material *m, int why);	// why 1: no texture, 2: texture not uploaded yet
 extern int32 leedsDebug;	// patch 121: test mode 16, D-pad left: 0 as is, 1 the prelight ignored (flat), 2 the prelight alone
 void leedsDebugLights(void);	// res-PS3 patch 117: test mode 16, D-pad up: no backface culling at all	// res-PS3 patch 114: test mode 15, the mesh under the screen centre hidden
+extern bool overlayStep, lodBehind;	// patch 147: patch 146's modes 21 and 22, on by default
 extern bool decalLod;	// patch 146: a LOD (big building) is being drawn (test mode 22)
 extern bool decalBuilding;	// patch 96: a building is being drawn
 struct DecalStats

@@ -5,6 +5,10 @@
 #include "Camera.h"
 #include "CutsceneMgr.h"
 
+#ifdef __PS3__
+bool gPS3Fov43;	// patch 147: a script camera indoors sees the 4:3 view (Camera.cpp)
+#endif
+
 float CDraw::ms_fAspectRatio = DEFAULT_ASPECT_RATIO;
 #ifdef ASPECT_RATIO_SCALE
 float CDraw::ms_fScaledFOV = 45.0f;
@@ -97,7 +101,12 @@ void
 CDraw::SetFOV(float fov)
 {
 #ifdef ASPECT_RATIO_SCALE
+#ifdef __PS3__
+	extern bool gPS3Fov43;	// patch 147 (Camera.cpp)
+	if (!CCutsceneMgr::IsRunning() && !gPS3Fov43)
+#else
 	if (!CCutsceneMgr::IsRunning())
+#endif
 		ms_fScaledFOV = ConvertFOV(fov);
 	else
 		ms_fScaledFOV = fov;

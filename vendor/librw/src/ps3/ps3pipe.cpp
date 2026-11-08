@@ -715,6 +715,7 @@ diffCheckMaterial(Material *m)
 }
 bool forceNoCull;
 bool decalLod;	// patch 146
+bool overlayStep = true, lodBehind = true;	// patch 147
 bool decalBuilding;	// patch 96: a building is being drawn (mode 6 hides its meshes after the first)
 bool decalRoad;	// patch 95: a road is being drawn: its meshes after the first with an alpha texture (dirt, shadows) are overlays
 DecalStats decalStats;
@@ -805,25 +806,30 @@ drawInst(InstanceDataHeader *header, InstanceData *inst)
 		drawDecal(header, inst, 3);	// hidden
 		return;
 	}
-	// patch 146: test mode 21, a building's meshes after its first each a
-	// step more in front than the one before (the PS2 drew them in order,
-	// the later over the earlier on the same plane: LCS's overlays, the
-	// windows over the walls). Patch 66's bias put all of them at one step,
-	// so two overlays still fought each other.
-	if(decalMode == 21 && decalBuilding && inst != header->inst && rsxCtx){
-		int32 k = (int32)(inst - header->inst);
-		rsxSetPolygonOffset(rsxCtx, -0.5f * (k < 8 ? k : 8), -16.0f * k);
-		rsxSetPolygonOffsetFillEnable(rsxCtx, GCM_TRUE);
-		drawInstImpl(header, inst);
-		rsxSetPolygonOffsetFillEnable(rsxCtx, GCM_FALSE);
-		return;
-	}
-	// patch 146: test mode 22, the LODs pushed a little behind, so that where
-	// a LOD and the detailed models overlap the detailed ones win
-	// (LODcom009, the ground of south west Staunton, drawn over Phil's street
-	// and the skyscraper there with the camera 50 m inside it)
-	if(decalMode == 22 && decalLod && rsxCtx){
-		rsxSetPolygonOffset(rsxCtx, 2.0f, 512.0f);
+	// patch 146: a building's meshes after its first each a step more in
+	// front than the one before (the PS2 drew them in order, the later over
+	// the earlier on the same plane: LCS's overlays, the windows over the
+	// walls; patch 66's bias put all of them at one step, so two overlays
+	// still fought each other), and the LODs a little behind, so that where a
+	// LOD and the detailed models overlap the detailed ones win (LODcom009,
+	// the ground of south west Staunton, drawn with the camera 50 m inside
+	// it). Patch 147: both on (Ren: the skyscraper's windows need the first,
+	// the ruined building and the restaurant by it the second); test mode 21
+	// / 22 turns one off, USRDIR/nooverlaystep.txt / nolodbehind.txt too.
+	bool step = (overlayStep != (decalMode == 21)) && decalBuilding && inst != header->inst;
+	bool back = (lodBehind != (decalMode == 22)) && decalLod;
+	if((step || back) && rsxCtx){
+		float factor = 0.0f, units = 0.0f;
+		if(step){
+			int32 k = (int32)(inst - header->inst);
+			factor -= 0.5f * (k < 8 ? k : 8);
+			units -= 16.0f * k;
+		}
+		if(back){
+			factor += 2.0f;
+			units += 512.0f;
+		}
+		rsxSetPolygonOffset(rsxCtx, factor, units);
 		rsxSetPolygonOffsetFillEnable(rsxCtx, GCM_TRUE);
 		drawInstImpl(header, inst);
 		rsxSetPolygonOffsetFillEnable(rsxCtx, GCM_FALSE);

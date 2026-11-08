@@ -906,6 +906,16 @@ PS3_GameMain(void)
 		}
 		PS3_Logf("[5] true colour TXD textures: %s", rw::ps3::txdDirect ? "read straight (notxddirect.txt turns it off)" : "librw's way (notxddirect.txt)");
 	}
+	// patch 147: patch 146's depth steps (overlays, LODs), on unless these say
+	{
+		FILE *f1 = fopen(PS3_USRDIR "/nooverlaystep.txt", "rb");
+		if (f1) { fclose(f1); rw::ps3::overlayStep = false; }
+		FILE *f2 = fopen(PS3_USRDIR "/nolodbehind.txt", "rb");
+		if (f2) { fclose(f2); rw::ps3::lodBehind = false; }
+		PS3_Logf("[5] overlays a step in front each: %s; LODs pushed behind: %s",
+		         rw::ps3::overlayStep ? "on (nooverlaystep.txt turns it off)" : "OFF (nooverlaystep.txt)",
+		         rw::ps3::lodBehind ? "on (nolodbehind.txt turns it off)" : "OFF (nolodbehind.txt)");
+	}
 	// patch 66: the Leeds models' overlay meshes drawn a little in front of
 	// the wall under them (z-fighting: jagged lines on the buildings).
 	// Patch 67: off by default (it broke the lighting, the lines stayed);

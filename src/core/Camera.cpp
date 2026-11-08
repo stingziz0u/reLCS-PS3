@@ -543,14 +543,29 @@ CCamera::Process(void)
 	{
 		bool room = CCullZones::InRoomForAudio();
 		int mode = Cams[ActiveCam].Mode;
-		if(room && mode == CCam::MODE_FIXED && !m_bUseNearClipScript &&
-		   RwCameraGetNearClipPlane(Scene.camera) > 0.2f)
+		bool scripted = room && (mode == CCam::MODE_FIXED || !m_bLookingAtPlayer);
+		if(scripted && !m_bUseNearClipScript && RwCameraGetNearClipPlane(Scene.camera) > 0.2f)
 			RwCameraSetNearClipPlane(Scene.camera, 0.2f);
+		// patch 147: and it sees what a 4:3 screen saw, as the cutscenes do
+		// (Draw.cpp). Ammu-Nation's menu shows only the guns next to the one
+		// chosen: the 16:9 view's sides showed the empty places of the
+		// others (Ren). USRDIR/nofixed43.txt: the wide view.
+		extern bool gPS3Fov43;
+		static int no43 = -1;
+		if(no43 < 0){
+			FILE *f = fopen(PS3_USRDIR "/nofixed43.txt", "rb");
+			no43 = f != nil;
+			if(f) fclose(f);
+		}
+		gPS3Fov43 = scripted && !no43;
 		static int lastMode = -1;
 		static bool lastRoom;
-		if(room != lastRoom || (room && mode != lastMode)){
-			PS3_Logf("[cam] %s: mode %d, near clip %.2f%s, camera at %.1f %.1f %.1f", room ? "indoors" : "outdoors", mode,
-			         RwCameraGetNearClipPlane(Scene.camera), m_bUseNearClipScript ? " (the script's)" : "",
+		static bool lastScripted;
+		if(room != lastRoom || (room && (mode != lastMode || scripted != lastScripted))){
+			lastScripted = scripted;
+			PS3_Logf("[cam] %s: mode %d%s, near clip %.2f%s%s, camera at %.1f %.1f %.1f", room ? "indoors" : "outdoors", mode,
+			         m_bLookingAtPlayer ? "" : " (script camera)",
+			         RwCameraGetNearClipPlane(Scene.camera), m_bUseNearClipScript ? " (the script's)" : "", gPS3Fov43 ? ", 4:3 view" : "",
 			         Cams[ActiveCam].Source.x, Cams[ActiveCam].Source.y, Cams[ActiveCam].Source.z);
 			lastMode = mode;
 			lastRoom = room;
