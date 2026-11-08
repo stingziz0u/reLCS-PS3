@@ -1945,8 +1945,11 @@ PS3_FxQuad(int type, float hw, float hh, float x, float y, uint8 *alpha)
 	float area = x1 > x0 && y1 > y0 ? (x1 - x0) * (y1 - y0) : 0.0f;
 	if (gPS3FxLimit && type != PARTICLE_WATER_HYDRANT) {
 		float r = Max(hw, hh) / SCREEN_HEIGHT;	// half the quad over the screen
-		if (r > 0.35f) {
-			float k = (0.7f - r) / 0.35f;
+		// patch 141: the ferry's chimney smoke from a third of the screen
+		// (its puffs are huge and many: patch 141, Ferry.cpp)
+		float r0 = type == PARTICLE_FERRY_CHIM_SMOKE ? 0.18f : 0.35f;
+		if (r > r0) {
+			float k = (2.0f*r0 - r) / r0;
 			int a = k > 0.0f ? (int)(*alpha * k) : 0;
 			if (a < 4) {
 				sFxFaded += area;

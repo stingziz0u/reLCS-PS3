@@ -1122,6 +1122,15 @@ CCam::Process_FollowPed(const CVector &CameraTarget, float TargetOrientation, fl
 
 	// Figure out if and where we want to rotate
 
+#ifdef __PS3__
+	// patch 141: in an interior the walls are always close: AvoidTheGeometry's
+	// trouble timer stays up and the camera turned itself to behind or in
+	// front of the player, faster the closer it was (1/distance: at 0.5 m
+	// twice the speed), back and forth ([cam]: beta swinging 0.2 rad a frame
+	// in Toni's flat). There it stays where the player put it, the walls
+	// only pulling it in; R1 still puts it behind.
+	bool ps3NoAvoidSpin = CGame::IsInInterior();
+#endif
 	if(CPad::GetPad(0)->ForceCameraBehindPlayer() && !CPickups::PlayerOnWeaponPickup || Shooting){
 
 		// Center cam behind player
@@ -1140,7 +1149,11 @@ CCam::Process_FollowPed(const CVector &CameraTarget, float TargetOrientation, fl
 			if(Shooting && ped->GetWeapon()->m_eWeaponType == WEAPONTYPE_MINIGUN)
 				FixedTargetOrientation -= fMiniGunBetaOffset;
 		}
-	}else if(Abs(TheCamera.m_fAvoidTheGeometryProbsTimer) > fAvoidGeomThreshhold && !Rotating ){
+	}else if(Abs(TheCamera.m_fAvoidTheGeometryProbsTimer) > fAvoidGeomThreshhold && !Rotating
+#ifdef __PS3__
+	         && !ps3NoAvoidSpin
+#endif
+	         ){
 
 		if(TheCamera.m_fAvoidTheGeometryProbsTimer < 0.0f)
 			FixedTargetOrientation = TargetOrientation;
@@ -1165,7 +1178,11 @@ CCam::Process_FollowPed(const CVector &CameraTarget, float TargetOrientation, fl
 
 	float RotDistance = m_fMinRealGroundDist;
 
-	if(Rotating || TheCamera.m_fAvoidTheGeometryProbsTimer > fAvoidGeomThreshhold){
+	if(Rotating || (TheCamera.m_fAvoidTheGeometryProbsTimer > fAvoidGeomThreshhold
+#ifdef __PS3__
+	                && !ps3NoAvoidSpin
+#endif
+	               )){
 		m_bFixingBeta = true;
 
 		while (PS3_ANGLE_OK(FixedTargetOrientation) && FixedTargetOrientation >= PI) FixedTargetOrientation -= 2*PI;

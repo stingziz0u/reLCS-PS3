@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ParticleMgr.h"	// patch 141
+#endif
 #include "main.h"
 #include "Ferry.h"
 
@@ -356,7 +359,22 @@ void CFerry::SetModelIndex(uint32 mi)
 void CFerry::PreRender(void)
 {
 	CVehicleModelInfo* mi = GetModelInfo();
+#ifdef __PS3__
+	// patch 141: the chimney smoke at the game's 30 fps rate (PreRender runs
+	// every frame: twice the puffs at 60), and no new puff while 30 are alive.
+	// Near the ferry (Ren, on the way to Caught in the Act) 74 puffs filled
+	// 24.5 screens a frame: the RSX at 14 ms, 43 fps.
+	bool ps3Puff = CTimer::GetTimeStep() >= 1.0f || (CTimer::GetFrameCounter() & 1) == 0;
+	if (ps3Puff) {
+		int alive = 0;
+		for (CParticle *p = mod_ParticleSystemManager.m_aParticles[PARTICLE_FERRY_CHIM_SMOKE].m_pParticles; p && alive < 30; p = p->m_pNext)
+			alive++;
+		ps3Puff = alive < 30;
+	}
+	if (ps3Puff && CGeneral::GetRandomTrueFalse())
+#else
 	if (CGeneral::GetRandomTrueFalse())
+#endif
 		CParticle::AddParticle(PARTICLE_FERRY_CHIM_SMOKE, GetMatrix() * mi->m_positions[FERRY_POS_CHIM_LEFT], CVector(0.0f, 0.0f, 0.2f));
 	CVector vVectorToCamera = GetPosition() - TheCamera.GetPosition();
 	CVector vDirectionToCamera;
