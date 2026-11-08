@@ -960,9 +960,11 @@ static const char *const ps3DecalModeName[] = {
 	"17 log what is drawn, loaded, removed",
 	"18 hide every LOD (big building)",
 	"19 no fog in the rain (patch 80 off)",
-	"20 no light added to buildings (patches 100, 101 off)"
+	"20 no light added to buildings (patches 100, 101 off)",
+	"21 overlays a step in front each",
+	"22 LODs pushed behind"
 };
-#define PS3_NUMTESTMODES 21
+#define PS3_NUMTESTMODES 23
 static uint32 ps3DecalPrev;
 static wchar ps3DecalMsg[96];
 

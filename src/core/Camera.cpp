@@ -15,6 +15,9 @@ extern bool gLCSUpsideDownCheat;
 #include "ControllerConfig.h"
 #include "General.h"
 #include "ZoneCull.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#endif
 #include "SurfaceTable.h"
 #include "Particle.h"
 #include "WaterLevel.h"
@@ -531,6 +534,29 @@ CCamera::Process(void)
 
 	if(m_bUseNearClipScript)
 		RwCameraSetNearClipPlane(Scene.camera, m_fNearClipScript);
+#ifdef __PS3__
+	// patch 146: a fixed camera indoors (Ammu-Nation's weapon menu, along the
+	// wall with the guns) kept the default near clip of 0.9 m: the wall it
+	// stands against was cut (the street seen through it) and so were the
+	// guns. Indoors (a "room for audio" zone) a fixed camera clips at 0.2 m
+	// unless the script set one. [cam] logs the camera indoors when it changes.
+	{
+		bool room = CCullZones::InRoomForAudio();
+		int mode = Cams[ActiveCam].Mode;
+		if(room && mode == CCam::MODE_FIXED && !m_bUseNearClipScript &&
+		   RwCameraGetNearClipPlane(Scene.camera) > 0.2f)
+			RwCameraSetNearClipPlane(Scene.camera, 0.2f);
+		static int lastMode = -1;
+		static bool lastRoom;
+		if(room != lastRoom || (room && mode != lastMode)){
+			PS3_Logf("[cam] %s: mode %d, near clip %.2f%s, camera at %.1f %.1f %.1f", room ? "indoors" : "outdoors", mode,
+			         RwCameraGetNearClipPlane(Scene.camera), m_bUseNearClipScript ? " (the script's)" : "",
+			         Cams[ActiveCam].Source.x, Cams[ActiveCam].Source.y, Cams[ActiveCam].Source.z);
+			lastMode = mode;
+			lastRoom = room;
+		}
+	}
+#endif
 
 	deltaBeta = newBeta - oldBeta;
 	while (PS3_ANGLE_OK(deltaBeta) && deltaBeta >= PI) deltaBeta -= 2*PI;

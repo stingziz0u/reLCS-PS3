@@ -39,6 +39,9 @@
 #include "Pickups.h"
 #include "Fluff.h"
 #include "CustomSoundTrack.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#endif
 
 // LCS: file done except TODOs
 
@@ -474,6 +477,9 @@ int8 CRunningScript::ProcessCommands1000To1099(int32 command)
 	}
 	case COMMAND_SET_NEAR_CLIP:
 		CollectParameters(&m_nIp, 1);
+#ifdef __PS3__
+		PS3_Logf("[cam] %s: SET_NEAR_CLIP %.2f", m_abScriptName, GET_FLOAT_PARAM(0));	// patch 146
+#endif
 		TheCamera.SetNearClipScript(GET_FLOAT_PARAM(0));
 		return 0;
 	case COMMAND_SET_RADIO_CHANNEL:

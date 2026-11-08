@@ -507,6 +507,7 @@ CEntity::Render(void)
 				gPS3ShadRendered++;
 			}
 			rw::ps3::decalBuilding = IsBuilding();	// patch 96
+			rw::ps3::decalLod = IsBuilding() && bIsBIGBuilding;	// patch 146
 #endif
 			if(RwObjectGetType(m_rwObject) == rpATOMIC)
 				RpAtomicRender((RpAtomic*)m_rwObject);
@@ -516,6 +517,7 @@ CEntity::Render(void)
 			if(ps3Decal)
 				rw::ps3::decalCur = false;
 			rw::ps3::decalBuilding = false;
+			rw::ps3::decalLod = false;
 #endif
 			bImBeingRendered = false;
 		}

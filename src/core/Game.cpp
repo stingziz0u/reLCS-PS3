@@ -198,7 +198,7 @@ PS3_FindNear(const char *name, const char **txdName, char *used, int32 usedSize)
 static void
 PS3_LogMissingTexture(const char *name)
 {
-	static uint32 seen[48];
+	static uint32 seen[256];	// patch 146: 48 were all taken by the vehicles and the HUD
 	static int32 numSeen;
 	if(!PS3_logsOn || numSeen >= (int32)ARRAY_SIZE(seen))
 		return;
