@@ -961,7 +961,7 @@ static const char *const ps3DecalModeName[] = {
 	"18 hide every LOD (big building)",
 	"19 no fog in the rain (patch 80 off)",
 	"20 no light added to buildings (patches 100, 101 off)",
-	"21 overlay steps flipped (on by default)",
+	"21 overlay steps flipped (off by default)",
 	"22 LOD push behind flipped (on by default)"
 };
 #define PS3_NUMTESTMODES 23

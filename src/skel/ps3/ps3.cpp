@@ -908,12 +908,14 @@ PS3_GameMain(void)
 	}
 	// patch 147: patch 146's depth steps (overlays, LODs), on unless these say
 	{
-		FILE *f1 = fopen(PS3_USRDIR "/nooverlaystep.txt", "rb");
-		if (f1) { fclose(f1); rw::ps3::overlayStep = false; }
+		// patch 150: the overlay steps off again (the decals on the ground and
+		// the light cones slid with them, Ren); USRDIR/overlaystep.txt on
+		FILE *f1 = fopen(PS3_USRDIR "/overlaystep.txt", "rb");
+		if (f1) { fclose(f1); rw::ps3::overlayStep = true; }
 		FILE *f2 = fopen(PS3_USRDIR "/nolodbehind.txt", "rb");
 		if (f2) { fclose(f2); rw::ps3::lodBehind = false; }
 		PS3_Logf("[5] overlays a step in front each: %s; LODs pushed behind: %s",
-		         rw::ps3::overlayStep ? "on (nooverlaystep.txt turns it off)" : "OFF (nooverlaystep.txt)",
+		         rw::ps3::overlayStep ? "ON (overlaystep.txt)" : "off (overlaystep.txt turns it on)",
 		         rw::ps3::lodBehind ? "on (nolodbehind.txt turns it off)" : "OFF (nolodbehind.txt)");
 	}
 	// patch 66: the Leeds models' overlay meshes drawn a little in front of

@@ -716,7 +716,7 @@ diffCheckMaterial(Material *m)
 bool forceNoCull;
 bool decalLod;	// patch 146
 bool decalStepOk;	// patch 149
-bool overlayStep = true, lodBehind = true;	// patch 147
+bool overlayStep = false, lodBehind = true;	// patch 147; patch 150: the overlay steps off again (the ground decals and light cones slid)
 bool decalBuilding;	// patch 96: a building is being drawn (mode 6 hides its meshes after the first)
 bool decalRoad;	// patch 95: a road is being drawn: its meshes after the first with an alpha texture (dirt, shadows) are overlays
 DecalStats decalStats;

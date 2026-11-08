@@ -757,6 +757,9 @@ PS3_LogMissionFail(CRunningScript *s, const char *how)
 	         p ? p->GetPosition().x : 0.0f, p ? p->GetPosition().y : 0.0f, p ? p->GetPosition().z : 0.0f);
 }
 
+void PS3_ShopKeepModel(CRunningScript *s, int32 mi);	// patch 150
+void PS3_ShopReleaseModel(int32 mi);
+
 // patch 134: the script running a command now (nil outside them), for the
 // blips' owners
 const char*
@@ -870,6 +873,47 @@ PS3_MissionTraceAdd(CRunningScript *s, uint16 op, uint32 ip)
 		t.varVal = *ps3LastVar;
 	}
 	PS3_MTrace(s, t);	// patch 138
+}
+
+// patch 150: Ammu-Nation's display guns are objects made without their
+// model (CREATE_OBJECT: new CObject(mi, false)); a model is streamed in when
+// its gun comes on screen and can go again when it leaves, so the guns
+// beside the chosen one came and went as the menu moved along the wall
+// (Ren). For a script named *ammu*, an object's model is asked for when the
+// object is made and kept (not removable) until the script deletes the
+// last object of that model.
+static bool
+PS3_IsShopScript(CRunningScript *s)
+{
+	for (int i = 0; i + 3 < 8 && s->m_abScriptName[i]; i++)
+		if (!strncasecmp(s->m_abScriptName + i, "ammu", 4))
+			return true;
+	return false;
+}
+
+static uint8 ps3ShopPins[MODELINFOSIZE];
+
+void
+PS3_ShopKeepModel(CRunningScript *s, int32 mi)
+{
+	if (mi < 0 || mi >= MODELINFOSIZE || !PS3_IsShopScript(s))
+		return;
+	if (ps3ShopPins[mi]++ == 0) {
+		CStreaming::RequestModel(mi, STREAMFLAGS_DONT_REMOVE);
+		PS3_Logf("[shop] %.8s: model %d (%s) asked for and kept while its object is there", s->m_abScriptName, mi,
+		         CModelInfo::GetModelInfo(mi) ? CModelInfo::GetModelInfo(mi)->GetModelName() : "?");
+	}
+}
+
+void
+PS3_ShopReleaseModel(int32 mi)
+{
+	if (mi < 0 || mi >= MODELINFOSIZE || ps3ShopPins[mi] == 0)
+		return;
+	if (--ps3ShopPins[mi] == 0) {
+		CStreaming::SetModelIsDeletable(mi);
+		PS3_Logf("[shop] model %d no longer kept", mi);
+	}
 }
 
 // patch 148: Ammu-Nation's script (phiammu, any *ammu*): each of its
@@ -4095,6 +4139,9 @@ int8 CRunningScript::ProcessCommands200To299(int32 command)
 		int mi = GET_INTEGER_PARAM(0) >= 0 ? GET_INTEGER_PARAM(0) : CTheScripts::UsedObjectArray[-GET_INTEGER_PARAM(0)].index;
 		CObject* pObj = new CObject(mi, false);
 		pObj->ObjectCreatedBy = MISSION_OBJECT;
+#ifdef __PS3__
+		PS3_ShopKeepModel(this, mi);	// patch 150
+#endif
 		CVector pos = GET_VECTOR_PARAM(1);
 		if (pos.z <= MAP_Z_LOW_LIMIT)
 			pos.z = CWorld::FindGroundZForCoord(pos.x, pos.y);
@@ -4118,6 +4165,9 @@ int8 CRunningScript::ProcessCommands200To299(int32 command)
 			return 0;
 		CObject* pObj = CPools::GetObjectPool()->GetAt(GET_INTEGER_PARAM(0));
 		if (pObj){
+#ifdef __PS3__
+			PS3_ShopReleaseModel(pObj->GetModelIndex());	// patch 150
+#endif
 			CWorld::Remove(pObj);
 			CWorld::RemoveReferencesToDeletedObject(pObj);
 			delete pObj;
