@@ -1605,8 +1605,10 @@ CPhysical::ProcessCollisionSectorList_SimpleCar(CPtrList *lists)
 #ifndef FIX_BUGS
 				// surely they didn't mean to call this twice?
 				numCollisions = A->ProcessEntityCollision(B, aColPoints);
+				PS3_CRUMB("col: points", numCollisions);
 #endif
 				numCollisions = A->ProcessEntityCollision(B, aColPoints);
+				PS3_CRUMB("col: points", numCollisions);
 				if(numCollisions > 0)
 					goto collision;
 			}
@@ -1784,6 +1786,14 @@ CPhysical::ProcessCollisionSectorList(CPtrList *lists)
 			A->bSkipLineCol = false;
 			skipCollision = false;
 			altcollision = false;
+#ifdef __PS3__
+			// patch 144: the crash in a Yankee's ProcessCollision: which pair
+			{
+				extern CEntity *PS3_colOther;
+				PS3_colOther = B;
+				PS3_CRUMB("col: touching, the other's model (+100000 x its type)", B->GetModelIndex() + 100000 * B->GetType());
+			}
+#endif
 
 			/* ProcessCollisionSectorList may be entered with either member of the
 			 * pair as A.  Suppress the SALH5 boarding pair symmetrically so the
@@ -1899,6 +1909,7 @@ CPhysical::ProcessCollisionSectorList(CPtrList *lists)
 			if(!A->bUsesCollision || skipCollision){
 				B->m_scanCode = CWorld::GetCurrentScanCode();
 				numCollisions = A->ProcessEntityCollision(B, aColPoints);
+				PS3_CRUMB("col: points", numCollisions);
 				if(A->bJustCheckCollision && numCollisions > 0)
 					return true;
 				if(numCollisions == 0 && A == (CEntity*)FindPlayerPed() && Aped->m_pCollidingEntity == B)
@@ -1908,6 +1919,7 @@ CPhysical::ProcessCollisionSectorList(CPtrList *lists)
 
 				B->m_scanCode = CWorld::GetCurrentScanCode();
 				numCollisions = A->ProcessEntityCollision(B, aColPoints);
+				PS3_CRUMB("col: points", numCollisions);
 				if(numCollisions <= 0)
 					continue;
 
@@ -2039,6 +2051,7 @@ CPhysical::ProcessCollisionSectorList(CPtrList *lists)
 
 				B->m_scanCode = CWorld::GetCurrentScanCode();
 				numCollisions = A->ProcessEntityCollision(B, aColPoints);
+				PS3_CRUMB("col: points", numCollisions);
 				if(numCollisions <= 0)
 					continue;
 
@@ -2318,6 +2331,7 @@ CPhysical::ProcessCollision(void)
 		return;
 	}
 
+	PS3_CRUMB("col: ProcessCollision, status", GetStatus());
 	if(GetStatus() == STATUS_SIMPLE){
 		if(CheckCollision_SimpleCar() && GetStatus() == STATUS_SIMPLE){
 			SetStatus(STATUS_PHYSICS);
@@ -2437,6 +2451,7 @@ CPhysical::ProcessCollision(void)
 		}
 	}
 
+	PS3_CRUMB("col: steps", n);
 	for(i = 1; i < n; i++){
 		CTimer::SetTimeStep(i * step);
 		ApplyMoveSpeed();
@@ -2476,6 +2491,7 @@ CPhysical::ProcessCollision(void)
 		}
 	}
 	
+	PS3_CRUMB("col: last step", 0);
 	ApplyMoveSpeed();
 	ApplyTurnSpeed();
 	GetMatrix().Reorthogonalise();
@@ -2502,6 +2518,7 @@ CPhysical::ProcessCollision(void)
 	bIsStuck = false;
 	bIsInSafePosition = true;
 	m_fElasticity = savedElasticity;
+	PS3_CRUMB("col: RemoveAndAdd", 0);
 	RemoveAndAdd();
 }
 

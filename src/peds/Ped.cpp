@@ -1892,6 +1892,7 @@ PS3_CheckPedPointers(CPed *ped, int where)
 // live or deleted) and the ped's state. Only pool memory is read here.
 CEntity *PS3_curEntity;
 const char *PS3_curEntityStep = "";
+CEntity *PS3_colOther;	// patch 144: the other entity of the last collision pair (Physical.cpp)
 
 static void
 PS3_DumpPtr(const char *name, const void *p)
@@ -1941,6 +1942,23 @@ PS3_DumpCurrentEntity(void)
 	PS3_Logf("[crash] entity in %s: %p (%s), model %d, type %d, rwObject %p, pos %.1f %.1f %.1f",
 	         PS3_curEntityStep, e, desc, e->GetModelIndex(), e->GetType(), (void*)e->m_rwObject,
 	         e->GetPosition().x, e->GetPosition().y, e->GetPosition().z);
+	{
+		// patch 144: its collision model, and the other entity of the last pair
+		CBaseModelInfo *bmi = CModelInfo::GetModelInfo(e->GetModelIndex());
+		CColModel *col = bmi ? bmi->GetColModel() : nil;
+		if (e->IsVehicle()) {
+			CVehicle *v = (CVehicle*)e;
+			col = v->GetColModel();
+			PS3_Logf("[crash]   vehicle: %s, type %d, status %d, speed %.2f, collision model %p", bmi ? bmi->GetModelName() : "?",
+			         v->m_vehType, v->GetStatus(), v->m_vecMoveSpeed.Magnitude(), col);
+		}
+		if (col)
+			PS3_Logf("[crash]   collision model: %d spheres %p, %d boxes %p, %d lines %p, %d triangles %p, radius %.1f",
+			         col->numSpheres, col->spheres, col->numBoxes, col->boxes, col->numLines, col->lines,
+			         col->numTriangles, col->triangles, col->boundingSphere.radius);
+		if (PS3_colOther)
+			PS3_DumpPtr("the other entity of the last collision pair", PS3_colOther);
+	}
 	if (!e->IsPed())
 		return;
 	CPed *ped = (CPed*)e;

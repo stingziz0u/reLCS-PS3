@@ -2603,6 +2603,20 @@ PS3_VisName(int v)
 
 struct PS3InspHit { CEntity *e; float t; };
 
+// patch 144: the lists as ConstructRenderList left them on the recorded frame
+// (by the dump, a frame later, they were already cleared: "lists none")
+static CEntity *ps3InspListV[NUMVISIBLEENTITIES], *ps3InspListI[NUMINVISIBLEENTITIES];
+static int ps3InspNV, ps3InspNI;
+
+static void
+PS3_InspLists(CEntity **v, int nv, CEntity **inv, int ni)
+{
+	ps3InspNV = Min(nv, NUMVISIBLEENTITIES);
+	ps3InspNI = Min(ni, NUMINVISIBLEENTITIES);
+	memcpy(ps3InspListV, v, ps3InspNV * sizeof(CEntity*));
+	memcpy(ps3InspListI, inv, ps3InspNI * sizeof(CEntity*));
+}
+
 static void
 PS3_InspAddPool(PS3InspHit *hits, int &n, int max, CEntity *e)
 {
@@ -2652,7 +2666,7 @@ PS3_InspDump(void)
 	         TheCamera.LODDistMultiplier, CRenderer::ms_lodDistScale,
 	         TheCamera.m_pRwCamera ? RwCameraGetNearClipPlane(TheCamera.m_pRwCamera) : 0.0f,
 	         TheCamera.m_pRwCamera ? RwCameraGetFarClipPlane(TheCamera.m_pRwCamera) : 0.0f, CTimeCycle::GetFogStart(),
-	         ps3InspN, CRenderer::ms_nNoOfVisibleEntities, CRenderer::ms_nNoOfInVisibleEntities,
+	         ps3InspN, ps3InspNV, ps3InspNI,
 	         ps3InspNDrawn);
 	PS3_Logf("[insp] %d models along it (bounding spheres it goes through), nearest first:", n);
 	for(int k = 0; k < n && k < 60; k++){
@@ -2671,8 +2685,8 @@ PS3_InspDump(void)
 			}
 		(void)line;
 		bool inV = false, inI = false, inB = false, drawn = false;
-		for(int i = 0; i < CRenderer::ms_nNoOfVisibleEntities && !inV; i++) inV = CRenderer::ms_aVisibleEntityPtrs[i] == e;
-		for(int i = 0; i < CRenderer::ms_nNoOfInVisibleEntities && !inI; i++) inI = CRenderer::ms_aInVisibleEntityPtrs[i] == e;
+		for(int i = 0; i < ps3InspNV && !inV; i++) inV = ps3InspListV[i] == e;
+		for(int i = 0; i < ps3InspNI && !inI; i++) inI = ps3InspListI[i] == e;
 		for(int i = 0; i < ps3InspNDrawn && !drawn; i++) drawn = ps3InspDrawn[i] == e;
 		char flags[96] = "";
 		char times[24] = "";
@@ -2750,6 +2764,7 @@ PS3_InspFrame(void)
 	ps3InspState = 2;
 	ps3InspN = 0;
 	ps3InspNDrawn = 0;
+	ps3InspNV = ps3InspNI = 0;
 	if(PS3_FreeCamActive()){
 		ps3InspPos = ps3FreePos;
 		ps3InspFwd = PS3_FreeForward();
@@ -2864,6 +2879,30 @@ CRenderer::SetupEntityVisibility(CEntity *ent)
 	// the LOD multiplier into account here anywhere
 	if(LOD_DISTANCE < dist && dist < mi->GetLargestLodDistance() + FADE_DISTANCE)
 		dist += mi->GetLargestLodDistance() - LOD_DISTANCE;
+#endif
+#ifdef __PS3__
+	// patch 144: a few models are placed far from their geometry. Toshiko's
+	// flat (izzy_toshApt, draw distance 60) is placed at z 25 but drawn up at
+	// z 224, where her cutscenes are: from the cutscene camera its placement is
+	// 200 m away, so the game never drew it (the inspector, patch 143: line
+	// "a == nil", 49 m inside its bounding sphere). For a model placed outside
+	// its own bounding sphere (and more than 50 m from its centre) the
+	// distance is taken to that centre; towers and the rest are left alone.
+	{
+		CColModel *col = mi->GetColModel();
+		if(col && CVector(col->boundingSphere.center).MagnitudeSqr() > sq(Max(50.0f, col->boundingSphere.radius + 20.0f))){
+			float gdist = (ent->GetBoundCentre() - ms_vecCameraPosition).Magnitude();
+			static uint8 ps3Told[(MODELINFOSIZE + 7) / 8];
+			int id = ent->GetModelIndex();
+			if(id >= 0 && id < MODELINFOSIZE && !(ps3Told[id >> 3] & (1 << (id & 7)))){
+				ps3Told[id >> 3] |= 1 << (id & 7);
+				PS3_Logf("[vis] %d %s: its geometry is %.0f m from where it is placed; its distance is taken to the geometry (%.0f m now, %.0f m to the placement)",
+				         id, mi->GetModelName(), CVector(col->boundingSphere.center).Magnitude(), gdist, dist);
+			}
+			if(gdist < dist)
+				dist = gdist;
+		}
+	}
 #endif
 	// LCS has this now, wonder if it's any better:
 	if(LOD_DISTANCE + STREAM_DISTANCE < dist && dist < mi->GetLargestLodDistance())
@@ -3269,6 +3308,10 @@ CRenderer::ConstructRenderList(void)
 	TestBigThings = 0;
 
 	ScanWorld();
+#ifdef __PS3__
+	if(ps3InspState == 2)
+		PS3_InspLists(ms_aVisibleEntityPtrs, ms_nNoOfVisibleEntities, ms_aInVisibleEntityPtrs, ms_nNoOfInVisibleEntities);
+#endif
 
 	// LCS: mobile has a bunch of code after this,
 }
