@@ -816,7 +816,11 @@ drawInst(InstanceDataHeader *header, InstanceData *inst)
 	// it). Patch 147: both on (Ren: the skyscraper's windows need the first,
 	// the ruined building and the restaurant by it the second); test mode 21
 	// / 22 turns one off, USRDIR/nooverlaystep.txt / nolodbehind.txt too.
-	bool step = (overlayStep != (decalMode == 21)) && decalBuilding && inst != header->inst;
+	// patch 148: not the meshes drawn without depth writes or added on
+	// (light cones, glows: pulled forward they slid over the world as Toni
+	// moved, Ren); only the opaque and alpha tested ones that fight
+	bool step = (overlayStep != (decalMode == 21)) && decalBuilding && inst != header->inst &&
+	            rw::GetRenderState(rw::ZWRITEENABLE) && rw::GetRenderState(rw::DESTBLEND) != rw::BLENDONE;
 	bool back = (lodBehind != (decalMode == 22)) && decalLod;
 	if((step || back) && rsxCtx){
 		float factor = 0.0f, units = 0.0f;

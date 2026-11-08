@@ -872,6 +872,52 @@ PS3_MissionTraceAdd(CRunningScript *s, uint16 op, uint32 ip)
 	PS3_MTrace(s, t);	// patch 138
 }
 
+// patch 148: Ammu-Nation's script (phiammu, any *ammu*): each of its
+// commands the first time it runs, and the object and model ones every time,
+// with their first four parameters (as integers, and as floats when they
+// look like coordinates): how the menu puts the guns on show (only the ones
+// next to the chosen one are there: the 16:9 view's sides are empty)
+static void
+PS3_ShopTrace(CRunningScript *s, int32 command, uint32 ip)
+{
+	char name[9];
+	memcpy(name, s->m_abScriptName, 8);
+	name[8] = '\0';
+	bool shop = false;
+	for (int i = 0; name[i] && name[i + 1] && name[i + 2] && name[i + 3]; i++)
+		if (!strncasecmp(name + i, "ammu", 4))
+			shop = true;
+	if (!shop)
+		return;
+	static uint8 *seen;
+	static uint32 seenSize;
+	if (seen == nil) {
+		seenSize = CTheScripts::MainScriptSize + CTheScripts::LargestMissionScriptSize;
+		seen = (uint8*)calloc((seenSize + 7) / 8, 1);
+		if (seen == nil)
+			return;
+	}
+	bool every = command == COMMAND_CREATE_OBJECT || command == COMMAND_CREATE_OBJECT_NO_OFFSET ||
+	             command == COMMAND_DELETE_OBJECT || command == COMMAND_REQUEST_MODEL ||
+	             command == COMMAND_MARK_MODEL_AS_NO_LONGER_NEEDED || command == COMMAND_MARK_OBJECT_AS_NO_LONGER_NEEDED;
+	bool first = ip < seenSize && !(seen[ip >> 3] & (1 << (ip & 7)));
+	if (ip < seenSize)
+		seen[ip >> 3] |= 1 << (ip & 7);
+	if (!first && !every)
+		return;
+	char p[4][16];
+	for (int i = 0; i < 4; i++) {
+		float f = *(float*)&ScriptParams[i];
+		int32 v = ScriptParams[i];
+		if ((v > 100000 || v < -100000) && f > -5000.0f && f < 5000.0f && f != 0.0f)
+			snprintf(p[i], sizeof(p[i]), "%.2f", f);
+		else
+			snprintf(p[i], sizeof(p[i]), "%d", (int)v);
+	}
+	PS3_Logf("[shop] %s %u ms: %04x@%u=%d(%s %s %s %s)%s", name, CTimer::GetTimeInMilliseconds(), command, ip,
+	         s->m_bCondResult, p[0], p[1], p[2], p[3], every ? " *" : "");
+}
+
 // patch 134: the text a mission script showed last (its GXT key)
 char gPS3MissionTextKey[9];
 void
@@ -2043,6 +2089,8 @@ int8 CRunningScript::ProcessOneCommand()
 	}
 	if (m_bIsMissionScript && PS3_logsOn)
 		PS3_MissionTraceAdd(this, (uint16)(command | (m_bNotFlag ? 0x8000 : 0)), ps3CmdIp);	// patch 135
+	if (PS3_logsOn)
+		PS3_ShopTrace(this, command, ps3CmdIp);	// patch 148
 #endif
 #ifdef USE_MISSION_REPLAY_OVERRIDE_FOR_NON_MOBILE_SCRIPT
 	if (!AlreadySavedGame)
