@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#endif
 
 #include "main.h"
 #include "General.h"
@@ -183,6 +186,21 @@ CBoat::ProcessControl(void)
 	UpdateClumpAlpha();
 	ProcessCarAlarm();
 
+#ifdef __PS3__
+	// patch 138: [boat] every 2 s for a mission's boats (log on): where it is
+	// and goes, its status, its AI mission and speeds, who drives it (The
+	// Sicilian Gambit: Salvatore's boat "goes anywhere")
+	if (PS3_logsOn && VehicleCreatedBy == MISSION_VEHICLE &&
+	    CTimer::GetTimeInMilliseconds() / 2000 != CTimer::GetPreviousTimeInMilliseconds() / 2000) {
+		const CVector &p = GetPosition();
+		const CVector &d = AutoPilot.m_vecDestinationCoors;
+		PS3_Logf("[boat] %d %s at %.0f %.0f %.1f, speed %.2f, status %d, AI mission %d to %.0f %.0f %.0f (%.0f m), cruise %d, driver model %d%s",
+		         CPools::GetVehiclePool()->GetIndex(this), CModelInfo::GetModelInfo(GetModelIndex())->GetModelName(),
+		         p.x, p.y, p.z, m_vecMoveSpeed.Magnitude(), GetStatus(), AutoPilot.m_nCarMission, d.x, d.y, d.z,
+		         (d - p).Magnitude2D(), AutoPilot.m_nCruiseSpeed, pDriver ? pDriver->GetModelIndex() : -1,
+		         this == FindPlayerVehicle() ? ", the player's" : "");
+	}
+#endif
 	switch(GetStatus()){
 	case STATUS_PLAYER:
 		m_bIsAnchored = false;

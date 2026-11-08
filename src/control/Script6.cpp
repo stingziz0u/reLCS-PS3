@@ -376,6 +376,12 @@ int8 CRunningScript::ProcessCommands1000To1099(int32 command)
 		uint32 oldIp = m_nIp;
 #endif
 		CollectParameters(&m_nIp, 1);
+#ifdef __PS3__
+		{
+			extern void PS3_MTraceMissionStarted(void);
+			PS3_MTraceMissionStarted();	// patch 138: [mtrace] anew
+		}
+#endif
 
 		if (CTheScripts::NumberOfExclusiveMissionScripts > 0) {
 			if (GET_INTEGER_PARAM(0) < UINT16_MAX - 1)

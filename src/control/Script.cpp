@@ -799,6 +799,52 @@ PS3_MissionTraceSlot(CRunningScript *s, bool make)
 	return i;
 }
 
+// patch 138: USRDIR/missiontrace.txt (with the log): the first time each
+// command of a mission script runs, in order, with its compare flag, its
+// first parameters and the variable it read ([mtrace]): the whole of what a
+// mission did once, cutscene to cutscene (The Sicilian Gambit's boat ride:
+// how Salvatore's boat is told where to go). A bit per byte of script space.
+static int ps3MTraceOn = -1;
+static uint8 *ps3MTraceSeen;
+static uint32 ps3MTraceSize;
+
+static void
+PS3_MTrace(CRunningScript *s, const MissionTrace &t)
+{
+	if (ps3MTraceOn < 0) {
+		FILE *f = fopen(PS3_USRDIR "/missiontrace.txt", "rb");
+		ps3MTraceOn = f != nil;
+		if (f)
+			fclose(f);
+		if (ps3MTraceOn) {
+			ps3MTraceSize = CTheScripts::MainScriptSize + CTheScripts::LargestMissionScriptSize;
+			ps3MTraceSeen = (uint8*)calloc((ps3MTraceSize + 7) / 8, 1);
+			if (ps3MTraceSeen == nil)
+				ps3MTraceOn = 0;
+			PS3_Logf("[mtrace] missiontrace.txt: %s", ps3MTraceOn ? "the mission scripts' commands, each the first time it runs" : "no memory");
+		}
+	}
+	if (!ps3MTraceOn || t.ip >= ps3MTraceSize)
+		return;
+	if (ps3MTraceSeen[t.ip >> 3] & (1 << (t.ip & 7)))
+		return;
+	ps3MTraceSeen[t.ip >> 3] |= 1 << (t.ip & 7);
+	if (t.var)
+		PS3_Logf("[mtrace] %.8s %u ms: %04x@%u=%d(%d,%d;%c%d=%d)", s->m_abScriptName, CTimer::GetTimeInMilliseconds(),
+		         t.op, t.ip, t.cond, (int)t.a0, (int)t.a1, t.var, (int)t.varIdx, (int)t.varVal);
+	else
+		PS3_Logf("[mtrace] %.8s %u ms: %04x@%u=%d(%d,%d)", s->m_abScriptName, CTimer::GetTimeInMilliseconds(),
+		         t.op, t.ip, t.cond, (int)t.a0, (int)t.a1);
+}
+
+// a new mission: its commands are new again
+void
+PS3_MTraceMissionStarted(void)
+{
+	if (ps3MTraceSeen && CTheScripts::MainScriptSize < ps3MTraceSize)
+		memset(ps3MTraceSeen + CTheScripts::MainScriptSize / 8, 0, (ps3MTraceSize - CTheScripts::MainScriptSize) / 8);
+}
+
 static void
 PS3_MissionTraceAdd(CRunningScript *s, uint16 op, uint32 ip)
 {
@@ -822,6 +868,7 @@ PS3_MissionTraceAdd(CRunningScript *s, uint16 op, uint32 ip)
 		}
 		t.varVal = *ps3LastVar;
 	}
+	PS3_MTrace(s, t);	// patch 138
 }
 
 // patch 134: the text a mission script showed last (its GXT key)
