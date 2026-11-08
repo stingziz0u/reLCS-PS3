@@ -175,6 +175,26 @@ cMusicManager::ResetMusicAfterReload()
 				debug("Radio Track %d saved position is %d, Length is only %d\n", i, trackPos, m_aTracks[i].m_nLength);
 				trackPos %= m_aTracks[i].m_nLength;
 			}
+#ifdef __PS3__
+			// patch 145: the stations went on from the save's places, so the
+			// same save always played the same songs, however long Toni
+			// slept (Ren: six hours and the same songs). Each load now starts
+			// them at a place drawn from the clock, as the MP3 player (patch
+			// 133). USRDIR/radiosave.txt: the save's places, as the game.
+			static int keepSave = -1;
+			if (keepSave < 0) {
+				FILE *f = fopen(PS3_USRDIR "/radiosave.txt", "rb");
+				keepSave = f != nil;
+				if (f) fclose(f);
+			}
+			if (!keepSave && m_aTracks[i].m_nLength) {
+				uint32 r = ((uint32)sysGetSystemTime() + (uint32)i * 7919u) * 2654435761u ^ (uint32)time(0) * 40503u;
+				uint32 newPos = r % m_aTracks[i].m_nLength;
+				PS3_Logf("[radio] station %d: the save's place %u:%02u, now %u:%02u of %u min", i,
+				         trackPos / 60000, trackPos / 1000 % 60, newPos / 60000, newPos / 1000 % 60, m_aTracks[i].m_nLength / 60000);
+				trackPos = newPos;
+			}
+#endif
 			m_aTracks[i].m_nPosition = trackPos;
 			m_aTracks[i].m_nLastPosCheckTimer = CTimer::GetTimeInMillisecondsPauseMode();
 		}

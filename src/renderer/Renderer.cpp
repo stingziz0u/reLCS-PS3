@@ -284,10 +284,120 @@ PS3_CmpModelPtr(const void *a, const void *b)
 	return pa < pb ? -1 : pa > pb ? 1 : 0;
 }
 
+// patch 145: LODs paired with the detailed model at their place. The game
+// pairs a LOD with a model by name (the names past their 3rd letter);
+// 216 of LCS's LOD instances find none, and an unpaired LOD is drawn from
+// 100 m on, over its detailed model where that one still draws: both at
+// once, the textures fighting (LODbluefence over pt_bluefence_pm from 100 m
+// to 232 m, the inspector of patch 144). When every instance of an unpaired
+// LOD model has one detailed building at its place (its bounding sphere's
+// centre within 3 m, or a tenth of its radius, and a radius 0.6 to 1.6
+// times its own), and all of them are of one model, that model is its
+// detailed one, as a matching name would have made it. The road wedges and
+// the other LODs standing for many models find none and stay as they were.
+// USRDIR/nolodplace.txt: by name only.
+static void
+PS3_PairLodsByPlace(void)
+{
+	FILE *f = fopen(PS3_USRDIR "/nolodplace.txt", "rb");
+	if(f){
+		fclose(f);
+		PS3_Logf("[lodpair] by place: off (nolodplace.txt)");
+		return;
+	}
+	CBuildingPool *pool = CPools::GetBuildingPool();
+	int32 n = pool->GetSize();
+	CVector *cs = (CVector*)malloc(n * sizeof(CVector));
+	float *rs = (float*)malloc(n * sizeof(float));
+	static int16 cand[MODELINFOSIZE];	// -1 nothing yet, -2 no single model, else the detailed model
+	static uint8 used[MODELINFOSIZE];	// a detailed model some LOD already names
+	if(cs == nil || rs == nil){
+		free(cs);
+		free(rs);
+		return;
+	}
+	for(int32 i = 0; i < MODELINFOSIZE; i++){
+		cand[i] = -1;
+		used[i] = 0;
+		CBaseModelInfo *b = CModelInfo::GetModelInfo(i);
+		if(b && b->IsSimple() && ((CSimpleModelInfo*)b)->m_isBigBuilding && ((CSimpleModelInfo*)b)->GetRelatedModel()){
+			CSimpleModelInfo *rel = ((CSimpleModelInfo*)b)->GetRelatedModel();
+			for(int32 k = 0; k < MODELINFOSIZE; k++)
+				if(CModelInfo::GetModelInfo(k) == rel){
+					used[k] = 1;
+					break;
+				}
+		}
+	}
+	for(int32 i = 0; i < n; i++){
+		CBuilding *e = pool->GetSlot(i);
+		rs[i] = -1.0f;
+		if(e == nil || e->bIsBIGBuilding)
+			continue;
+		CBaseModelInfo *b = CModelInfo::GetModelInfo(e->GetModelIndex());
+		if(b == nil || !b->IsSimple() || b->GetColModel() == nil)
+			continue;
+		cs[i] = e->GetBoundCentre();
+		rs[i] = e->GetBoundRadius();
+	}
+	unsigned long long t0 = PS3_Ticks();
+	int32 lods = 0;
+	for(int32 i = 0; i < n; i++){
+		CBuilding *lod = pool->GetSlot(i);
+		if(lod == nil || !lod->bIsBIGBuilding)
+			continue;
+		int32 id = lod->GetModelIndex();
+		CBaseModelInfo *b = CModelInfo::GetModelInfo(id);
+		if(id < 0 || id >= MODELINFOSIZE || b == nil || !b->IsSimple() || b->GetColModel() == nil)
+			continue;
+		CSimpleModelInfo *mi = (CSimpleModelInfo*)b;
+		if(!mi->m_isBigBuilding || mi->GetRelatedModel() || cand[id] == -2 || !strncasecmp(mi->GetModelName(), "IslandLOD", 9))
+			continue;
+		lods++;
+		CVector c = lod->GetBoundCentre();
+		float r = lod->GetBoundRadius();
+		float bestD = Max(3.0f, 0.1f * r);
+		int32 best = -1;
+		for(int32 j = 0; j < n; j++){
+			if(rs[j] < 0.6f * r || rs[j] > 1.6f * r)
+				continue;
+			float d = (cs[j] - c).Magnitude();
+			if(d < bestD){
+				bestD = d;
+				best = pool->GetSlot(j)->GetModelIndex();
+			}
+		}
+		if(best < 0 || used[best])
+			cand[id] = -2;
+		else if(cand[id] == -1)
+			cand[id] = best;
+		else if(cand[id] != best)
+			cand[id] = -2;
+	}
+	int32 pairs = 0;
+	for(int32 id = 0; id < MODELINFOSIZE; id++){
+		if(cand[id] < 0 || used[cand[id]])
+			continue;
+		CSimpleModelInfo *low = (CSimpleModelInfo*)CModelInfo::GetModelInfo(id);
+		CSimpleModelInfo *high = (CSimpleModelInfo*)CModelInfo::GetModelInfo(cand[id]);
+		low->SetRelatedModel(high);
+		low->m_lodDistances[2] = high->GetLargestLodDistance()/TheCamera.LODDistMultiplier;
+		low->m_drawLast = false;
+		used[cand[id]] = 1;
+		pairs++;
+		PS3_Logf("[lodpair] %s -> %s (near distance %.0f)", low->GetModelName(), high->GetModelName(), low->GetNearDistance());
+	}
+	PS3_Logf("[lodpair] by place: %d LOD models paired (%d unpaired LOD instances looked at, %.0f ms)", pairs, lods,
+	         (PS3_Ticks() - t0) / 79800.0);
+	free(cs);
+	free(rs);
+}
+
 // once, after the IDEs (the first frame drawn): which LOD goes with which model
 static void
 PS3_BuildLodPairs(void)
 {
+	PS3_PairLodsByPlace();	// patch 145
 	static PS3ModelPtr ptrs[MODELINFOSIZE];
 	int32 n = 0, pairs = 0;
 	ps3LodPairsBuilt = true;
@@ -2603,6 +2713,22 @@ PS3_VisName(int v)
 
 struct PS3InspHit { CEntity *e; float t; };
 
+// patch 145: the graffiti (pmgraff*, IDE flags 0) are painted on the walls.
+// With the opaque buildings they're drawn in the order the sector scan finds
+// them: before their wall, the wall can paint over them (Ren: a graffiti
+// that isn't there, though the inspector has it drawn). Like the road
+// shadows of patch 97 they go after the opaque world now, depth test on.
+static bool
+PS3_IsDecal(int32 id, CSimpleModelInfo *mi)
+{
+	static uint8 known[MODELINFOSIZE];	// 0 not looked at, 1 no, 2 yes
+	if(id < 0 || id >= MODELINFOSIZE)
+		return false;
+	if(known[id] == 0)
+		known[id] = !strncasecmp(mi->GetModelName(), "pmgraff", 7) ? 2 : 1;
+	return known[id] == 2;
+}
+
 // patch 144: the lists as ConstructRenderList left them on the recorded frame
 // (by the dump, a frame later, they were already cleared: "lists none")
 static CEntity *ps3InspListV[NUMVISIBLEENTITIES], *ps3InspListI[NUMINVISIBLEENTITIES];
@@ -2678,7 +2804,9 @@ PS3_InspDump(void)
 		char ans[48];
 		for(int i = ps3InspN - 1; i >= 0; i--)
 			if(ps3InspRecs[i].e == e){
-				snprintf(ans, sizeof(ans), "%s (line %d)", PS3_VisName(ps3InspRecs[i].vis), ps3InspRecs[i].line);
+				snprintf(ans, sizeof(ans), "%s (line %d)%s", PS3_VisName(ps3InspRecs[i].vis), ps3InspRecs[i].line,
+				         ps3InspRecs[i].vis != VIS_OFFSCREEN ? "" : !e->GetIsOnScreen() ? " off screen" :
+				         e->IsEntityOccluded() ? " occluded" : " on screen now");
 				answer = ans;
 				line = ps3InspRecs[i].line;
 				break;
@@ -2963,7 +3091,7 @@ CRenderer::SetupEntityVisibility(CEntity *ent)
 		// depth bias or test brought it back). The sorted list draws them
 		// after the opaque world and RenderFadingEntities turns off the depth
 		// writes for noZwrite.
-		if(mi->m_drawLast || ent->bDrawLast || mi->m_noZwrite){
+		if(mi->m_drawLast || ent->bDrawLast || mi->m_noZwrite || PS3_IsDecal(ent->GetModelIndex(), mi)){
 #else
 		if(mi->m_drawLast || ent->bDrawLast){
 #endif

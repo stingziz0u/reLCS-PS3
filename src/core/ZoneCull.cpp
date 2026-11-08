@@ -10,6 +10,9 @@
 #include "FileMgr.h"
 #include "ZoneCull.h"
 #include "Zones.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#endif
 
 int32     CCullZones::NumAttributeZones;
 CAttributeZone CCullZones::aAttributeZones[NUMATTRIBZONES];
@@ -45,7 +48,23 @@ CCullZones::Update(void)
 		/* Update camera attributes */
 		CurrentFlags_Camera = FindAttributesForCoors(TheCamera.GetGameCamPosition(), nil);
 		invisible = (CurrentFlags_Camera & ATTRZONE_SUBWAYVISIBLE) == 0;
+#ifdef __PS3__
+		// patch 145: the subway models (IDE flag 16: the stations' halls, the
+		// tunnels' mouths) show only inside a "subway visible" zone (0x80).
+		// LCS's CULL.IPL leaves that bit off some underground platforms: the
+		// airport station's (zone 0x9, -765..-697 / -812..-739, z -17..2) hid
+		// Sub_stationB and the tunnel with Toni standing in them (the
+		// inspector, patch 144: "not visible", line 2930). Below z 5 a
+		// no-rain zone (an underground one) shows them too.
+		if(invisible && (CurrentFlags_Camera & ATTRZONE_NORAIN) && TheCamera.GetGameCamPosition().z < 5.0f)
+			invisible = false;
+#endif
 		if(invisible != bCurrentSubwayIsInvisible){
+#ifdef __PS3__
+			PS3_Logf("[subway] %s: camera at %.0f %.0f %.0f, zone flags 0x%x", invisible ? "hidden" : "shown",
+			         TheCamera.GetGameCamPosition().x, TheCamera.GetGameCamPosition().y, TheCamera.GetGameCamPosition().z,
+			         CurrentFlags_Camera);
+#endif
 			MarkSubwayAsInvisible(!invisible);
 			bCurrentSubwayIsInvisible = invisible;
 		}
