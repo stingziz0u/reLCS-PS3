@@ -715,6 +715,7 @@ diffCheckMaterial(Material *m)
 }
 bool forceNoCull;
 bool decalLod;	// patch 146
+bool decalStepOk;	// patch 149
 bool overlayStep = true, lodBehind = true;	// patch 147
 bool decalBuilding;	// patch 96: a building is being drawn (mode 6 hides its meshes after the first)
 bool decalRoad;	// patch 95: a road is being drawn: its meshes after the first with an alpha texture (dirt, shadows) are overlays
@@ -819,8 +820,12 @@ drawInst(InstanceDataHeader *header, InstanceData *inst)
 	// patch 148: not the meshes drawn without depth writes or added on
 	// (light cones, glows: pulled forward they slid over the world as Toni
 	// moved, Ren); only the opaque and alpha tested ones that fight
-	bool step = (overlayStep != (decalMode == 21)) && decalBuilding && inst != header->inst &&
-	            rw::GetRenderState(rw::ZWRITEENABLE) && rw::GetRenderState(rw::DESTBLEND) != rw::BLENDONE;
+	// patch 149: and not the models drawn last, added on or without depth
+	// writes (comlights*: IDE flags 76), nor a mesh drawn blended by its
+	// vertex or material alpha: the light cones still slid (Ren)
+	bool step = (overlayStep != (decalMode == 21)) && decalBuilding && decalStepOk && inst != header->inst &&
+	            rw::GetRenderState(rw::ZWRITEENABLE) && rw::GetRenderState(rw::DESTBLEND) != rw::BLENDONE &&
+	            !rw::GetRenderState(rw::VERTEXALPHA);
 	bool back = (lodBehind != (decalMode == 22)) && decalLod;
 	if((step || back) && rsxCtx){
 		float factor = 0.0f, units = 0.0f;

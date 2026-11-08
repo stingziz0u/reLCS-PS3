@@ -508,6 +508,13 @@ CEntity::Render(void)
 			}
 			rw::ps3::decalBuilding = IsBuilding();	// patch 96
 			rw::ps3::decalLod = IsBuilding() && bIsBIGBuilding;	// patch 146
+			if(IsBuilding()){
+				// patch 149: the overlay steps only for the opaque buildings
+				CSimpleModelInfo *smi = (CSimpleModelInfo*)CModelInfo::GetModelInfo(GetModelIndex());
+				rw::ps3::decalStepOk = smi && smi->IsSimple() && !bDrawLast &&
+				                       !smi->m_drawLast && !smi->m_additive && !smi->m_noZwrite;
+			}else
+				rw::ps3::decalStepOk = false;
 #endif
 			if(RwObjectGetType(m_rwObject) == rpATOMIC)
 				RpAtomicRender((RpAtomic*)m_rwObject);
