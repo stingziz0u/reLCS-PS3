@@ -1381,6 +1381,25 @@ VALIDATESAVEBUF(size);
 		if (ms_RadarTrace[i].m_bInUse)
 			PS3_LogBlip("loaded", i);
 	}
+	{
+		// patch 135: a game is saved off a mission, so a blip a mission
+		// script made (a place without a sprite, not a short range one) is
+		// one its mission left behind (Ren's 99% save: a pink one in
+		// Shoreside Vale that never went away). Taken off the map;
+		// USRDIR/noblipclean.txt keeps them.
+		FILE *f = fopen(PS3_USRDIR "/noblipclean.txt", "rb");
+		if (f)
+			fclose(f);
+		for (int i = 0; i < NUMRADARBLIPS; i++) {
+			sRadarTrace &t = ms_RadarTrace[i];
+			if (f || !t.m_bInUse || t.m_eBlipType != BLIP_COORD || t.m_eRadarSprite != RADAR_SPRITE_NONE || t.m_bShortRange)
+				continue;
+			PS3_LogBlip("left behind by a mission, taken off the map (noblipclean.txt keeps it):", i);
+			t.m_bInUse = false;
+			t.m_eBlipType = BLIP_NONE;
+			t.m_eBlipDisplay = BLIP_DISPLAY_NEITHER;
+		}
+	}
 #endif
 }
 

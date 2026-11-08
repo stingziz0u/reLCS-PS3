@@ -707,6 +707,7 @@ bool CStuckCarCheck::HasCarBeenStuckForAWhile(int32 id)
 
 #ifdef __PS3__
 static CRunningScript *pScriptRunning;	// the one ProcessOneCommand is in
+static int32 *ps3LastVar;	// patch 135: the variable the command read last (the mission trace)
 static CRunningScript *pScriptBroken;	// to be stopped (CTheScripts::Process)
 static int32 scriptDummyVar;		// where a broken script's writes go
 
@@ -768,6 +769,44 @@ PS3_ScriptRunningName(void)
 	return name;
 }
 
+// patch 135: the mission scripts' own commands (the trace above has every
+// script's: 300000 commands in 10 s fill it in a millisecond), with the
+// variable each one read and its value then
+struct MissionTrace { uint32 ip; uint16 op; int8 cond; char var; int32 a0, a1, varIdx, varVal; };
+#define MISSION_TRACE 512
+static MissionTrace missionTrace[MISSION_TRACE];
+static int missionTraceHead;
+static CRunningScript *missionTraceScript;
+
+static void
+PS3_MissionTraceAdd(CRunningScript *s, uint16 op, uint32 ip)
+{
+	if (missionTraceScript != s) {
+		missionTraceScript = s;
+		memset(missionTrace, 0, sizeof(missionTrace));
+		missionTraceHead = 0;
+	}
+	MissionTrace &t = missionTrace[missionTraceHead];
+	missionTraceHead = (missionTraceHead + 1) % MISSION_TRACE;
+	t.ip = ip;
+	t.op = op;
+	t.cond = s->m_bCondResult;
+	t.a0 = ScriptParams[0];
+	t.a1 = ScriptParams[1];
+	t.var = 0;
+	if (ps3LastVar) {
+		int32 *loc = s->m_anLocalVariables;
+		if (ps3LastVar >= loc && ps3LastVar < loc + sizeof(s->m_anLocalVariables) / sizeof(int32)) {
+			t.var = 'l';
+			t.varIdx = ps3LastVar - loc;
+		} else {
+			t.var = 'g';
+			t.varIdx = ((uint8*)ps3LastVar - CTheScripts::ScriptSpace) / 4;
+		}
+		t.varVal = *ps3LastVar;
+	}
+}
+
 // patch 134: the text a mission script showed last (its GXT key)
 char gPS3MissionTextKey[9];
 void
@@ -811,13 +850,24 @@ PS3_LogMissionLoop(void)
 		if (t.script == s)
 			idx[n++] = (scriptTraceHead + i) % SCRIPT_TRACE;
 	}
+	(void)idx; (void)n;
+	if (missionTraceScript != s)
+		return;
+	// patch 135: its own last 120 commands; a variable read as g<index>
+	// (global) or l<index> (local) =its value then
 	char buf[512];
 	int len = 0;
 	buf[0] = '\0';
-	for (int k = n - 1; k >= 0; k--) {
-		ScriptTrace &t = scriptTrace[idx[k]];
-		len += snprintf(buf + len, sizeof(buf) - len, " %04x@%u=%d(%d,%d)", t.op, t.ip, t.cond, (int)t.a0, (int)t.a1);
-		if (len > 400 || k == 0) {
+	for (int k = 120; k > 0; k--) {
+		MissionTrace &t = missionTrace[(missionTraceHead + MISSION_TRACE - k) % MISSION_TRACE];
+		if (t.op == 0 && t.ip == 0)
+			continue;
+		if (t.var)
+			len += snprintf(buf + len, sizeof(buf) - len, " %04x@%u=%d(%d,%d;%c%d=%d)", t.op, t.ip, t.cond, (int)t.a0, (int)t.a1,
+			                t.var, (int)t.varIdx, (int)t.varVal);
+		else
+			len += snprintf(buf + len, sizeof(buf) - len, " %04x@%u=%d(%d,%d)", t.op, t.ip, t.cond, (int)t.a0, (int)t.a1);
+		if (len > 400 || k == 1) {
 			PS3_Logf("[mission]  %s", buf);
 			len = 0;
 			buf[0] = '\0';
@@ -1213,7 +1263,16 @@ void CRunningScript::StoreParameters(uint32* pIp, int16 number)
 	}
 }
 
+#ifdef __PS3__
+static int32* GetPointerToScriptVariableImpl(CRunningScript* pScript, uint32* pIp);
 int32* GetPointerToScriptVariable(CRunningScript* pScript, uint32* pIp)
+{
+	return ps3LastVar = GetPointerToScriptVariableImpl(pScript, pIp);
+}
+static int32* GetPointerToScriptVariableImpl(CRunningScript* pScript, uint32* pIp)
+#else
+int32* GetPointerToScriptVariable(CRunningScript* pScript, uint32* pIp)
+#endif
 {
 	uint8 type = CTheScripts::Read1ByteFromScript(pIp);
 	if (type >= ARGUMENT_GLOBAL_ARRAY) {
@@ -1804,6 +1863,8 @@ int8 CRunningScript::ProcessOneCommand()
 	scriptTrace[scriptTraceHead].op = CTheScripts::ScriptSpace[m_nIp] | CTheScripts::ScriptSpace[m_nIp + 1] << 8;
 	scriptTrace[scriptTraceHead].cond = -1;
 	int ps3TraceSlot = scriptTraceHead;
+	uint32 ps3CmdIp = m_nIp;	// patch 135
+	ps3LastVar = nil;
 	scriptTraceHead = (scriptTraceHead + 1) % SCRIPT_TRACE;
 #endif
 	++CTheScripts::CommandsExecuted;
@@ -1863,6 +1924,8 @@ int8 CRunningScript::ProcessOneCommand()
 		scriptTrace[ps3TraceSlot].a0 = ScriptParams[0];	// patch 134 (the last parameters collected)
 		scriptTrace[ps3TraceSlot].a1 = ScriptParams[1];
 	}
+	if (m_bIsMissionScript && PS3_logsOn)
+		PS3_MissionTraceAdd(this, (uint16)(command | (m_bNotFlag ? 0x8000 : 0)), ps3CmdIp);	// patch 135
 #endif
 #ifdef USE_MISSION_REPLAY_OVERRIDE_FOR_NON_MOBILE_SCRIPT
 	if (!AlreadySavedGame)
