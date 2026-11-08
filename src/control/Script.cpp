@@ -774,20 +774,37 @@ PS3_ScriptRunningName(void)
 // variable each one read and its value then
 struct MissionTrace { uint32 ip; uint16 op; int8 cond; char var; int32 a0, a1, varIdx, varVal; };
 #define MISSION_TRACE 512
-static MissionTrace missionTrace[MISSION_TRACE];
-static int missionTraceHead;
-static CRunningScript *missionTraceScript;
+// patch 136: one ring per mission script (stuntj and bikef are mission
+// scripts too, running alongside salh5: one shared ring was cleared at
+// every switch and printed nothing)
+#define MISSION_TRACES 6
+static MissionTrace missionTraces[MISSION_TRACES][MISSION_TRACE];
+static int missionTraceHeads[MISSION_TRACES];
+static CRunningScript *missionTraceScripts[MISSION_TRACES];
+static int missionTraceNext;
+
+static int
+PS3_MissionTraceSlot(CRunningScript *s, bool make)
+{
+	for (int i = 0; i < MISSION_TRACES; i++)
+		if (missionTraceScripts[i] == s)
+			return i;
+	if (!make)
+		return -1;
+	int i = missionTraceNext;
+	missionTraceNext = (missionTraceNext + 1) % MISSION_TRACES;
+	missionTraceScripts[i] = s;
+	memset(missionTraces[i], 0, sizeof(missionTraces[i]));
+	missionTraceHeads[i] = 0;
+	return i;
+}
 
 static void
 PS3_MissionTraceAdd(CRunningScript *s, uint16 op, uint32 ip)
 {
-	if (missionTraceScript != s) {
-		missionTraceScript = s;
-		memset(missionTrace, 0, sizeof(missionTrace));
-		missionTraceHead = 0;
-	}
-	MissionTrace &t = missionTrace[missionTraceHead];
-	missionTraceHead = (missionTraceHead + 1) % MISSION_TRACE;
+	int slot = PS3_MissionTraceSlot(s, true);
+	MissionTrace &t = missionTraces[slot][missionTraceHeads[slot]];
+	missionTraceHeads[slot] = (missionTraceHeads[slot] + 1) % MISSION_TRACE;
 	t.ip = ip;
 	t.op = op;
 	t.cond = s->m_bCondResult;
@@ -813,6 +830,28 @@ void
 PS3_NoteScriptText(const char *key)
 {
 	if (pScriptRunning && pScriptRunning->m_bIsMissionScript) {
+		char k[9];
+		memcpy(k, key, 8);
+		k[8] = '\0';
+		if (PS3_logsOn && strcmp(k, gPS3MissionTextKey) != 0) {
+			// patch 136: the colours its text uses (~r~ red, ~g~ green,
+			// ~b~ blue, ~y~ yellow, ~p~ pink...), to set against the blips'
+			// colours ([blip] made ... the colour asked): the text red, the
+			// blip yellow (The Sicilian Gambit's wise guy)
+			wchar *t = TheText.Get(k);
+			char cols[16];
+			int n = 0;
+			for (int i = 0; t && t[i] && t[i + 1] && n < 15; i++)
+				if (t[i] == '~' && t[i + 1] != '~' && t[i + 1] != 'w' && t[i + 2] == '~') {
+					char c = (char)t[i + 1];
+					if (!memchr(cols, c, n))
+						cols[n++] = c;
+					i += 2;
+				}
+			cols[n] = '\0';
+			if (n)
+				PS3_Logf("[text] %.8s shows \"%s\": its colours ~%s~", pScriptRunning->m_abScriptName, k, cols);
+		}
 		memcpy(gPS3MissionTextKey, key, 8);
 		gPS3MissionTextKey[8] = '\0';
 	}
@@ -821,6 +860,47 @@ PS3_NoteScriptText(const char *key)
 // patch 134: every 15 s on a mission (log on): the mission script, where it
 // is, the text it showed last and its last 40 commands with their compare
 // flags and first two parameters (a handle, a number): what a loop waits for
+// when a mission doesn't go on (The Sicilian Gambit, "Take out that Sicilian
+// wise guy!": the kill wasn't counted)
+static void
+PS3_LogMissionScript(CRunningScript *s)
+{
+	char name[9];
+	memcpy(name, s->m_abScriptName, 8);
+	name[8] = '\0';
+	int slot = PS3_MissionTraceSlot(s, false);
+	PS3_Logf("[mission] %s at ip %u, the last text \"%s\"; its last commands, oldest first "
+	         "(opcode@ip=compare flag(param 1, param 2; the variable read = its value); 0x8000 = NOT):",
+	         name, s->m_nIp, gPS3MissionTextKey);
+	if (slot < 0)
+		return;
+	// patch 135: its own last 120 commands; a variable read as g<index>
+	// (global) or l<index> (local) =its value then
+	char buf[512];
+	int len = 0;
+	buf[0] = '\0';
+	for (int k = 120; k > 0; k--) {
+		MissionTrace &t = missionTraces[slot][(missionTraceHeads[slot] + MISSION_TRACE - k) % MISSION_TRACE];
+		if (t.op == 0 && t.ip == 0)
+			continue;
+		if (t.var)
+			len += snprintf(buf + len, sizeof(buf) - len, " %04x@%u=%d(%d,%d;%c%d=%d)", t.op, t.ip, t.cond, (int)t.a0, (int)t.a1,
+			                t.var, (int)t.varIdx, (int)t.varVal);
+		else
+			len += snprintf(buf + len, sizeof(buf) - len, " %04x@%u=%d(%d,%d)", t.op, t.ip, t.cond, (int)t.a0, (int)t.a1);
+		if (len > 400) {
+			PS3_Logf("[mission]  %s", buf);
+			len = 0;
+			buf[0] = '\0';
+		}
+	}
+	if (len)
+		PS3_Logf("[mission]  %s", buf);
+}
+
+// patch 134 / 136: every 15 s on a mission (log on), each mission script
+// (salh5, and stuntj and bikef that run alongside): where it is, the text a
+// mission showed last and its own last 120 commands: what a loop waits for
 // when a mission doesn't go on (The Sicilian Gambit, "Take out that Sicilian
 // wise guy!": the kill wasn't counted)
 static void
@@ -833,46 +913,9 @@ PS3_LogMissionLoop(void)
 	last = now;
 	if (!CTheScripts::OnAMissionFlag || !*(int32*)&CTheScripts::ScriptSpace[CTheScripts::OnAMissionFlag])
 		return;
-	CRunningScript *s;
-	for (s = CTheScripts::pActiveScripts; s; s = s->GetNext())
+	for (CRunningScript *s = CTheScripts::pActiveScripts; s; s = s->GetNext())
 		if (s->m_bIsMissionScript)
-			break;
-	if (s == nil)
-		return;
-	char name[9];
-	memcpy(name, s->m_abScriptName, 8);
-	name[8] = '\0';
-	PS3_Logf("[mission] %s at ip %u, the last text \"%s\"; its last commands, oldest first (opcode@ip=compare flag(param 1, param 2); 0x8000 = NOT):",
-	         name, s->m_nIp, gPS3MissionTextKey);
-	int idx[40], n = 0;
-	for (int i = SCRIPT_TRACE - 1; i >= 0 && n < 40; i--) {
-		ScriptTrace &t = scriptTrace[(scriptTraceHead + i) % SCRIPT_TRACE];
-		if (t.script == s)
-			idx[n++] = (scriptTraceHead + i) % SCRIPT_TRACE;
-	}
-	(void)idx; (void)n;
-	if (missionTraceScript != s)
-		return;
-	// patch 135: its own last 120 commands; a variable read as g<index>
-	// (global) or l<index> (local) =its value then
-	char buf[512];
-	int len = 0;
-	buf[0] = '\0';
-	for (int k = 120; k > 0; k--) {
-		MissionTrace &t = missionTrace[(missionTraceHead + MISSION_TRACE - k) % MISSION_TRACE];
-		if (t.op == 0 && t.ip == 0)
-			continue;
-		if (t.var)
-			len += snprintf(buf + len, sizeof(buf) - len, " %04x@%u=%d(%d,%d;%c%d=%d)", t.op, t.ip, t.cond, (int)t.a0, (int)t.a1,
-			                t.var, (int)t.varIdx, (int)t.varVal);
-		else
-			len += snprintf(buf + len, sizeof(buf) - len, " %04x@%u=%d(%d,%d)", t.op, t.ip, t.cond, (int)t.a0, (int)t.a1);
-		if (len > 400 || k == 1) {
-			PS3_Logf("[mission]  %s", buf);
-			len = 0;
-			buf[0] = '\0';
-		}
-	}
+			PS3_LogMissionScript(s);
 }
 
 void
