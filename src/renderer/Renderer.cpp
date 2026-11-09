@@ -2309,8 +2309,19 @@ CRenderer::RenderEverythingBarRoads(void)
 				printf("Ran out of space in alpha entity list");
 				RenderOneNonRoad(e);
 			}
-		}else
+		}else{
+#ifdef __PS3__
+			// patch 162: what this loop draws, by kind: the buildings are
+			// what a second thread would draw (render split, part 1)
+			unsigned long long ps3t0 = PS3_Ticks();
 			RenderOneNonRoad(e);
+			PS3_ProfAdd(PS3_PROF_SCENE, e->IsBuilding() ? "bar roads: buildings" : e->IsObject() ? "bar roads: objects" :
+			            e->IsVehicle() ? "bar roads: vehicles" : e->IsPed() ? "bar roads: peds" : "bar roads: other",
+			            PS3_Ticks() - ps3t0);
+#else
+			RenderOneNonRoad(e);
+#endif
+		}
 	}
 	POP_RENDERGROUP();
 }

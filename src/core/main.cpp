@@ -124,6 +124,13 @@ static sys_ppu_thread_t ps3AwThread;
 static unsigned long long ps3AwTicks, ps3AwWaitTicks;
 static uint32 ps3AwRuns, ps3AwSync;
 
+// patch 162 (render split, part 1): does __thread give each thread its own
+// variable (lv2.ld has the PT_TLS segment)? The second thread's draw state
+// would be one. The audio worker and the game thread compare once.
+static __thread int ps3TlsProbe = 5;
+static int ps3TlsWorkerInitial = -1, ps3TlsWorkerAfter = -1;
+static volatile bool ps3TlsTested;
+
 static void
 PS3_AudioWorkerMain(void *)
 {
@@ -132,6 +139,11 @@ PS3_AudioWorkerMain(void *)
 		while(ps3AwState != 1)
 			sysCondWait(ps3AwWork, 0);
 		sysMutexUnlock(ps3AwMutex);
+		if(!ps3TlsTested){
+			ps3TlsWorkerInitial = ps3TlsProbe;	// 5: its own copy, from the TLS image
+			ps3TlsProbe = 2;
+			ps3TlsWorkerAfter = ps3TlsProbe;
+		}
 		unsigned long long t0 = PS3_Ticks();
 		gPS3AudioOnWorker = true;
 		DMAudio.Service();
@@ -180,6 +192,7 @@ PS3_AudioWorkerInit(void)
 			return;
 		}
 	}
+	ps3TlsProbe = 1;	// patch 162: the game thread's copy
 	ps3AwOn = true;
 	PS3_Logf("[audio] the sound service on its own thread during RenderScene (noaudiothread.txt turns it off)");
 }
@@ -231,6 +244,12 @@ PS3_AudioFinish(void)
 	sysMutexUnlock(ps3AwMutex);
 	ps3AwWaitTicks += PS3_Ticks() - t0;
 	ps3AwRuns++;
+	if(!ps3TlsTested && ps3TlsWorkerAfter != -1){
+		ps3TlsTested = true;
+		PS3_Logf("[tls] __thread: the game thread's copy %d (set 1), the worker's started at %d and was set %d: %s",
+		         ps3TlsProbe, ps3TlsWorkerInitial, ps3TlsWorkerAfter,
+		         ps3TlsProbe == 1 && ps3TlsWorkerInitial == 5 && ps3TlsWorkerAfter == 2 ? "one each, it works" : "SHARED OR BROKEN");
+	}
 	static unsigned long long last;
 	unsigned long long now = PS3_Ticks();
 	if(PS3_logsOn && now - last > 10ull * 79800000ull && ps3AwRuns){
