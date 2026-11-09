@@ -192,8 +192,12 @@ static RW_TLS int32 zcullHave = -1;		// what the RSX was told (-1: nothing yet)
 
 // constant registers: what the RSX has (shadow) and what we want
 #define NUM_CONSTS 32
-static RW_TLS float32 constWant[NUM_CONSTS][4];
-static RW_TLS float32 constHave[NUM_CONSTS][4];
+// patch 165: 16-byte aligned. As globals the compiler had aligned them; as
+// __thread (patch 163) only to 4, and newlib's memcmp / memcpy fall to their
+// byte loops unless both pointers are 8-byte aligned: the constants'
+// uploads went from 0.3-0.4 ms a frame to 0.55-0.9
+static RW_TLS float32 constWant[NUM_CONSTS][4] __attribute__((aligned(16)));
+static RW_TLS float32 constHave[NUM_CONSTS][4] __attribute__((aligned(16)));
 static RW_TLS uint32 constValid;	// bit n: constHave[n] is what the RSX has
 
 enum {
@@ -1327,10 +1331,21 @@ static void
 uploadConsts(int32 first, int32 n)
 {
 	uint32 mask = ((1u << n) - 1) << first;
-	if((constValid & mask) == mask &&
-	   memcmp(constHave[first], constWant[first], n*16) == 0)
-		return;
-	memcpy(constHave[first], constWant[first], n*16);
+	// patch 165: compared and copied here, 8 bytes at a time (no library call)
+	const uint64 *want = (const uint64*)constWant[first];
+	uint64 *have = (uint64*)constHave[first];
+	if((constValid & mask) == mask){
+		bool same = true;
+		for(int32 i = 0; i < 2*n; i++)
+			if(have[i] != want[i]){
+				same = false;
+				break;
+			}
+		if(same)
+			return;
+	}
+	for(int32 i = 0; i < 2*n; i++)
+		have[i] = want[i];
 	constValid |= mask;
 	rsxLoadVertexProgramParameterBlock(rsxCtx, first, n, constWant[first]);
 	drawStats.constUploads += n;
