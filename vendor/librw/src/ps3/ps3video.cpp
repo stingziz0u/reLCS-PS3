@@ -196,6 +196,7 @@ SplitStats splitStats;
 }
 }
 #include <lv2/mutex.h>
+#include <ppu-asm.h>
 namespace rw {
 namespace ps3 {
 bool splitThread;
@@ -286,6 +287,8 @@ splitEmitSlots(uint32 *seq)
 	return k;
 }
 
+static s32 workerChunkFull(gcmContextData *ctx, u32 count);
+
 static void
 workerOpenChunk(void)
 {
@@ -293,7 +296,13 @@ workerOpenChunk(void)
 	workerCtx.begin = mem;
 	workerCtx.current = mem;
 	workerCtx.end = mem + SPLIT_CHUNK_SIZE/4 - 16;
-	workerCtx.callback = mainRsxCtx->callback;	// never reached: splitWorkerRoom() first
+	// patch 173: a chunk filled in the middle of a building goes on in the
+	// next one. Patch 171 gave it the ring's callback ("never reached"): a
+	// big LOD (IslandLODInd and its like) went past the 24 KB kept free, the
+	// ring's callback put a JUMP to the ring's start in the chunk and turned
+	// it into the ring: the RSX ran off into memory with nothing in it (GET
+	// at 0x01000000, the end of the IO memory) and the frame never came
+	workerCtx.callback = (gcmContextCallback)__get_opd32(workerChunkFull);
 	subZeroed = mem;
 	subZeroAhead(&workerCtx);
 }
@@ -306,6 +315,30 @@ workerCloseChunk(void)
 	__asm__ volatile("sync" ::: "memory");	// the commands in memory before the label lets the RSX in
 	*splitLabel[workerChunk] = workerSeq;
 	splitStats.chunks++;
+}
+
+// the chunk's callback (the command macros call it when the chunk is full):
+// the chunk ended (RETURN written by hand: the end keeps 16 words for it),
+// its label written, the next one opened. -1 (the commands left out) when
+// there is no next one
+static s32
+workerChunkFull(gcmContextData *ctx, u32 count)
+{
+	(void)ctx;
+	if(workerChunk + 1 >= SPLIT_CHUNKS){
+		splitStats.overflow++;
+		return -1;
+	}
+	if(splitStats.midChunk++ < 4)
+		rsxLog("[split] a chunk filled in the middle of a building (%u words asked): on in the next one", count);
+	*workerCtx.current++ = 0x00020000;	// RETURN
+	splitStats.bytes += (uint32)(workerCtx.current - workerCtx.begin) * 4;
+	__asm__ volatile("sync" ::: "memory");
+	*splitLabel[workerChunk] = workerSeq;
+	splitStats.chunks++;
+	workerChunk++;
+	workerOpenChunk();
+	return 0;
 }
 
 // second thread: start recording into sub-buffer k
@@ -925,6 +958,9 @@ logStats(void)
 			       (double)splitStats.chunks / splitStats.threadFrames, splitStats.peak, SPLIT_CHUNKS, splitStats.leftover,
 			       splitStats.workUs / 1000.0 / splitStats.threadFrames, splitStats.joinUs / 1000.0 / splitStats.threadFrames,
 			       splitStats.finishSkipped, splitStats.waitUs / 1000.0 / n, splitStats.sameFrame);
+		if(splitStats.midChunk || splitStats.overflow)
+			rsxLog("[split]   chunks filled in the middle of a building: %u; with no chunk left (commands lost): %u",
+			       splitStats.midChunk, splitStats.overflow);
 		else
 		rsxLog("[split] the buildings in a sub-buffer: %u frames, %u KB a frame (peak %u KB of %u) in %.1f calls a frame, %u stopped full, "
 		       "%.2f ms a frame waiting for one to be free",
