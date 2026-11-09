@@ -921,7 +921,8 @@ StreamDestroy(Stream *s)
 struct StreamReq {
 	volatile uint32 seq;	// bumped by every request of the game thread
 	volatile uint32 doneSeq;	// the last one the stream thread finished
-	int32 file;		// -1: no stream (stop)
+	int32 file;		// -1: no stream (stop); -2: the MP3 player's file mp3 (patch 158)
+	int32 mp3;
 	uint32 pos;
 	int32 loops;
 	bool playing, paused;
@@ -2489,12 +2490,13 @@ ApplyStreamVolume(uint8 nStream, uint8 nEffectFlag, uint8 fxFade, uint8 fxVol, u
 // game thread: a stream change for the stream thread. The stream playing
 // now is silenced right away (as the old code destroyed it).
 static void
-StreamRequest(uint8 n, int32 file, uint32 pos, int32 loops, bool playing)
+StreamRequest(uint8 n, int32 file, uint32 pos, int32 loops, bool playing, int32 mp3 = -1)
 {
 	{
 		ReqLock rl;
 		StreamReq &r = streamReqs[n];
 		r.file = file;
+		r.mp3 = mp3;
 		r.pos = pos;
 		r.loops = loops;
 		r.playing = playing;
@@ -2539,7 +2541,21 @@ StreamRequestsProcess(void)
 		}
 		__asm__ volatile("lwsync" ::: "memory");
 		Stream *s = nil;
-		if(r.file >= 0){
+		if(r.file == -2 && r.mp3 >= 0 && (uint32)r.mp3 < nNumMP3s){
+			// patch 158: the MP3 player's file, opened here too
+			s = StreamCreate(mp3List[r.mp3].path);
+			if(s){
+				uint32 pos = r.pos;
+				if(pos){
+					if(s->lengthMs && pos >= s->lengthMs)
+						pos = 0;
+					s->dec->Seek(pos);
+					s->startMs = pos;
+				}
+				s->pan = nStreamPan[n];
+			}else if(PS3_logsOn)
+				PS3_Logf("[mp3] file %d didn't open on the stream thread: the next one", r.mp3 + 1);
+		}else if(r.file >= 0){
 			s = StreamCreateTrack(r.file);
 			if(s){
 				s->loopsLeft = r.loops;
@@ -2671,6 +2687,15 @@ cSampleManager::StartStreamedFile(uint32 nFile, uint32 nPos, uint8 nStream)
 				         wasActive ? ", one was playing" : "", curMp3Index + 1, nNumMP3s,
 				         strrchr(mp3List[curMp3Index].path, '/') ? strrchr(mp3List[curMp3Index].path, '/') + 1 : mp3List[curMp3Index].path,
 				         pos / 60000, pos / 1000 % 60);
+			// patch 158: opening the file (and seeking into it) took 13-41 ms
+			// of the game thread at each new song; the stream thread does it
+			// now, as the stations' files (patch 69). If it doesn't open, the
+			// stream ends and the music manager asks for the next one.
+			if(gStreamAsync){
+				StreamRequest(nStream, -2, pos, 1, true, (int32)curMp3Index);
+				mp3Active = nStream == 0;
+				return true;
+			}
 			Stream *s = StreamCreate(mp3List[curMp3Index].path);
 			if(s == nil){
 				mp3Active = false;

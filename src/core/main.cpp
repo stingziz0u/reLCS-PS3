@@ -97,6 +97,133 @@
 
 #ifdef __PS3__
 #include "src/ps3/rwps3.h"	// patch 153 (rscene)
+#ifdef __PS3__
+// patch 158: DMAudio.Service (the sound effects of every car, ped and
+// weapon around, and the music manager: 0.4-0.6 ms a frame) on a thread of
+// its own, the PPU's other hardware thread, while the game thread draws the
+// scene. RenderScene and RenderEffects play no sounds and change nothing the
+// audio reads (positions, speeds, the camera); PreRender and the HUD do play
+// sounds, so it starts after the first and is waited for before the second.
+// A frame that doesn't get to RenderScene has it done on the game thread.
+// USRDIR/noaudiothread.txt: on the game thread as before.
+#include <sys/thread.h>
+#include <sys/mutex.h>
+#include <sys/cond.h>
+volatile bool gPS3AudioOnWorker;
+static bool ps3AwOn, ps3AwInit, ps3AwDeferred;
+static volatile int ps3AwState;	// 0 idle, 1 asked, 2 done
+static sys_mutex_t ps3AwMutex;
+static sys_cond_t ps3AwWork, ps3AwDone;
+static sys_ppu_thread_t ps3AwThread;
+static unsigned long long ps3AwTicks, ps3AwWaitTicks;
+static uint32 ps3AwRuns, ps3AwSync;
+
+static void
+PS3_AudioWorkerMain(void *)
+{
+	for(;;){
+		sysMutexLock(ps3AwMutex, 0);
+		while(ps3AwState != 1)
+			sysCondWait(ps3AwWork, 0);
+		sysMutexUnlock(ps3AwMutex);
+		unsigned long long t0 = PS3_Ticks();
+		gPS3AudioOnWorker = true;
+		DMAudio.Service();
+		gPS3AudioOnWorker = false;
+		ps3AwTicks += PS3_Ticks() - t0;
+		sysMutexLock(ps3AwMutex, 0);
+		ps3AwState = 2;
+		sysCondSignal(ps3AwDone);
+		sysMutexUnlock(ps3AwMutex);
+	}
+}
+
+static void
+PS3_AudioWorkerInit(void)
+{
+	ps3AwInit = true;
+	FILE *f = fopen(PS3_USRDIR "/noaudiothread.txt", "rb");
+	if(f){
+		fclose(f);
+		PS3_Logf("[audio] the sound service on the game thread (noaudiothread.txt)");
+		return;
+	}
+	sys_mutex_attr_t ma;
+	memset(&ma, 0, sizeof(ma));
+	ma.attr_protocol = SYS_MUTEX_PROTOCOL_PRIO;
+	ma.attr_recursive = SYS_MUTEX_ATTR_NOT_RECURSIVE;
+	ma.attr_pshared = SYS_MUTEX_ATTR_NOT_PSHARED;
+	ma.attr_adaptive = SYS_MUTEX_ATTR_NOT_ADAPTIVE;
+	strncpy(ma.name, "audiowk", sizeof(ma.name)-1);
+	sys_cond_attr_t ca;
+	sysCondAttrInitialize(ca);
+	if(sysMutexCreate(&ps3AwMutex, &ma) != 0 || sysCondCreate(&ps3AwWork, ps3AwMutex, &ca) != 0 ||
+	   sysCondCreate(&ps3AwDone, ps3AwMutex, &ca) != 0 ||
+	   sysThreadCreate(&ps3AwThread, PS3_AudioWorkerMain, NULL, 1000, 256*1024, 0, (char*)"resaudiowk") != 0){
+		PS3_Logf("[audio] the sound service thread not made: on the game thread");
+		return;
+	}
+	ps3AwOn = true;
+	PS3_Logf("[audio] the sound service on its own thread during RenderScene (noaudiothread.txt turns it off)");
+}
+
+// the frame's DMAudio.Service: true when it is left for the worker
+static bool
+PS3_AudioDefer(void)
+{
+	if(!ps3AwInit)
+		PS3_AudioWorkerInit();
+	if(!ps3AwOn)
+		return false;
+	ps3AwDeferred = true;
+	return true;
+}
+
+static void
+PS3_AudioStart(void)
+{
+	if(!ps3AwOn || !ps3AwDeferred)
+		return;
+	ps3AwDeferred = false;
+	sysMutexLock(ps3AwMutex, 0);
+	ps3AwState = 1;
+	sysCondSignal(ps3AwWork);
+	sysMutexUnlock(ps3AwMutex);
+}
+
+static void
+PS3_AudioFinish(void)
+{
+	if(!ps3AwOn)
+		return;
+	if(ps3AwDeferred){
+		// never started this frame: here, as before
+		ps3AwDeferred = false;
+		DMAudio.Service();
+		ps3AwSync++;
+	}
+	if(ps3AwState == 0)
+		return;
+	unsigned long long t0 = PS3_Ticks();
+	sysMutexLock(ps3AwMutex, 0);
+	while(ps3AwState == 1)
+		sysCondWait(ps3AwDone, 0);
+	ps3AwState = 0;
+	sysMutexUnlock(ps3AwMutex);
+	ps3AwWaitTicks += PS3_Ticks() - t0;
+	ps3AwRuns++;
+	static unsigned long long last;
+	unsigned long long now = PS3_Ticks();
+	if(PS3_logsOn && now - last > 10ull * 79800000ull && ps3AwRuns){
+		PS3_Logf("[audio] sound service on its thread: %.2f ms a frame there, the game thread waited %.3f ms a frame for it; "
+		         "%u frames, %u done on the game thread", ps3AwTicks / 79800.0 / ps3AwRuns, ps3AwWaitTicks / 79800.0 / ps3AwRuns,
+		         ps3AwRuns, ps3AwSync);
+		last = now;
+		ps3AwTicks = ps3AwWaitTicks = 0;
+		ps3AwRuns = ps3AwSync = 0;
+	}
+}
+#endif
 namespace rw { namespace ps3 { extern bool rsceneOn; } }	// patch 132
 extern "C" unsigned long long gPS3RSceneTb, gPS3REffectsTb;
 #endif
@@ -2054,6 +2181,9 @@ Apply3DSFogProfile(float fogStart)
 void
 Idle(void *arg)
 {
+#ifdef __PS3__
+	PS3_AudioFinish();	// patch 158: a frame that didn't get to RenderScene
+#endif
 #ifdef _3DS
 	rw::c3d::ProfileLogicFrameScope profileLogicFrame;
 #endif
@@ -2094,7 +2224,12 @@ Idle(void *arg)
 	uint64 profileAudioStart = rw::c3d::profileTimerStart();
 #endif
 	tbStartTimer(0, "DMAudio.Service");
+#ifdef __PS3__
+	if(!PS3_AudioDefer())	// patch 158: on the audio worker during RenderScene
+		DMAudio.Service();
+#else
 	DMAudio.Service();
+#endif
 	tbEndTimer("DMAudio.Service");
 #ifdef _3DS
 	rw::c3d::profileRecordAudio(profileAudioStart);
@@ -2208,6 +2343,7 @@ Idle(void *arg)
 				rw::ps3::rscene.sampledFrames++;
 		}
 		unsigned long long ps3rs0 = PS3_Ticks();
+		PS3_AudioStart();	// patch 158
 		RenderScene();
 		gPS3RSceneTb += PS3_Ticks() - ps3rs0;
 #else
@@ -2236,6 +2372,7 @@ Idle(void *arg)
 			RenderEffects();
 			gPS3REffectsTb += PS3_Ticks() - ps3re0;
 		}
+		PS3_AudioFinish();	// patch 158: before the HUD and the menus (they play sounds)
 #else
 		RenderEffects();
 #endif
