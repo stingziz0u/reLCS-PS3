@@ -977,6 +977,9 @@ static bool mp3Active;		// stream 0 plays one of them (its end: the next one)
 static int32 mp3ResumeIndex = -1;
 static uint32 mp3ResumeMs;
 static int32 Mp3PosInFile(void);
+int gPS3MusicLine;	// patch 161 (MusicManager.cpp)
+static const char *Mp3StreamState(void);
+
 static void
 Mp3Remember(const char *why)
 {
@@ -992,9 +995,9 @@ Mp3Remember(const char *why)
 		mp3ResumeMs = 0;
 	}
 	if(PS3_logsOn)
-		PS3_Logf("[mp3] %s: file %u of %u (%s) at %u:%02u kept", why, mp3ResumeIndex + 1, nNumMP3s,
+		PS3_Logf("[mp3] %s: file %u of %u (%s) at %u:%02u kept (music manager line %d; the stream %s)", why, mp3ResumeIndex + 1, nNumMP3s,
 		         strrchr(mp3List[mp3ResumeIndex].path, '/') ? strrchr(mp3List[mp3ResumeIndex].path, '/') + 1 : mp3List[mp3ResumeIndex].path,
-		         mp3ResumeMs / 60000, mp3ResumeMs / 1000 % 60);
+		         mp3ResumeMs / 60000, mp3ResumeMs / 1000 % 60, gPS3MusicLine, Mp3StreamState());
 }
 
 static int
@@ -2683,8 +2686,8 @@ cSampleManager::StartStreamedFile(uint32 nFile, uint32 nPos, uint8 nStream)
 				pos = p - mp3List[i].streamPos;
 			}
 			if(PS3_logsOn)
-				PS3_Logf("[mp3] start (%s, asked %u:%02u%s): file %u of %u (%s) at %u:%02u", how, nPos / 60000, nPos / 1000 % 60,
-				         wasActive ? ", one was playing" : "", curMp3Index + 1, nNumMP3s,
+				PS3_Logf("[mp3] start (%s, asked %u:%02u%s; music manager line %d, the stream %s): file %u of %u (%s) at %u:%02u", how, nPos / 60000, nPos / 1000 % 60,
+				         wasActive ? ", one was playing" : "", gPS3MusicLine, Mp3StreamState(), curMp3Index + 1, nNumMP3s,
 				         strrchr(mp3List[curMp3Index].path, '/') ? strrchr(mp3List[curMp3Index].path, '/') + 1 : mp3List[curMp3Index].path,
 				         pos / 60000, pos / 1000 % 60);
 			// patch 158: opening the file (and seeking into it) took 13-41 ms
@@ -2844,6 +2847,23 @@ cSampleManager::IsStreamPlaying(uint8 nStream)
 	if(s->eof && s->head - s->tail < 2)
 		return false;
 	return true;
+}
+
+// patch 161: stream 0 as the music manager sees it, for the [mp3] lines
+static const char *
+Mp3StreamState(void)
+{
+	if(StreamPending(0))
+		return streamReqs[0].file == -2 ? "pending (MP3)" : streamReqs[0].file >= 0 ? "pending (a track)" : "pending (stop)";
+	MixLock lock;
+	Stream *s = streams[0];
+	if(s == nil)
+		return "none";
+	if(!s->playing)
+		return "there, not playing";
+	if(s->eof && s->head - s->tail < 2)
+		return "ended";
+	return "playing";
 }
 
 void

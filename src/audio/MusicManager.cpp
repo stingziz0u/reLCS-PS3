@@ -25,6 +25,15 @@
 #include "DMAudio.h"
 #include "GenericGameStorage.h"
 #include "FinalMissionMusic.h"
+// patch 161: which line of the music manager started or stopped the stream
+// (the [mp3] lines say it: the MP3 player started and stopped up to 8 times
+// in a row on getting on a vehicle)
+#ifdef __PS3__
+extern int gPS3MusicLine;
+#define PS3_MUSIC_LINE() (gPS3MusicLine = __LINE__)
+#else
+#define PS3_MUSIC_LINE() ((void)0)
+#endif
 
 #if !defined FIX_BUGS && (defined RADIO_SCROLL_TO_PREV_STATION || defined RADIO_OFF_TEXT)
 static_assert(false, "R*'s radio implementation is quite buggy, RADIO_SCROLL_TO_PREV_STATION and RADIO_OFF_TEXT won't work without FIX_BUGS");
@@ -336,7 +345,7 @@ cMusicManager::Terminate()
 	if (!IsInitialised()) return;
 
 	if (SampleManager.IsStreamPlaying()) {
-		SampleManager.StopStreamedFile();
+		PS3_MUSIC_LINE(), SampleManager.StopStreamedFile();
 		m_nPlayingTrack = NO_TRACK;
 	}
 	m_bIsInitialised = FALSE;
@@ -461,9 +470,9 @@ cMusicManager::ChangeMusicMode(uint8 mode)
 				m_aTracks[m_nPlayingTrack].m_nLastPosCheckTimer = CTimer::GetTimeInMillisecondsPauseMode();
 			}
 		}
-		SampleManager.StopStreamedFile();
+		PS3_MUSIC_LINE(), SampleManager.StopStreamedFile();
 		while (SampleManager.IsStreamPlaying())
-			SampleManager.StopStreamedFile();
+			PS3_MUSIC_LINE(), SampleManager.StopStreamedFile();
 		m_nMusicMode = m_nUpcomingMusicMode;
 		m_bMusicModeChangeStarted = FALSE;
 		m_bTrackChangeStarted = FALSE;
@@ -540,7 +549,7 @@ cMusicManager::Service()
 					m_aTracks[m_nPlayingTrack].m_nLastPosCheckTimer = CTimer::GetTimeInMillisecondsPauseMode();
 					bRadioStatsRecorded = TRUE;
 				}
-				SampleManager.StopStreamedFile();
+				PS3_MUSIC_LINE(), SampleManager.StopStreamedFile();
 			} else {
 				bRadioStatsRecorded = FALSE;
 				m_nMusicMode = m_nMusicModeToBeSet;
@@ -571,7 +580,7 @@ cMusicManager::ServiceFrontEndMode()
 #endif
 
 	if (m_bAnnouncementInProgress) {
-		SampleManager.StopStreamedFile();
+		PS3_MUSIC_LINE(), SampleManager.StopStreamedFile();
 		if (SampleManager.IsStreamPlaying())
 			return;
 		g_bAnnouncementReadPosAlready = FALSE;
@@ -599,7 +608,7 @@ cMusicManager::ServiceFrontEndMode()
 			}
 		} else {
 			if (m_nPlayingTrack == STREAMED_SOUND_RADIO_MP3_PLAYER)
-				SampleManager.StartStreamedFile(STREAMED_SOUND_RADIO_MP3_PLAYER, 0);
+				PS3_MUSIC_LINE(), SampleManager.StartStreamedFile(STREAMED_SOUND_RADIO_MP3_PLAYER, 0);
 			else if (m_nPlayingTrack == STREAMED_SOUND_MISSION_COMPLETED && !AudioManager.m_bIsPaused)
 				ChangeMusicMode(MUSICMODE_GAME);
 		}
@@ -615,7 +624,7 @@ cMusicManager::ServiceFrontEndMode()
 				uint32 trackStartPos = (m_nNextTrack > STREAMED_SOUND_RADIO_POLICE) ? 0 : GetTrackStartPos(m_nNextTrack);
 				if (m_nNextTrack != NO_TRACK) {
 					SampleManager.SetStreamedFileLoopFlag(m_nNextLoopFlag);
-					SampleManager.StartStreamedFile(m_nNextTrack, trackStartPos);
+					PS3_MUSIC_LINE(), SampleManager.StartStreamedFile(m_nNextTrack, trackStartPos);
 					if (m_nNextTrack == STREAMED_SOUND_MISSION_COMPLETED) {
 						/* This short confirmation sting was spending most of its
 						 * duration inside the normal slow frontend fade. */
@@ -641,7 +650,7 @@ cMusicManager::ServiceFrontEndMode()
 				bRadioStatsRecorded = TRUE;
 			}
 			SampleManager.SetStreamedVolumeAndPan(0, 63, FALSE);
-			SampleManager.StopStreamedFile();
+			PS3_MUSIC_LINE(), SampleManager.StopStreamedFile();
 		}
 	}
 }
@@ -655,7 +664,7 @@ cMusicManager::ServiceGameMode()
 		/* SALH5 owns the music mix. Close the stock stream and discard retune
 		 * state without changing the vehicle's saved station, so normal radio
 		 * resumes only after the mission releases the lock. */
-		SampleManager.StopStreamedFile();
+		PS3_MUSIC_LINE(), SampleManager.StopStreamedFile();
 		m_nPlayingTrack = NO_TRACK;
 		m_nFrontendTrack = NO_TRACK;
 		m_bGameplayAllowsRadio = FALSE;
@@ -785,7 +794,7 @@ cMusicManager::ServiceGameMode()
 			&& m_nPlayingTrack == STREAMED_SOUND_RADIO_MP3_PLAYER
 			&& !SampleManager.IsStreamPlaying())
 		{
-			SampleManager.StartStreamedFile(STREAMED_SOUND_RADIO_MP3_PLAYER, 0);
+			PS3_MUSIC_LINE(), SampleManager.StartStreamedFile(STREAMED_SOUND_RADIO_MP3_PLAYER, 0);
 		}
 
 		if (!m_bRadioSetByScript)
@@ -884,7 +893,7 @@ cMusicManager::ServiceGameMode()
 
 	if (m_bAnnouncementInProgress)
 	{
-		SampleManager.StopStreamedFile();
+		PS3_MUSIC_LINE(), SampleManager.StopStreamedFile();
 		if (SampleManager.IsStreamPlaying())
 			return;
 		g_bAnnouncementReadPosAlready = FALSE;
@@ -1046,13 +1055,13 @@ cMusicManager::ServiceAnnouncement()
 			g_bAnnouncementReadPosAlready = TRUE;
 			m_aTracks[m_nPlayingTrack].m_nLastPosCheckTimer = CTimer::GetTimeInMillisecondsPauseMode();
 		}
-		SampleManager.StopStreamedFile();
+		PS3_MUSIC_LINE(), SampleManager.StopStreamedFile();
 	} else {
 		g_bAnnouncementReadPosAlready = FALSE;
 		m_nPlayingTrack = NO_TRACK;
 		m_nNextTrack = m_nAnnouncement;
 		SampleManager.SetStreamedFileLoopFlag(FALSE);
-		SampleManager.StartStreamedFile(m_nNextTrack, 0);
+		PS3_MUSIC_LINE(), SampleManager.StartStreamedFile(m_nNextTrack, 0);
 		SampleManager.SetStreamedVolumeAndPan(MAX_VOLUME, 63, FALSE);
 		m_bAnnouncementInProgress = TRUE;
 	}
@@ -1080,7 +1089,7 @@ cMusicManager::ServiceTrack(CVehicle *veh, CPed *ped)
 				RecordRadioStats();
 			}
 			SampleManager.SetStreamedVolumeAndPan(0, 63, FALSE);
-			SampleManager.StopStreamedFile();
+			PS3_MUSIC_LINE(), SampleManager.StopStreamedFile();
 		}
 		m_nPlayingTrack = NO_TRACK;
 		m_bTrackChangeStarted = FALSE;
@@ -1098,7 +1107,7 @@ cMusicManager::ServiceTrack(CVehicle *veh, CPed *ped)
 				bRadioStatsRecorded = TRUE;
 			}
 			SampleManager.SetStreamedVolumeAndPan(0, 63, FALSE);
-			SampleManager.StopStreamedFile();
+			PS3_MUSIC_LINE(), SampleManager.StopStreamedFile();
 		}
 		return;
 	}
@@ -1140,7 +1149,7 @@ cMusicManager::ServiceTrack(CVehicle *veh, CPed *ped)
 					uint32 pos = GetTrackStartPos(m_nNextTrack);
 					if (m_nNextTrack != NO_TRACK) {
 						SampleManager.SetStreamedFileLoopFlag(TRUE);
-						SampleManager.StartStreamedFile(m_nNextTrack, pos);
+						PS3_MUSIC_LINE(), SampleManager.StartStreamedFile(m_nNextTrack, pos);
 						if (m_nFrontendTrack < STREAMED_SOUND_CITY_AMBIENT || m_nFrontendTrack > STREAMED_SOUND_AMBSIL_AMBIENT)
 						{
 							m_nVolumeLatency = 10;
@@ -1174,7 +1183,7 @@ cMusicManager::ServiceTrack(CVehicle *veh, CPed *ped)
 					}
 				}
 				SampleManager.SetStreamedVolumeAndPan(0, 63, FALSE);
-				SampleManager.StopStreamedFile();
+				PS3_MUSIC_LINE(), SampleManager.StopStreamedFile();
 			}
 		}
 		return;
@@ -1256,7 +1265,7 @@ cMusicManager::PreloadCutSceneMusic(uint32 track)
 	if (IsInitialised() && !m_bDisabled && track < TOTAL_STREAMED_SOUNDS && m_nMusicMode == MUSICMODE_CUTSCENE) {
 		AudioManager.ResetPoliceRadio();
 		while (SampleManager.IsStreamPlaying())
-			SampleManager.StopStreamedFile();
+			PS3_MUSIC_LINE(), SampleManager.StopStreamedFile();
 		SampleManager.PreloadStreamedFile(track);
 		SampleManager.SetStreamedVolumeAndPan(MAX_VOLUME, 63, TRUE);
 		m_nPlayingTrack = track;
@@ -1274,7 +1283,7 @@ void
 cMusicManager::StopCutSceneMusic(void)
 {
 	if (IsInitialised() && !m_bDisabled && m_nMusicMode == MUSICMODE_CUTSCENE) {
-		SampleManager.StopStreamedFile();
+		PS3_MUSIC_LINE(), SampleManager.StopStreamedFile();
 		m_nPlayingTrack = NO_TRACK;
 	}
 }
