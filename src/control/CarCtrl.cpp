@@ -1286,9 +1286,11 @@ CCarCtrl::UpdateCarOnRails(CVehicle* pVehicle)
 		}
 		return;
 	}
-	SlowCarOnRailsDownForTrafficAndLights(pVehicle);
+	// patch 159: in Staunton the cars on rails took 0.1 ms each (1.1-1.8 ms
+	// a frame): which part
+	PS3_PROF_CALL(PS3_PROF_VEHICLES, "rails: slow down for traffic and lights", SlowCarOnRailsDownForTrafficAndLights(pVehicle));
 	if (pVehicle->AutoPilot.m_nTimeEnteredCurve + pVehicle->AutoPilot.m_nTimeToSpendOnCurrentCurve <= CTimer::GetTimeInMilliseconds())
-		PickNextNodeAccordingStrategy(pVehicle);
+		PS3_PROF_CALL(PS3_PROF_VEHICLES, "rails: next node (PickNextNodeAccordingStrategy)", PickNextNodeAccordingStrategy(pVehicle));
 	if (pVehicle->GetStatus() == STATUS_PHYSICS)
 		return;
 	CCarPathLink* pCurrentLink = &ThePaths.m_carPathLinks[pVehicle->AutoPilot.m_nCurrentPathNodeInfo];
@@ -1313,7 +1315,7 @@ CCarCtrl::UpdateCarOnRails(CVehicle* pVehicle)
 	directionNextLink.Normalise();
 	CVector positionIncludingCurve;
 	CVector directionIncludingCurve;
-	CCurves::CalcCurvePoint(
+	PS3_PROF_CALL(PS3_PROF_VEHICLES, "rails: curve point", CCurves::CalcCurvePoint(
 		&positionOnCurrentLinkIncludingLane,
 		&positionOnNextLinkIncludingLane,
 		&directionCurrentLink,
@@ -1322,9 +1324,9 @@ CCarCtrl::UpdateCarOnRails(CVehicle* pVehicle)
 		pVehicle->AutoPilot.m_nTimeToSpendOnCurrentCurve,
 		&positionIncludingCurve,
 		&directionIncludingCurve
-	);
+	));
 	positionIncludingCurve.z = 15.0f;
-	DragCarToPoint(pVehicle, &positionIncludingCurve);
+	PS3_PROF_CALL(PS3_PROF_VEHICLES, "rails: drag to the point (DragCarToPoint)", DragCarToPoint(pVehicle, &positionIncludingCurve));
 	pVehicle->SetMoveSpeed(directionIncludingCurve / GAME_SPEED_TO_CARAI_SPEED);
 }
 
@@ -1398,11 +1400,13 @@ void
 CCarCtrl::SlowCarOnRailsDownForTrafficAndLights(CVehicle* pVehicle)
 {
 	float maxSpeed;
-	if (CTrafficLights::ShouldCarStopForLight(pVehicle, false) || CTrafficLights::ShouldCarStopForBridge(pVehicle)){
+	bool ps3Stop;
+	PS3_PROF_CALL(PS3_PROF_VEHICLES, "rails:   lights and bridge", ps3Stop = CTrafficLights::ShouldCarStopForLight(pVehicle, false) || CTrafficLights::ShouldCarStopForBridge(pVehicle));
+	if (ps3Stop){
 		CCarAI::CarHasReasonToStop(pVehicle);
 		maxSpeed = 0.0f;
 	}else{
-		maxSpeed = FindMaximumSpeedForThisCarInTraffic(pVehicle);
+		PS3_PROF_CALL(PS3_PROF_VEHICLES, "rails:   cars and peds ahead (FindMaximumSpeedForThisCarInTraffic)", maxSpeed = FindMaximumSpeedForThisCarInTraffic(pVehicle));
 	}
 	float curSpeed = pVehicle->AutoPilot.m_fMaxTrafficSpeed;
 	if (maxSpeed >= curSpeed){
