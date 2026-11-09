@@ -13,7 +13,7 @@ converted from your own copy. It is the sibling of
 [reVC-PS3](https://github.com/stingziz0u/reVC-PS3) (GTA Vice City), and
 shares their PS3 layer.
 
-> **Status: 1.3 alpha.** The game is playable on a real PS3, but it hasn't
+> **Status: 1.4 alpha.** The game is playable on a real PS3, but it hasn't
 > been played through yet. reLCS itself is still a work in progress (its
 > audio, for one), and this is still an alpha of the port: **expect bugs,
 > crashes and odd things**, and please report them with the log (see
@@ -25,8 +25,9 @@ shares their PS3 layer.
 > - Some LOD buildings can still pop in at a distance.
 > - Thin dark lines on some buildings flicker as the camera moves (two
 >   surfaces at the same depth).
-> - The windows of some buildings can show the empty inside of the
->   building, depending on the weather and the camera angle. Left for 1.4.
+> - The experimental second render thread (`USRDIR/rsplitthread.txt`, off
+>   by default) shows LOD pop-in the first time you approach some buildings
+>   and isn't faster yet.
 >
 > If the game crashes or freezes, please send the log (it is only written
 > with an empty `USRDIR/logson.txt`, see [Troubleshooting](#troubleshooting)).
@@ -37,6 +38,65 @@ Liberty City Stories for PS2, converted with the
 (see [Installation](#installation)). The PKG only has the program, its icon
 and two res-PS3 files (the PlayStation button icons and the controller
 picture of the settings page).
+
+## What's new in 1.4
+
+Performance (in the tests the busiest streets of Portland stay at or near 60 fps):
+
+- **Faster collision**: every building keeps its collision box in the
+  world, so the lines the game casts (the cars on rails put on the road,
+  the camera, the lines of sight) skip the buildings they can't touch
+  before any maths; the big collision models have a grid of their
+  triangles, so a car only looks at the triangles near it (about 3000
+  boxes a frame instead of 28000). Collision went from about 2.5 ms a frame
+  to 1.5, and the cars on rails from 0.8 ms to 0.2-0.4. Both give the same
+  results as before (`USRDIR/nocolgrid.txt` turns them off).
+- The lines of sight and vertical lines go through the triangles' boxes
+  too (only the triangles their box touches are tested).
+- The sound service runs on its own thread while the scene is drawn
+  (`USRDIR/noaudiothread.txt` turns it off), and the radio's MP3 files are
+  opened on the stream thread (they stalled the frame).
+- The peds' bones are worked out on an SPU (`USRDIR/nospuanim.txt` turns
+  it off).
+- Drawing: the opaque buildings sorted by texture, the sampler registers
+  and the shader constants only written when they change, lean flushes for
+  a building's later meshes, the off-screen LODs culled by their sphere.
+- No pause when crossing to another island.
+
+Fixes:
+
+- **The windows that came and went** (glass2_64): depending on the weather
+  some windows showed the empty inside of the building or vanished. The
+  buildings' see-through materials are drawn at full alpha, as after their
+  fade-in (`USRDIR/glassalpha.txt` goes back to their own alpha).
+- **Saves with bikes**: the LoadVehiclePool / SaveVehiclePool asserts are
+  gone (the saved bikes' size was a boat's).
+- **The MP3 player** goes on where it was, starts on a random song, no
+  longer restarts while you tune the radio, and the radio no longer plays
+  the save's songs every time.
+- Blips: the script's colours and LCS's colours for peds and places, *The
+  Sicilian Gambit*'s wise guy keeps his blip, and a blip a mission left in
+  the save goes away.
+- The rampages show up on the map again (the on-a-mission flag stuck
+  at 1).
+- Interiors: the locked camera no longer spins, the camera on foot works as
+  the free one, a script camera indoors gets the 4:3 view, Ammu-Nation's
+  camera no longer clips through and its display guns stay loaded,
+  Toshiko's flat shows in her cutscenes.
+- The subway seen from its platforms, the LODs paired by place, graffiti
+  drawn after their walls, the LODs pushed behind the detailed buildings.
+- The ferry out of the car spawner; full health and armour mean the max.
+
+Experimental (off by default, each an empty file in `USRDIR`):
+
+- `rsplitthread.txt`: the buildings recorded by a second thread into
+  command buffers the RSX calls, while the game thread draws the rest.
+  Stable in the tests, but with LOD pop-in the first time you approach
+  some buildings, and the PPU's two hardware threads share one core, so
+  it isn't faster yet. Normal play doesn't need it: every fix and speed-up
+  above is in without it.
+- `rsplit.txt`: the buildings' draws into a command sub-buffer on the same
+  thread.
 
 ## What's new in 1.3
 
@@ -297,7 +357,11 @@ and unconverted assets from other games or platforms don't.
   way. Radio or music that misbehaves when changing stations:
   `USRDIR/nostreamasync.txt` opens the streams on the game's thread again.
   Collisions that look wrong: `USRDIR/novmxcol.txt` turns off the AltiVec
-  collision broadphase.
+  collision broadphase, and `USRDIR/nocolgrid.txt` the collision grids and
+  the buildings' world boxes (`USRDIR/vmxcolcheck.txt` compares the
+  broadphase with the old loop and logs any difference). Sound that
+  stutters or stops: `USRDIR/noaudiothread.txt` runs the sound service on
+  the game's thread again.
 - Sound or particles that look or sound wrong: an empty
   `USRDIR/nospuaudio.txt` mixes the audio on the PPU again,
   `USRDIR/nospuparticles.txt` builds the particles on the PPU again, and
