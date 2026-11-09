@@ -2413,6 +2413,36 @@ CStreaming::LoadBigBuildingsWhenNeeded(void)
 	   CTheZones::m_CurrLevel == CGame::currLevel)
 		return;
 
+#ifdef __PS3__
+	// patch 152: crossing to another island froze the game for 0.35-0.5 s
+	// (Ren in the heli and on the bike; "[prof] worst frame 529 ms ...
+	// stream: big buildings 441"): the PS2's loading pause between islands,
+	// a loading screen, the old island's LODs thrown out and the new one's
+	// all read from the disc before the next frame. LCS streams them: the
+	// old island's LODs go (the island LODs stand for it, as before), the new
+	// island's are asked for and come in over the next frames, and the game
+	// goes on meanwhile. USRDIR/islandpause.txt: the pause as before.
+	{
+		static int pause = -1;
+		if(pause < 0){
+			FILE *f = fopen(PS3_USRDIR "/islandpause.txt", "rb");
+			pause = f != nil;
+			if(f) fclose(f);
+		}
+		if(!pause){
+			unsigned long long t0 = PS3_Ticks();
+			eLevelName from = CGame::currLevel;
+			CGame::currLevel = CTheZones::m_CurrLevel;
+			PS3_PROF_CALL(PS3_PROF_GAME, "stream: island change, old LODs out", RemoveUnusedBigBuildings(CGame::currLevel));
+			PS3_PROF_CALL(PS3_PROF_GAME, "stream: island change, old buildings out", RemoveUnusedBuildings(CGame::currLevel));
+			PS3_PROF_CALL(PS3_PROF_GAME, "stream: island change, new LODs asked for",
+			              CStreaming::RequestBigBuildings(CGame::currLevel, TheCamera.GetPosition()));
+			PS3_Logf("[island] level %d -> %d at %.0f %.0f: the LODs streamed, no pause (%.1f ms)", (int)from, (int)CGame::currLevel,
+			         TheCamera.GetPosition().x, TheCamera.GetPosition().y, (PS3_Ticks() - t0) / 79800.0);
+			return;
+		}
+	}
+#endif
 	CTimer::Suspend();
 	CGame::currLevel = CTheZones::m_CurrLevel;
 	ISLAND_LOADING_IS(LOW)

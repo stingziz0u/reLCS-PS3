@@ -3254,6 +3254,30 @@ CRenderer::SetupBigBuildingVisibility(CEntity *ent)
 #endif
 	}
 
+#ifdef __PS3__
+	// patch 152: the LODs off screen out first. The big building lists are
+	// scanned whole every frame (0.6-0.8 ms of CnstrRenderList's 1.4); about
+	// two thirds of them are behind or beside the camera, and each went
+	// through the distances, its atomic, the alpha and the eight corners of
+	// GetIsOnScreenComplex before it was found off screen. A sphere against
+	// the view frustum says it for less; what's left is as before (the
+	// sphere test lets more through than the corners do, never fewer).
+	// USRDIR/nobigprecull.txt: every one the whole way.
+	{
+		static int noPreCull = -1;
+		if(noPreCull < 0){
+			FILE *f = fopen(PS3_USRDIR "/nobigprecull.txt", "rb");
+			noPreCull = f != nil;
+			if(f) fclose(f);
+			PS3_Logf("[5] LODs off screen culled by their sphere first: %s", noPreCull ? "OFF (nobigprecull.txt)" : "on (nobigprecull.txt turns it off)");
+		}
+		if(!noPreCull && ent->IsBuilding() && !TheCamera.IsSphereVisible(ent->GetBoundCentre(), ent->GetBoundRadius())){
+			mi->m_alpha = 255;
+			PS3_BB(PS3BB_OFFSCREEN);
+			return PS3_InspVis(ent, (VIS_INVISIBLE), __LINE__);
+		}
+	}
+#endif
 	float dist = (ms_vecCameraPosition-ent->GetPosition()).Magnitude();
 	CSimpleModelInfo *nonLOD = mi->GetRelatedModel();
 
