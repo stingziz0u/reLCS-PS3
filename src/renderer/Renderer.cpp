@@ -2370,6 +2370,20 @@ PS3_SplitInit(void)
 		if(ps3SpSelf || ps3SpWaitNow)
 			PS3_Logf("[split] test mode: %s", ps3SpSelf ? "the game thread records the chunks itself (rsplitself.txt)" :
 			         "the game thread waits for the second thread at once (rsplitwait.txt)");
+		// patch 176: the experiments, only with one of those (the RSX can't
+		// reach the chunks before they're done: the ring isn't kicked meanwhile)
+		if(ps3SpSelf || ps3SpWaitNow){
+			f = fopen(PS3_USRDIR "/rsplitinline.txt", "rb");
+			if(f){ fclose(f); rw::ps3::splitInline = true; }
+			f = fopen(PS3_USRDIR "/rsplitnowait.txt", "rb");
+			if(f){ fclose(f); rw::ps3::splitNoWait = true; }
+			f = fopen(PS3_USRDIR "/rsplitnop.txt", "rb");
+			if(f){ fclose(f); rw::ps3::splitNop = true; }
+			PS3_Logf("[split] experiment: %s%s%s%s", rw::ps3::splitInline ? "the chunks copied into the ring (rsplitinline.txt) " : "",
+			         rw::ps3::splitNoWait ? "no waits on the labels (rsplitnowait.txt) " : "",
+			         rw::ps3::splitNop ? "a NOP in the empty chunks (rsplitnop.txt) " : "",
+			         rw::ps3::splitInline || rw::ps3::splitNoWait || rw::ps3::splitNop ? "" : "none");
+		}
 	}
 	rw::ps3::splitJoinHook = PS3_SplitJoin;	// patch 172: before every present too
 	ps3SpPrevHang = PS3_hangDumpHook;	// patch 172: the [hang] dump says where it is
@@ -2406,6 +2420,8 @@ PS3_SplitStart(CEntity **list, int n)
 		rw::ps3::splitBusy = true;
 		PS3_SplitRecord(false);
 		rw::ps3::splitBusy = false;
+		if(rw::ps3::splitInline)
+			rw::ps3::splitInlineCopy();	// patch 176
 		rw::ps3::splitStats.threadFrames++;
 		rw::ps3::forgetDrawState();	// the game thread's commands go on in the ring after the slots
 		return true;
@@ -2416,8 +2432,11 @@ PS3_SplitStart(CEntity **list, int n)
 	sysCondSignal(ps3SpWork);
 	sysMutexUnlock(ps3SpMutex);
 	ps3SpMainStep = 2;
-	if(ps3SpWaitNow)
+	if(ps3SpWaitNow){
 		PS3_SplitJoin();	// patch 174: test mode
+		if(rw::ps3::splitInline)
+			rw::ps3::splitInlineCopy();	// patch 176
+	}
 	return true;
 }
 

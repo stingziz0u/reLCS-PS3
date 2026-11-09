@@ -677,11 +677,41 @@ countDraw(void)
 }
 
 static RW_TLS bool leanFlush;	// patch 157: set by leedsRenderCB for a mesh after the atomic's first
+// patch 176: a draw recorded into a chunk (the freeze: the RSX stopped at
+// a draw inside one) checked against its geometry's buffers
+static void
+checkChunkDraw(InstanceDataHeader *header, InstanceData *inst)
+{
+	const char *why = nil;
+	if(header->ib.block == nil || header->vb.block == nil)
+		why = "its buffers are freed";
+	else if(inst->offset + inst->numIndex*2 > header->ib.size)
+		why = "its indices past the index buffer";
+	else if(header->stride == 0 || header->totalNumVertex*header->stride > header->vb.size)
+		why = "its vertices past the vertex buffer";
+	else if(inst->offset & 1)
+		why = "an odd index offset";
+	else
+		for(int i = 0; i < header->numAttribs; i++)
+			if(header->attribs[i].offset >= header->stride){
+				why = "an attribute past the stride";
+				break;
+			}
+	if(why == nil)
+		return;
+	if(splitStats.badDraws++ < 8)
+		rsxLog("[split] a wrong draw in a chunk: %s (ib 0x%08x+%u size %u, %u indices; vb 0x%08x size %u, %u vertices x %u)",
+		       why, header->ib.offset, inst->offset, header->ib.size, inst->numIndex,
+		       header->vb.offset, header->vb.size, header->totalNumVertex, header->stride);
+}
+
 static void
 drawInst_simple(InstanceDataHeader *header, InstanceData *inst)
 {
 	if(inst->numIndex == 0 || !(leanFlush ? flushCacheLean() : flushCache()))
 		return;
+	if(rsxCtx != mainRsxCtx)
+		checkChunkDraw(header, inst);	// patch 176
 	drawIndexed(header->primType, header->ib.offset + inst->offset, inst->numIndex, inst->numVertices);
 }
 

@@ -233,6 +233,9 @@ static gcmContextData workerCtx;
 static gcmContextData *workerPrevCtx;	// patch 174: the thread's buffer before (the game thread's own in the self test)
 static uint32 chunkBytes[SPLIT_CHUNKS];	// patch 174: for the first frame's dump
 static u32 *slotsBegin, *slotsEnd;
+// patch 176: the experiments on the freeze (with rsplitself or rsplitwait)
+bool splitInline, splitNoWait, splitNop;
+static int32 lastSub = -1, lastUsed;
 static int32 workerSub = -1, workerChunk;
 static uint32 workerSeq;
 static volatile u32 *splitLabel[SPLIT_CHUNKS];
@@ -282,10 +285,12 @@ splitEmitSlots(uint32 *seq)
 	*seq = frame + 1;	// never 0: the labels start at 0
 	rsxFlushBuffer(mainRsxCtx);	// what came before: the RSX on it now
 	slotsBegin = mainRsxCtx->current;
-	for(int32 i = 0; i < SPLIT_CHUNKS; i++){
-		rsxSetWaitLabel(mainRsxCtx, SPLIT_LABEL0 + i, *seq);
-		rsxSetCallCommand(mainRsxCtx, subOffset[k] + i*SPLIT_CHUNK_SIZE);
-	}
+	if(!splitInline)	// patch 176: inline, the chunks are copied into the ring after
+		for(int32 i = 0; i < SPLIT_CHUNKS; i++){
+			if(!splitNoWait)	// patch 176: without the waits
+				rsxSetWaitLabel(mainRsxCtx, SPLIT_LABEL0 + i, *seq);
+			rsxSetCallCommand(mainRsxCtx, subOffset[k] + i*SPLIT_CHUNK_SIZE);
+		}
 	slotsEnd = mainRsxCtx->current;
 	memset(chunkBytes, 0, sizeof(chunkBytes));
 	subUsed[k] = true;
@@ -361,6 +366,47 @@ splitWorkerBegin(int32 k, uint32 seq)
 	workerOpenChunk();
 	workerPrevCtx = rsxCtx;
 	rsxCtx = &workerCtx;
+}
+
+// patch 176 (rsplitinline.txt): the chunks just recorded copied into the
+// ring, method by method (a method's words never split by the ring's jumps):
+// the same commands with no CALL, RETURN or wait
+void
+splitInlineCopy(void)
+{
+	if(lastSub < 0 || mainRsxCtx == nil)
+		return;
+	for(int32 i = 0; i < lastUsed; i++){
+		u32 *src = (u32*)((uint8*)ioBuffer + SUB_BASE + lastSub*SUB_SIZE + i*SPLIT_CHUNK_SIZE);
+		uint32 words = chunkBytes[i] / 4;
+		if(words)
+			words--;	// its RETURN
+		uint32 p = 0;
+		while(p < words){
+			uint32 n = 0;
+			while(p + n < words){
+				u32 h = src[p + n];
+				uint32 sz;
+				if(h == 0)
+					sz = 1;
+				else if((h & 0xE0000003) != 0){
+					// a jump, call or return in the middle: shouldn't be
+					splitStats.inlineOdd++;
+					sz = 1;
+				}else
+					sz = 1 + ((h >> 18) & 0x7FF);
+				if(n > 0 && n + sz > 1024)
+					break;
+				n += sz;
+			}
+			if(p + n > words)
+				n = words - p;
+			rsxSetNopCommand(mainRsxCtx, n);
+			memcpy(mainRsxCtx->current - n, src + p, n * 4);
+			p += n;
+		}
+	}
+	lastSub = -1;
 }
 
 // patch 174: the first threaded frame's slots in the ring and its chunks as
@@ -446,8 +492,12 @@ splitWorkerEnd(void)
 		c.begin = c.current = mem;
 		c.end = mem + 16;
 		c.callback = mainRsxCtx->callback;
+		if(splitNop)
+			rsxSetNopCommand(&c, 1);	// patch 176: not a chunk that is only a RETURN
 		rsxSetReturnCommand(&c);
 	}
+	lastSub = workerSub;
+	lastUsed = workerChunk + 1;
 	__asm__ volatile("sync" ::: "memory");
 	for(int32 i = workerChunk + 1; i < SPLIT_CHUNKS; i++)
 		*splitLabel[i] = workerSeq;
@@ -1008,6 +1058,9 @@ logStats(void)
 			       (double)splitStats.chunks / splitStats.threadFrames, splitStats.peak, SPLIT_CHUNKS, splitStats.leftover,
 			       splitStats.workUs / 1000.0 / splitStats.threadFrames, splitStats.joinUs / 1000.0 / splitStats.threadFrames,
 			       splitStats.finishSkipped, splitStats.waitUs / 1000.0 / n, splitStats.sameFrame);
+		if(splitStats.badDraws || splitStats.inlineOdd)
+			rsxLog("[split]   draws found wrong while recorded into a chunk: %u; odd words in a chunk copied inline: %u",
+			       splitStats.badDraws, splitStats.inlineOdd);
 		if(splitStats.midChunk || splitStats.overflow)
 			rsxLog("[split]   chunks filled in the middle of a building: %u; with no chunk left (commands lost): %u",
 			       splitStats.midChunk, splitStats.overflow);

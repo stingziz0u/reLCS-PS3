@@ -239,7 +239,7 @@ extern RW_TLS bool decalBuilding;
 // command buffer to it (false: not now, draw as usual), subBufferRoom says
 // the bytes left, subBufferEnd returns to the ring and calls it from there.
 struct SplitStats { uint32 calls, bytes, peak, full, waitUs, chunks;
-	uint32 threadFrames, leftover, workUs, joinUs, finishSkipped, sameFrame, midChunk, overflow; };	// patch 171-173
+	uint32 threadFrames, leftover, workUs, joinUs, finishSkipped, sameFrame, midChunk, overflow, badDraws, inlineOdd; };	// patch 171-176
 extern SplitStats splitStats;
 extern bool splitBuildings;	// USRDIR/rsplit.txt
 bool subBufferBegin(void);
@@ -262,7 +262,12 @@ extern RW_TLS bool onSplitWorker;	// patch 171: this thread records the building
 extern volatile bool splitBusy;
 extern void (*splitJoinHook)(void);
 void splitHangReport(void);
-extern bool splitDumpNext;	// patch 174	// patch 172: [hang] lines	// patch 172: called before a frame is presented	// patch 170: the part recorded so far called from the ring now, the ring kicked
+extern bool splitDumpNext;	// patch 174
+// patch 176: the freeze's experiments (with rsplitself.txt or rsplitwait.txt):
+// rsplitinline.txt (the chunks copied into the ring, no CALL / RETURN /
+// wait), rsplitnowait.txt (no waits), rsplitnop.txt (no chunk only a RETURN)
+extern bool splitInline, splitNoWait, splitNop;
+void splitInlineCopy(void);	// patch 172: [hang] lines	// patch 172: called before a frame is presented	// patch 170: the part recorded so far called from the ring now, the ring kicked
 extern bool leedsFullAlpha;	// patch 167: buildings' materials at alpha 255 (USRDIR/glassalpha.txt: their own)
 extern uint32 leedsFullAlphaCount;
 // patch 163 (render split): the draw state is one per thread; a second
