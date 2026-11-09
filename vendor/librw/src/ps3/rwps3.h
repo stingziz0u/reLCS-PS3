@@ -250,6 +250,7 @@ struct RSceneStats
 	uint32 lights;			// lights set (directionals + locals)
 	uint32 flushes, invalidates;	// patch 133
 	uint32 texBinds, texDistinct, sampRegsSkipped;	// patch 151
+	uint32 sampledFrames;	// patch 153: the frames timed (one in four)
 };
 extern uint32 rsceneFrame;	// patch 151: bumped once a frame (ps3video.cpp)
 extern RSceneStats rscene;

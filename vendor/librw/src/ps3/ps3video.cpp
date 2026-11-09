@@ -587,33 +587,37 @@ logStats(void)
 		// patch 132: RenderScene's breakdown
 		RSceneStats &r = rscene;
 		double k = 1000.0 / (double)sysGetTimebaseFrequency() / n;
+		// patch 153: the pipelines are timed one frame in four (rsceneOn,
+		// main.cpp): their figures are per timed frame
+		uint32 ns = r.sampledFrames ? r.sampledFrames : n;
+		double ks = 1000.0 / (double)sysGetTimebaseFrequency() / ns;
 		uint32 at = 0, me = 0;
 		for(int i = 0; i < RSP_NUM; i++){
 			at += r.atomics[i];
 			me += r.meshes[i];
 		}
-		double sc = gPS3RSceneTb*k, fx = gPS3REffectsTb*k, pipe = r.pipeTb*k;
+		double sc = gPS3RSceneTb*k, fx = gPS3REffectsTb*k, pipe = r.pipeTb*ks;
 		rsxLog("[rscene] per frame: RenderScene %.2f ms + RenderEffects %.2f ms; the atomic pipelines %.2f ms of them "
 		       "(%u atomics, %u meshes, %.2f us an atomic), the rest %.2f ms (the game's lists, sorting and callbacks, Im3D/Im2D)",
-		       sc, fx, pipe, at/n, me/n, at ? r.pipeTb*k*n*1000.0/at : 0.0, sc + fx - pipe);
+		       sc, fx, pipe, at/ns, me/ns, at ? r.pipeTb*ks*ns*1000.0/at : 0.0, sc + fx - pipe);
 		rsxLog("[rscene]   in the pipelines (ms): instance %.2f, frame LTM %.2f, world matrix %.2f, lights %.2f (%u a frame), "
 		       "vertex arrays %.2f, programs %.2f, skin bones %.2f, materials %.2f, textures %.2f, states %.2f, "
 		       "draws %.2f (the draw command and its kick %.2f), car meshes (matfx, all of it) %.2f; flushCache everywhere %.2f",
-		       r.tb[RS_INSTANCE]*k, r.tb[RS_LTM]*k, r.tb[RS_WORLDMAT]*k, r.tb[RS_LIGHTS]*k, r.lights/n,
-		       r.tb[RS_ATTRIBS]*k, r.tb[RS_PROGRAMS]*k, r.tb[RS_SKIN]*k, r.tb[RS_MATERIAL]*k, r.tb[RS_TEXTURE]*k,
-		       r.tb[RS_STATES]*k, r.tb[RS_DRAW]*k, r.cmdTb*k, r.tb[RS_MATFXMESH]*k, r.flushTb*k);
+		       r.tb[RS_INSTANCE]*ks, r.tb[RS_LTM]*ks, r.tb[RS_WORLDMAT]*ks, r.tb[RS_LIGHTS]*ks, r.lights/ns,
+		       r.tb[RS_ATTRIBS]*ks, r.tb[RS_PROGRAMS]*ks, r.tb[RS_SKIN]*ks, r.tb[RS_MATERIAL]*ks, r.tb[RS_TEXTURE]*ks,
+		       r.tb[RS_STATES]*ks, r.tb[RS_DRAW]*ks, r.cmdTb*ks, r.tb[RS_MATFXMESH]*ks, r.flushTb*ks);
 		rsxLog("[rscene]   atomics / meshes a frame: buildings (Leeds) %u / %u, default %u / %u, skinned %u / %u, cars (matfx) %u / %u",
-		       r.atomics[RSP_LEEDS]/n, r.meshes[RSP_LEEDS]/n, r.atomics[RSP_DEFAULT]/n, r.meshes[RSP_DEFAULT]/n,
-		       r.atomics[RSP_SKIN]/n, r.meshes[RSP_SKIN]/n, r.atomics[RSP_MATFX]/n, r.meshes[RSP_MATFX]/n);
+		       r.atomics[RSP_LEEDS]/ns, r.meshes[RSP_LEEDS]/ns, r.atomics[RSP_DEFAULT]/ns, r.meshes[RSP_DEFAULT]/ns,
+		       r.atomics[RSP_SKIN]/ns, r.meshes[RSP_SKIN]/ns, r.atomics[RSP_MATFX]/ns, r.meshes[RSP_MATFX]/ns);
 		// patch 133: flushCache's parts (everywhere: the pipelines and Im2D/Im3D)
 		rsxLog("[rscene]   flushCache (ms): %u a frame, the vertex cache invalidated %u times (with a sync) %.2f, "
 		       "render states %.2f, texture samplers %.2f, programs %.2f, matrices / lights / fog worked out %.2f, "
-		       "constants uploaded %.2f (%u registers a frame)",
-		       r.flushes/n, r.invalidates/n, r.tb[RS_F_INVALIDATE]*k, r.tb[RS_F_STATES]*k, r.tb[RS_F_SAMPLERS]*k,
-		       r.tb[RS_F_PROGRAMS]*k, r.tb[RS_F_DERIVED]*k, r.tb[RS_F_UPLOAD]*k, drawStats.constUploads/n);
+		       "constants uploaded %.2f (%u registers a frame); timed %u frames of %u",
+		       r.flushes/ns, r.invalidates/ns, r.tb[RS_F_INVALIDATE]*ks, r.tb[RS_F_STATES]*ks, r.tb[RS_F_SAMPLERS]*ks,
+		       r.tb[RS_F_PROGRAMS]*ks, r.tb[RS_F_DERIVED]*ks, r.tb[RS_F_UPLOAD]*ks, drawStats.constUploads/n, ns, n);
 		rsxLog("[rscene]   textures: %u bound a frame, %u different ones (sorted by texture, about that many binds); "
 		       "%u sampler register writes left out (unchanged)",
-		       r.texBinds/n, r.texDistinct/n, r.sampRegsSkipped/n);	// patch 151
+		       r.texBinds/ns, r.texDistinct/ns, r.sampRegsSkipped/ns);	// patch 151
 		memset(&rscene, 0, sizeof(rscene));
 		gPS3RSceneTb = gPS3REffectsTb = 0;
 	}

@@ -96,6 +96,7 @@
 #endif
 
 #ifdef __PS3__
+#include "src/ps3/rwps3.h"	// patch 153 (rscene)
 namespace rw { namespace ps3 { extern bool rsceneOn; } }	// patch 132
 extern "C" unsigned long long gPS3RSceneTb, gPS3REffectsTb;
 #endif
@@ -2190,7 +2191,22 @@ Idle(void *arg)
 		phaseStart = re3_wall_time_ms();
 #ifdef __PS3__
 		// patch 132: RenderScene's breakdown ([rscene], librw's ps3video.cpp)
-		rw::ps3::rsceneOn = PS3_logsOn != 0;
+		// patch 153: one frame in four timed (the timers in every pipeline
+		// and flushCache cost the frames they measure); USRDIR/nostats.txt:
+		// none, to compare the frame rate with the logs on
+		{
+			static int noStats = -1;
+			static uint32 rsFrame;
+			if (noStats < 0) {
+				FILE *f = fopen(PS3_USRDIR "/nostats.txt", "rb");
+				noStats = f != nil;
+				if (f) fclose(f);
+				PS3_Logf("[5] RenderScene's breakdown: %s", noStats ? "OFF (nostats.txt)" : "one frame in four (nostats.txt turns it off)");
+			}
+			rw::ps3::rsceneOn = PS3_logsOn != 0 && !noStats && (++rsFrame & 3) == 0;
+			if (rw::ps3::rsceneOn)
+				rw::ps3::rscene.sampledFrames++;
+		}
 		unsigned long long ps3rs0 = PS3_Ticks();
 		RenderScene();
 		gPS3RSceneTb += PS3_Ticks() - ps3rs0;
