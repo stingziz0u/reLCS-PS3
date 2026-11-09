@@ -150,6 +150,7 @@ struct Ps3Raster
 	int8    bindNumLevels;
 	uint8  *bindVram;
 	uint32  bindVramOffset, bindPitch;
+	volatile uint32 bindSeq;	// patch 178: odd while the fields above are written (read without the lock)
 };
 
 // VRAM formats of a texture (stage 2). DXT1 (most of VC's PC textures) is
@@ -239,7 +240,7 @@ extern RW_TLS bool decalBuilding;
 // command buffer to it (false: not now, draw as usual), subBufferRoom says
 // the bytes left, subBufferEnd returns to the ring and calls it from there.
 struct SplitStats { uint32 calls, bytes, peak, full, waitUs, chunks;
-	uint32 threadFrames, leftover, workUs, joinUs, finishSkipped, sameFrame, midChunk, overflow, badDraws, inlineOdd; };	// patch 171-176
+	uint32 threadFrames, leftover, workUs, joinUs, finishSkipped, sameFrame, midChunk, overflow, badDraws, inlineOdd, locks, lockWaits; };	// patch 171-178
 extern SplitStats splitStats;
 extern bool splitBuildings;	// USRDIR/rsplit.txt
 bool subBufferBegin(void);

@@ -2041,8 +2041,31 @@ unlockSurface(Raster *raster, Ps3Raster *natras)
 void
 rasterBindInfo(Raster *raster, gcmTexture *tex, bool *swizzled, int32 *numLevels)
 {
-	ResGuard rg;	// patch 171: a texture finished or uploaded on its first bind
 	Ps3Raster *natras = GETPS3RASTEREXT(raster->parent);
+	// patch 178: while the second thread draws, the answer kept (nearly every
+	// bind) read without the lock: both threads took it for every texture
+	// bind, ~1500 a frame each, and waited for each other. The fields are
+	// written under the lock with bindSeq odd; read twice-checked
+	if(splitBusy && !natras->probeFmt && natras->pendingJobs == 0){
+		uint32 seq = natras->bindSeq;
+		__asm__ volatile("lwsync" ::: "memory");
+		if((seq & 1) == 0 && natras->bindValid && natras->bindValidLevels == natras->validLevels &&
+		   natras->bindVram == natras->vram && natras->bindVramOffset == natras->vramOffset &&
+		   natras->bindFmt == natras->vramFmt && natras->bindDXT == rasterDXT(natras) &&
+		   natras->bindSwz == natras->swizzled && natras->bindPitch == natras->pitch &&
+		   natras->bindNumLevels == natras->numLevels){
+			int32 lv = natras->bindLevels;
+			bool sw = natras->swizzled;
+			memcpy(tex, natras->bindTex, sizeof(gcmTexture));
+			__asm__ volatile("lwsync" ::: "memory");
+			if(natras->bindSeq == seq){
+				*numLevels = lv;
+				*swizzled = sw;
+				return;
+			}
+		}
+	}
+	ResGuard rg;	// patch 171: a texture finished or uploaded on its first bind
 	if(natras->probeFmt){
 		// hwProbe's textures: as the probe describes them
 		memset(tex, 0, sizeof(*tex));
@@ -2105,6 +2128,8 @@ rasterBindInfo(Raster *raster, gcmTexture *tex, bool *swizzled, int32 *numLevels
 	tex->pitch = natras->swizzled ? 0 : natras->pitch;
 	tex->offset = natras->vramOffset;
 	static_assert(sizeof(gcmTexture) <= sizeof(natras->bindTex), "bindTex too small");
+	natras->bindSeq++;	// patch 178: odd while written
+	__asm__ volatile("lwsync" ::: "memory");
 	memcpy(natras->bindTex, tex, sizeof(gcmTexture));	// patch 154
 	natras->bindLevels = n;
 	natras->bindValidLevels = natras->validLevels;
@@ -2116,6 +2141,8 @@ rasterBindInfo(Raster *raster, gcmTexture *tex, bool *swizzled, int32 *numLevels
 	natras->bindPitch = natras->pitch;
 	natras->bindNumLevels = natras->numLevels;
 	natras->bindValid = true;
+	__asm__ volatile("lwsync" ::: "memory");
+	natras->bindSeq++;	// patch 178: even again
 }
 
 bool

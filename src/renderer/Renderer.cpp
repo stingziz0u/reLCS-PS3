@@ -264,14 +264,25 @@ static int32 ps3NumDrawn[2];
 static uint32 ps3DrawnFrame[2];
 static int32 ps3NumDrawnHigh;	// the [lod] reports
 
-static void
-PS3_NoteDrawn(CEntity *ent)
+// patch 178: the frame's list started (the game thread, before the second
+// thread draws: either of them starting it could wipe what the other had
+// noted, the detailed building taken as not drawn and its LOD drawn over it)
+void
+PS3_NoteDrawnFrameStart(void)
 {
 	int k = ps3VisFrame & 1;
 	if(ps3DrawnFrame[k] != ps3VisFrame){
 		ps3DrawnFrame[k] = ps3VisFrame;
 		ps3NumDrawn[k] = 0;
 	}
+}
+
+static void
+PS3_NoteDrawn(CEntity *ent)
+{
+	int k = ps3VisFrame & 1;
+	if(ps3DrawnFrame[k] != ps3VisFrame && !rw::ps3::onSplitWorker)
+		PS3_NoteDrawnFrameStart();
 	// patch 171: the second thread notes its buildings too
 	int32 n = __sync_fetch_and_add(&ps3NumDrawn[k], 1);
 	if(n < 1024)
@@ -2403,6 +2414,8 @@ PS3_SplitStart(CEntity **list, int n)
 	if(!ps3SpOn || n == 0 || ps3SpState != 0)
 		return false;
 	ps3SpMainStep = 1;
+	extern void PS3_NoteDrawnFrameStart(void);
+	PS3_NoteDrawnFrameStart();	// patch 178
 	rw::Frame::syncDirty();	// the buildings' frames clean: the other thread only reads them
 	rw::ps3::snapshotBuildingLights();
 	rw::ps3::saveDrawContext(ps3SpCtx);

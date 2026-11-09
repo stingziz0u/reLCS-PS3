@@ -369,12 +369,18 @@ leedsAlphaToFull(Geometry *geo)
 static void
 instance(rw::ObjPipeline *rwpipe, Atomic *atomic)
 {
-	ResGuard rg;	// patch 171
 	ObjPipeline *pipe = (ObjPipeline*)rwpipe;
 	Geometry *geo = atomic->geometry;
 	// don't try to (re)instance native data
 	if(geo->flags & Geometry::NATIVE)
 		return;
+	// patch 178: already instanced (nearly every draw): no lock
+	{
+		InstanceDataHeader *h = (InstanceDataHeader*)geo->instData;
+		if(h && h->platform == PLATFORM_PS3 && h->serialNumber == geo->meshHeader->serialNum)
+			return;
+	}
+	ResGuard rg;	// patch 171
 
 	InstanceDataHeader *header = (InstanceDataHeader*)geo->instData;
 	if(geo->instData){
@@ -1121,13 +1127,17 @@ leedsRenderCB(Atomic *atomic, InstanceDataHeader *header)
 		// cycle ambient goes in its place; textured meshes x255/128 in
 		// rw_leeds.fcg, untextured ones as they are (rw_simple.fcg)
 		RS_ADD(RS_STATES, rst);	// the bias above
-		setLeedsMaterial(m->color.alpha, m->surfaceProps);
+		// patch 178: on the second thread (the visible list's buildings, all
+		// at 255) not read: the game thread fades other entities of the same
+		// models meanwhile, setting the shared materials' alpha and back
+		uint8 matAlpha = onSplitWorker ? 0xFF : m->color.alpha;
+		setLeedsMaterial(matAlpha, m->surfaceProps);
 		RS_ADD(RS_MATERIAL, rst);
 		setFragmentProgram(m->texture ? FP_LEEDS : FP_SIMPLE);
 		RS_ADD(RS_PROGRAMS, rst);
 		setTexture(0, m->texture);
 		RS_ADD(RS_TEXTURE, rst);
-		rw::SetRenderState(VERTEXALPHA, inst->vertexAlpha || m->color.alpha != 0xFF);
+		rw::SetRenderState(VERTEXALPHA, inst->vertexAlpha || matAlpha != 0xFF);
 		RS_ADD(RS_STATES, rst);
 		leanFlush = k > 0;	// patch 157
 		drawInst(header, inst);

@@ -210,8 +210,13 @@ static bool resMutexMade;
 void
 resLock(void)
 {
-	if(resMutexMade)
-		sysLwMutexLock(&resMutex, 0);
+	if(!resMutexMade)
+		return;
+	splitStats.locks++;
+	if(sysLwMutexTryLock(&resMutex) == 0)
+		return;
+	splitStats.lockWaits++;	// patch 178: the other thread had it
+	sysLwMutexLock(&resMutex, 0);
 }
 
 void
@@ -1098,6 +1103,8 @@ logStats(void)
 			       (double)splitStats.chunks / splitStats.threadFrames, splitStats.peak, SPLIT_CHUNKS, splitStats.leftover,
 			       splitStats.workUs / 1000.0 / splitStats.threadFrames, splitStats.joinUs / 1000.0 / splitStats.threadFrames,
 			       splitStats.finishSkipped, splitStats.waitUs / 1000.0 / n, splitStats.sameFrame);
+		rsxLog("[split]   the shared resources' lock: %.0f a frame, %.0f of them waited for the other thread",
+		       (double)splitStats.locks / splitStats.threadFrames, (double)splitStats.lockWaits / splitStats.threadFrames);
 		if(splitStats.badDraws || splitStats.inlineOdd)
 			rsxLog("[split]   draws found wrong while recorded into a chunk: %u; odd words in a chunk copied inline: %u",
 			       splitStats.badDraws, splitStats.inlineOdd);
