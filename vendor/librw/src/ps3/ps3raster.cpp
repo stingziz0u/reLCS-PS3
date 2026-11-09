@@ -2062,6 +2062,18 @@ rasterBindInfo(Raster *raster, gcmTexture *tex, bool *swizzled, int32 *numLevels
 	}
 	if(natras->pendingJobs)
 		tjWaitRaster(natras);	// levels the texture thread hasn't finished
+	// patch 154: as last time if nothing it depends on changed (every field
+	// it is worked out from, compared as they are)
+	int32 dxtNow = rasterDXT(natras);
+	if(natras->bindValid && natras->bindValidLevels == natras->validLevels && natras->bindVram == natras->vram &&
+	   natras->bindVramOffset == natras->vramOffset && natras->bindFmt == natras->vramFmt &&
+	   natras->bindDXT == dxtNow && natras->bindSwz == natras->swizzled &&
+	   natras->bindPitch == natras->pitch && natras->bindNumLevels == natras->numLevels){
+		*numLevels = natras->bindLevels;
+		*swizzled = natras->swizzled;
+		memcpy(tex, natras->bindTex, sizeof(gcmTexture));
+		return;
+	}
 	int32 n = 0;
 	while(n < natras->numLevels && (natras->validLevels & (1<<n)))
 		n++;
@@ -2091,6 +2103,18 @@ rasterBindInfo(Raster *raster, gcmTexture *tex, bool *swizzled, int32 *numLevels
 	tex->location = GCM_LOCATION_RSX;
 	tex->pitch = natras->swizzled ? 0 : natras->pitch;
 	tex->offset = natras->vramOffset;
+	static_assert(sizeof(gcmTexture) <= sizeof(natras->bindTex), "bindTex too small");
+	memcpy(natras->bindTex, tex, sizeof(gcmTexture));	// patch 154
+	natras->bindLevels = n;
+	natras->bindValidLevels = natras->validLevels;
+	natras->bindVram = natras->vram;
+	natras->bindVramOffset = natras->vramOffset;
+	natras->bindFmt = natras->vramFmt;
+	natras->bindDXT = dxtNow;
+	natras->bindSwz = natras->swizzled;
+	natras->bindPitch = natras->pitch;
+	natras->bindNumLevels = natras->numLevels;
+	natras->bindValid = true;
 }
 
 bool
@@ -2986,6 +3010,7 @@ copyNativeRaster(void *dst, void *, int32 offset, int32)
 	d->vramSize = 0;
 	d->staging = nil;
 	d->validLevels = 0;
+	d->bindValid = false;	// patch 154
 	d->tile = 0;
 	d->zcomp = d->zcull = false;
 	return dst;

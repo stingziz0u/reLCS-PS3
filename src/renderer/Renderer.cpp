@@ -42,6 +42,9 @@
 #include "src/ps3/rwps3.h"	// patch 93: rw::ps3::decalMode, decalStats
 #ifdef __PS3__
 #include <stdlib.h>	// qsort, bsearch (patch 28)
+#ifdef __PS3__
+void PS3_SortVisibleByTexture(CEntity **list, int32 n);	// patch 154
+#endif
 #include "Timecycle.h"
 #ifdef __PS3__
 extern int8 gPS3Ps2Lighting, gPS3Gamma, gPS3ColourFilter;	// patch 139
@@ -2252,6 +2255,9 @@ CRenderer::RenderEverythingBarRoads(void)
 	SetCullMode(rwCULLMODECULLBACK);
 //	gSortedVehiclesAndPeds.Clear();
 
+#ifdef __PS3__
+	PS3_SortVisibleByTexture(ms_aVisibleEntityPtrs, ms_nNoOfVisibleEntities);	// patch 154
+#endif
 	for(i = 0; i < ms_nNoOfVisibleEntities; i++){
 		e = ms_aVisibleEntityPtrs[i];
 
@@ -2714,6 +2720,56 @@ PS3_VisName(int v)
 }
 
 struct PS3InspHit { CEntity *e; float t; };
+
+// patch 154: the opaque entities in the order of their textures. They're
+// listed as the sector scan finds them, so the next one's textures are
+// rarely the last one's: ~2000 texture binds a frame in Staunton for ~1000
+// different textures, each ~0.4 us of flushCache. Sorted by TXD and then
+// model (stable), the same models and the models of one TXD go one after
+// the other. They are opaque and depth tested: the order between two of
+// them changes nothing on screen (the LODs are pushed behind, patch 147;
+// the overlays are meshes of one model, whose order is kept). The rest
+// (peds, anything without a simple model) keeps its order at the end.
+// USRDIR/notexsort.txt: the scan's order.
+struct PS3SortEnt { uint32 key; int32 i; CEntity *e; };
+static int
+PS3_SortEntCmp(const void *a, const void *b)
+{
+	const PS3SortEnt *x = (const PS3SortEnt*)a, *y = (const PS3SortEnt*)b;
+	if(x->key != y->key) return x->key < y->key ? -1 : 1;
+	return x->i - y->i;
+}
+void
+PS3_SortVisibleByTexture(CEntity **list, int32 n)
+{
+	static int off = -1;
+	if(off < 0){
+		FILE *f = fopen(PS3_USRDIR "/notexsort.txt", "rb");
+		off = f != nil;
+		if(f) fclose(f);
+		PS3_Logf("[5] opaque entities drawn in texture order: %s", off ? "OFF (notexsort.txt)" : "on (notexsort.txt turns it off)");
+	}
+	if(off || n < 2)
+		return;
+	static PS3SortEnt s[NUMVISIBLEENTITIES];
+	if(n > NUMVISIBLEENTITIES)
+		n = NUMVISIBLEENTITIES;
+	for(int32 i = 0; i < n; i++){
+		CEntity *e = list[i];
+		uint32 key = 0xFFFFFFFFu;
+		if(e && (e->IsBuilding() || e->IsDummy() || e->IsObject())){
+			CBaseModelInfo *mi = CModelInfo::GetModelInfo(e->GetModelIndex());
+			if(mi && mi->IsSimple())
+				key = (uint32)(uint16)mi->GetTxdSlot() << 16 | (uint32)(uint16)e->GetModelIndex();
+		}
+		s[i].key = key;
+		s[i].i = i;
+		s[i].e = e;
+	}
+	qsort(s, n, sizeof(PS3SortEnt), PS3_SortEntCmp);
+	for(int32 i = 0; i < n; i++)
+		list[i] = s[i].e;
+}
 
 // patch 145: the graffiti (pmgraff*, IDE flags 0) are painted on the walls.
 // With the opaque buildings they're drawn in the order the sector scan finds

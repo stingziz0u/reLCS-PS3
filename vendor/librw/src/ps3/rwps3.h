@@ -132,6 +132,17 @@ struct Ps3Raster
 	uint8   probeLoc;
 	uint8   probeLevels;
 	uint32  probeOffset, probePitch;
+	// patch 154: rasterBindInfo's answer kept, with what it was worked out from
+	// (it was filled again for every draw: ~2400 a frame)
+	uint8   bindTex[32];	// a gcmTexture (ps3raster.cpp checks it fits)
+	int32   bindLevels;
+	bool    bindValid;
+	uint16  bindValidLevels;
+	uint8   bindFmt, bindDXT;
+	bool    bindSwz;
+	int8    bindNumLevels;
+	uint8  *bindVram;
+	uint32  bindVramOffset, bindPitch;
 };
 
 // VRAM formats of a texture (stage 2). DXT1 (most of VC's PC textures) is
