@@ -127,7 +127,25 @@ static uint32 ps3AwRuns, ps3AwSync;
 // patch 162 (render split, part 1): does __thread give each thread its own
 // variable (lv2.ld has the PT_TLS segment)? The second thread's draw state
 // would be one. The audio worker and the game thread compare once.
-static __thread int ps3TlsProbe = 5;
+static __thread __attribute__((tls_model("local-exec"))) int ps3TlsProbe = 5;	// patch 164: the model librw's use
+static __thread __attribute__((tls_model("local-exec"))) int ps3TlsBenchLE;
+static __thread int ps3TlsBenchDefault;
+static int ps3TlsBenchGlobal;
+
+// patch 164: what a __thread access costs against a global (2M each)
+static void
+PS3_TlsBench(void)
+{
+	unsigned long long t0 = PS3_Ticks();
+	for(int i = 0; i < 2000000; i++){ ps3TlsBenchGlobal++; __asm__ volatile("" ::: "memory"); }
+	unsigned long long t1 = PS3_Ticks();
+	for(int i = 0; i < 2000000; i++){ ps3TlsBenchLE++; __asm__ volatile("" ::: "memory"); }
+	unsigned long long t2 = PS3_Ticks();
+	for(int i = 0; i < 2000000; i++){ ps3TlsBenchDefault++; __asm__ volatile("" ::: "memory"); }
+	unsigned long long t3 = PS3_Ticks();
+	PS3_Logf("[tls] 2M increments: global %.2f ms, __thread local-exec %.2f ms, __thread as the compiler picks %.2f ms",
+	         (t1 - t0) / 79800.0, (t2 - t1) / 79800.0, (t3 - t2) / 79800.0);
+}
 static int ps3TlsWorkerInitial = -1, ps3TlsWorkerAfter = -1;
 static volatile bool ps3TlsTested;
 
@@ -193,6 +211,7 @@ PS3_AudioWorkerInit(void)
 		}
 	}
 	ps3TlsProbe = 1;	// patch 162: the game thread's copy
+	PS3_TlsBench();
 	ps3AwOn = true;
 	PS3_Logf("[audio] the sound service on its own thread during RenderScene (noaudiothread.txt turns it off)");
 }

@@ -1,4 +1,11 @@
 #pragma once
+// patch 164: the draw state's thread-local variables (patch 163) at the
+// fastest model: an offset from r13, as for an executable. Patch 163's
+// atomics cost ~15% more (12.5-13.5 -> 14.5-16 us); if the compiler had
+// picked a slower model for __thread this brings it back ([tls] timing line)
+#ifndef RW_TLS
+#define RW_TLS __thread __attribute__((tls_model("local-exec")))
+#endif
 // librw backend for the PS3 (RSX through PSL1GHT's GCM, no GL).
 //
 // Rasters live in main memory in a layout the RSX can read after a copy:
@@ -212,8 +219,8 @@ extern bool leedsWantSample;	// log the next one drawn
 // meshes after the first hidden, 7 LODs within 100 m hidden (the game). decalStats: what
 // they were drawn with since the last reset.
 extern int32 decalMode;
-extern __thread bool decalCur;
-extern __thread bool decalRoad;	// patch 95: the road overlays (meshes after the first, alpha texture)
+extern RW_TLS bool decalCur;
+extern RW_TLS bool decalRoad;	// patch 95: the road overlays (meshes after the first, alpha texture)
 extern Material *aimHideMaterial;
 extern bool forceNoCull;
 extern bool diffOn;	// patch 123: test mode 17, materials drawn without texture reported
@@ -222,11 +229,11 @@ extern int32 leedsDebug;	// patch 121: test mode 16, D-pad left: 0 as is, 1 the 
 void leedsDebugLights(void);	// res-PS3 patch 117: test mode 16, D-pad up: no backface culling at all	// res-PS3 patch 114: test mode 15, the mesh under the screen centre hidden
 extern bool overlayStep, lodBehind;	// patch 147: patch 146's modes 21 and 22 (patch 150: the steps off by default, the LOD push on)
 void addOverlayMaterial(const char *name);	// patch 151: a texture name whose meshes go a step in front of their wall
-extern __thread bool decalStepOk;
+extern RW_TLS bool decalStepOk;
 extern bool leanFlushOn;	// patch 157: the lean flush for a Leeds atomic's later meshes
 extern uint32 leanFlushStats[2];	// patch 149: this building may take the overlay steps (not draw last, additive, no z-write)
-extern __thread bool decalLod;	// patch 146: a LOD (big building) is being drawn (test mode 22)
-extern __thread bool decalBuilding;
+extern RW_TLS bool decalLod;	// patch 146: a LOD (big building) is being drawn (test mode 22)
+extern RW_TLS bool decalBuilding;
 // patch 163 (render split): the draw state is one per thread; a second
 // thread starts from a copy of the game thread's (a buffer of
 // drawContextSize() bytes, saveDrawContext on the game thread,

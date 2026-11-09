@@ -50,7 +50,7 @@ namespace ps3 {
 #define RING_SEGMENTS	3
 #define RING_SEG_SIZE	(4 * 1024 * 1024)
 
-__thread gcmContextData *rsxCtx;	// patch 163: one per thread (render split)
+RW_TLS gcmContextData *rsxCtx;	// patch 163: one per thread (render split)
 DrawStats drawStats;
 
 static void *ioBuffer;

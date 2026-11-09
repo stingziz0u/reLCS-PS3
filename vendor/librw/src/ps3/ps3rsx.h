@@ -11,6 +11,13 @@
 
 #ifndef RW_PS3_RSX_H
 #define RW_PS3_RSX_H
+// patch 164: the draw state's thread-local variables (patch 163) at the
+// fastest model: an offset from r13, as for an executable. Patch 163's
+// atomics cost ~15% more (12.5-13.5 -> 14.5-16 us); if the compiler had
+// picked a slower model for __thread this brings it back ([tls] timing line)
+#ifndef RW_TLS
+#define RW_TLS __thread __attribute__((tls_model("local-exec")))
+#endif
 
 #include <rsx/rsx.h>
 #include <rsx/gcm_sys.h>
@@ -18,7 +25,7 @@
 namespace rw {
 namespace ps3 {
 
-extern __thread gcmContextData *rsxCtx;	// patch 163: one per thread (render split)
+extern RW_TLS gcmContextData *rsxCtx;	// patch 163: one per thread (render split)
 
 // ---- frames ---------------------------------------------------------------
 

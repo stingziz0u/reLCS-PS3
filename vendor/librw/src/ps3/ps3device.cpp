@@ -181,20 +181,20 @@ static FragmentProgram fps[NUM_FP];
 // of its own starts from the game thread's (saveDrawContext /
 // loadDrawContext) and forgets what the RSX has. The programs, textures and
 // VRAM stay one for all. Patch 162 found __thread works (lv2.ld PT_TLS).
-static __thread int32 curVP = -1, curFP = -1;
-static __thread int32 wantVP = VP_DEFAULT, wantFP = FP_SIMPLE;
-static __thread int32 drawFP = FP_SIMPLE;	// wantFP, or its additive variant (flushCache)
+static RW_TLS int32 curVP = -1, curFP = -1;
+static RW_TLS int32 wantVP = VP_DEFAULT, wantFP = FP_SIMPLE;
+static RW_TLS int32 drawFP = FP_SIMPLE;	// wantFP, or its additive variant (flushCache)
 bool additiveKill = true;		// the autotest's rain test turns it off to compare
 bool zcullOn = true;			// the autotest's GPU test turns it off to compare
 int32 blendAlphaRef = 0;		// the autotest's GPU test tries it on the smoke
 static bool zcullStale;			// depth written without the test since the last clear
-static __thread int32 zcullHave = -1;		// what the RSX was told (-1: nothing yet)
+static RW_TLS int32 zcullHave = -1;		// what the RSX was told (-1: nothing yet)
 
 // constant registers: what the RSX has (shadow) and what we want
 #define NUM_CONSTS 32
-static __thread float32 constWant[NUM_CONSTS][4];
-static __thread float32 constHave[NUM_CONSTS][4];
-static __thread uint32 constValid;	// bit n: constHave[n] is what the RSX has
+static RW_TLS float32 constWant[NUM_CONSTS][4];
+static RW_TLS float32 constHave[NUM_CONSTS][4];
+static RW_TLS uint32 constValid;	// bit n: constHave[n] is what the RSX has
 
 enum {
 	C_MVP = 0,
@@ -312,7 +312,7 @@ struct RwStateCache {
 
 	RwRasterStateCache texstage[MAXNUMSTAGES];
 };
-static __thread RwStateCache rwStateCache;
+static RW_TLS RwStateCache rwStateCache;
 
 // what the RSX has
 struct HwState {
@@ -322,7 +322,7 @@ struct HwState {
 	int32 cull, cullFace;
 	int32 stencil, stFunc, stRef, stMask, stWriteMask, stFail, stZFail, stPass;
 };
-static __thread HwState hw;
+static RW_TLS HwState hw;
 
 struct HwSampler {
 	Raster *raster;
@@ -337,7 +337,7 @@ struct HwSampler {
 	// that change are written
 	uint32 ctlWord, filterWord, wrapWord;
 };
-static __thread HwSampler hwSampler[MAXNUMSTAGES];
+static RW_TLS HwSampler hwSampler[MAXNUMSTAGES];
 
 static uint32 blendMap[] = {
 	GCM_ZERO,	// actually invalid
@@ -379,8 +379,8 @@ static uint32 stencilFuncMap[] = {
 };
 
 // does the current camera draw anywhere
-static __thread bool targetValid;
-static __thread int32 targetW, targetH;	// the bound surface
+static RW_TLS bool targetValid;
+static RW_TLS int32 targetW, targetH;	// the bound surface
 
 void
 setAlphaBlend(bool32 enable)
@@ -1098,19 +1098,19 @@ applySamplers(int32 numSamplers)
 // ---- constants --------------------------------------------------------------------
 
 // GL style column-major 4x4: m[c*4+r]
-static __thread float32 projMat[16], viewMat[16], viewProjMat[16];
-static __thread RawMatrix worldMat;
-static __thread bool viewProjDirty = true;
-static __thread bool mvpDirty = true;
-static __thread bool lightsDirty = true;
+static RW_TLS float32 projMat[16], viewMat[16], viewProjMat[16];
+static RW_TLS RawMatrix worldMat;
+static RW_TLS bool viewProjDirty = true;
+static RW_TLS bool mvpDirty = true;
+static RW_TLS bool lightsDirty = true;
 
 struct LightSlot {
 	V3d dir;	// world space, as RW has it (the light's 'at')
 	RGBAf color;
 };
-static __thread LightSlot lights[MAX_LIGHTS];
-static __thread int32 numLights;
-static __thread RGBAf ambLight;
+static RW_TLS LightSlot lights[MAX_LIGHTS];
+static RW_TLS int32 numLights;
+static RW_TLS RGBAf ambLight;
 
 static void
 matMul(float32 *out, const float32 *a, const float32 *b)
@@ -1190,8 +1190,8 @@ static RawMatrix normal2texcoord = {
 	{ 0.5f,  0.5f, 0.0f }, 1.0f
 };
 
-static __thread Frame *envFrame;
-static __thread bool envDirty;
+static RW_TLS Frame *envFrame;
+static RW_TLS bool envDirty;
 
 // MatFX env map: as gl3, env uv = texMatrix * (world3x3 * normal), turned
 // into one 2x4 matrix on model space normals at flush time
@@ -1389,7 +1389,7 @@ applyProgramsAndConstants(void)
 // could fetch a stale vertex -- the stray triangles of the menus (a green
 // wedge from the selection bar, a yellow streak from a letter). The next draw
 // after such a write invalidates the cache first.
-static __thread bool vtxCacheDirty = true;
+static RW_TLS bool vtxCacheDirty = true;
 void vertexCacheTouched(void) { vtxCacheDirty = true; }
 
 // patch 46: the CPU time of the backend (perf.txt): timebase ticks
@@ -1885,7 +1885,7 @@ fxaaApply(Raster *pic)
 // ---- Leeds world pipeline and gamma (res-PS3 patch 27) -----------------------
 
 // the time cycle ambient of this frame (the game sets it before the scene)
-static __thread float32 worldAmb[3] = { 1.0f, 1.0f, 1.0f };
+static RW_TLS float32 worldAmb[3] = { 1.0f, 1.0f, 1.0f };
 bool leedsLighting = true;
 
 uint32 leedsDraws;
