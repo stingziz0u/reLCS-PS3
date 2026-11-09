@@ -233,6 +233,20 @@ static gcmContextData workerCtx;
 static gcmContextData *workerPrevCtx;	// patch 174: the thread's buffer before (the game thread's own in the self test)
 static uint32 chunkBytes[SPLIT_CHUNKS];	// patch 174: for the first frame's dump
 static u32 *slotsBegin, *slotsEnd;
+// patch 177: the slots are single words in the ring, each a JUMP to itself
+// (the RSX's command fetcher spins on it) until the second thread, its
+// chunk finished, writes the CALL there; a chunk not used gets a NOP.
+// Patch 171's "wait for the label, then CALL" let the fetcher take the CALL
+// before the label was there: the semaphore only holds the part that runs
+// the methods, the fetcher goes ahead on its own and follows CALLs, so it
+// read a chunk before it was written (the first frame: zeroes all the way
+// to the end of the IO memory, GET 0x01000000; later frames: the chunk of
+// three frames before, draws of buffers since freed, the RSX stuck on one).
+// It only happened when the ring was kicked while the chunks were being
+// recorded, which in the test modes only the ring's own segment callback
+// did: every freeze had the ring at a segment's end.
+static volatile u32 *slotWord[SPLIT_CHUNKS];
+static u32 slotOffset[SPLIT_CHUNKS];
 // patch 176: the experiments on the freeze (with rsplitself or rsplitwait)
 bool splitInline, splitNoWait, splitNop;
 static int32 lastSub = -1, lastUsed;
@@ -287,11 +301,18 @@ splitEmitSlots(uint32 *seq)
 	slotsBegin = mainRsxCtx->current;
 	if(!splitInline)	// patch 176: inline, the chunks are copied into the ring after
 		for(int32 i = 0; i < SPLIT_CHUNKS; i++){
-			if(!splitNoWait)	// patch 176: without the waits
-				rsxSetWaitLabel(mainRsxCtx, SPLIT_LABEL0 + i, *seq);
-			rsxSetCallCommand(mainRsxCtx, subOffset[k] + i*SPLIT_CHUNK_SIZE);
+			// patch 177: a word of its own (the ring's segment jump can fall
+			// between two), a JUMP to itself until the chunk is done
+			rsxSetNopCommand(mainRsxCtx, 1);
+			u32 *w = mainRsxCtx->current - 1;
+			u32 off = 0;
+			rsxAddressToOffset(w, &off);
+			slotWord[i] = w;
+			slotOffset[i] = off;
+			*w = 0x20000000 | off;	// JUMP (old style) to itself
 		}
 	slotsEnd = mainRsxCtx->current;
+	__asm__ volatile("sync" ::: "memory");
 	memset(chunkBytes, 0, sizeof(chunkBytes));
 	subUsed[k] = true;
 	subFrame[k] = frame;
@@ -319,14 +340,25 @@ workerOpenChunk(void)
 	subZeroAhead(&workerCtx);
 }
 
+// patch 177: the chunk done: its slot in the ring becomes the CALL (after
+// a sync: the chunk in memory before the fetcher can follow the CALL)
+static void
+releaseSlot(int32 i, bool used)
+{
+	__asm__ volatile("sync" ::: "memory");
+	if(slotWord[i])
+		*slotWord[i] = used ? ((subOffset[workerSub] + i*SPLIT_CHUNK_SIZE) | 2) : 0;	// CALL, or a NOP
+	*splitLabel[i] = workerSeq;	// for the [hang] dump
+	__asm__ volatile("sync" ::: "memory");
+}
+
 static void
 workerCloseChunk(void)
 {
 	rsxSetReturnCommand(&workerCtx);
 	chunkBytes[workerChunk] = (uint32)(workerCtx.current - workerCtx.begin) * 4;
 	splitStats.bytes += (uint32)(workerCtx.current - workerCtx.begin) * 4;
-	__asm__ volatile("sync" ::: "memory");	// the commands in memory before the label lets the RSX in
-	*splitLabel[workerChunk] = workerSeq;
+	releaseSlot(workerChunk, true);
 	splitStats.chunks++;
 }
 
@@ -347,8 +379,7 @@ workerChunkFull(gcmContextData *ctx, u32 count)
 	*workerCtx.current++ = 0x00020000;	// RETURN
 	chunkBytes[workerChunk] = (uint32)(workerCtx.current - workerCtx.begin) * 4;
 	splitStats.bytes += (uint32)(workerCtx.current - workerCtx.begin) * 4;
-	__asm__ volatile("sync" ::: "memory");
-	*splitLabel[workerChunk] = workerSeq;
+	releaseSlot(workerChunk, true);	// patch 177
 	splitStats.chunks++;
 	workerChunk++;
 	workerOpenChunk();
@@ -389,7 +420,7 @@ splitInlineCopy(void)
 				uint32 sz;
 				if(h == 0)
 					sz = 1;
-				else if((h & 0xE0000003) != 0){
+				else if((h & 0xE0000000) == 0x20000000 || (h & 3) != 0 || h == 0x00020000){	// patch 177: a NI method (0x40000000) is a method
 					// a jump, call or return in the middle: shouldn't be
 					splitStats.inlineOdd++;
 					sz = 1;
@@ -466,6 +497,14 @@ splitHangReport(void)
 			len += snprintf(buf + len, sizeof(buf) - len, " %u", *splitLabel[i]);
 		rsxLog("[hang] split: chunk labels:%s", buf);
 	}
+	{
+		// patch 177: the slots
+		char sb[400];
+		int sl = 0;
+		for(int32 i = 0; i < SPLIT_CHUNKS && sl < 360; i++)
+			sl += snprintf(sb + sl, sizeof(sb) - sl, " %08x", slotWord[i] ? *slotWord[i] : 0xdeadbeef);
+		rsxLog("[hang] split: the slots (JUMP to itself 2xxxxxxx, CALL xxxxxxx2, NOP 0; deadbeef: none now):%s", sb);
+	}
 	// patch 175: the commands where the RSX stopped (GET in the IO memory:
 	// the ring or a sub-buffer), 32 words before it and 8 after
 	if(cr && ioBuffer && cr->get < RSX_IO_SIZE){
@@ -498,9 +537,10 @@ splitWorkerEnd(void)
 	}
 	lastSub = workerSub;
 	lastUsed = workerChunk + 1;
-	__asm__ volatile("sync" ::: "memory");
 	for(int32 i = workerChunk + 1; i < SPLIT_CHUNKS; i++)
-		*splitLabel[i] = workerSeq;
+		releaseSlot(i, false);	// patch 177: NOPs
+	for(int32 i = 0; i < SPLIT_CHUNKS; i++)
+		slotWord[i] = nil;
 	uint32 used = (uint32)(workerChunk + 1);
 	if(used > splitStats.peak)
 		splitStats.peak = used;
