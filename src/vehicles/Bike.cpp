@@ -43,7 +43,12 @@ const uint32 CBike::nSaveStructSize =
 #ifdef COMPATIBLE_SAVES
 	1260;
 #else
-	sizeof(CBoat);
+	// patch 166: was sizeof(CBoat) (copied from Boat.cpp). The PS3 saves a
+	// bike as sizeof(CBike) bytes (Pools.cpp) and loads it as that, but the
+	// vehicle block's size was worked out with this: with a bike in the save
+	// "SaveVehiclePool(): _saveBufCount == *size" on saving, the same on
+	// loading, and the block on the card short by the difference per bike
+	sizeof(CBike);
 #endif
 
 
