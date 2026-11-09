@@ -912,6 +912,12 @@ PS3_GameMain(void)
 		if (rs) { fclose(rs); rw::ps3::splitBuildings = true; }
 		PS3_Logf("[5] buildings into a command sub-buffer: %s",
 		         rw::ps3::splitBuildings ? "ON (rsplit.txt, the test of the render split)" : "off (rsplit.txt turns it on)");
+		// patch 171: and recorded by a second thread
+		FILE *rt = fopen(PS3_USRDIR "/rsplitthread.txt", "rb");
+		if (rt) { fclose(rt); rw::ps3::splitThread = true; }
+		PS3_Logf("[5] the buildings recorded by a second thread: %s",
+		         rw::ps3::splitThread ? (rw::ps3::splitBuildings ? "ON (rsplitthread.txt)" : "asked (rsplitthread.txt) but needs rsplit.txt too") :
+		         "off (rsplitthread.txt with rsplit.txt turns it on)");
 	}
 	// patch 167: the buildings' materials at full alpha (glass2_64)
 	{

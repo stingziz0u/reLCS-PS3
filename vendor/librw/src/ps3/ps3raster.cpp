@@ -2041,6 +2041,7 @@ unlockSurface(Raster *raster, Ps3Raster *natras)
 void
 rasterBindInfo(Raster *raster, gcmTexture *tex, bool *swizzled, int32 *numLevels)
 {
+	ResGuard rg;	// patch 171: a texture finished or uploaded on its first bind
 	Ps3Raster *natras = GETPS3RASTEREXT(raster->parent);
 	if(natras->probeFmt){
 		// hwProbe's textures: as the probe describes them

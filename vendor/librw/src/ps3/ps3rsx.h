@@ -33,7 +33,19 @@ uint32 currentFrame(void);	// frame being built (from 1)
 uint32 completedFrame(void);	// last frame the RSX has finished
 void waitFrame(uint32 frame);	// CPU waits for the RSX to finish 'frame'
 void rsxFinishAll(void);
-extern gcmContextData *mainRsxCtx;	// patch 168: the ring the RSX runs	// waits until the RSX has executed everything
+extern gcmContextData *mainRsxCtx;	// patch 168: the ring the RSX runs
+// patch 171: while a second thread records the buildings (splitBusy) both it
+// and the game thread take this lock around what they share: VRAM blocks,
+// instancing a geometry, a texture's first bind. Nothing locked otherwise.
+extern volatile bool splitBusy;
+extern RW_TLS bool onSplitWorker;
+void resLock(void);
+void resUnlock(void);
+struct ResGuard {
+	bool on;
+	ResGuard() : on(splitBusy) { if(on) resLock(); }
+	~ResGuard() { if(on) resUnlock(); }
+};	// waits until the RSX has executed everything
 
 // ---- VRAM -----------------------------------------------------------------
 

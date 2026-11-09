@@ -245,6 +245,7 @@ static int32 numPending, maxPending;
 void
 vramProcessFrees(void)
 {
+	ResGuard rg;	// patch 171
 	uint32 done = completedFrame();
 	int32 i = 0;
 	while(i < numPending){
@@ -260,6 +261,7 @@ vramProcessFrees(void)
 void
 vramFree(VramAlloc *a)
 {
+	ResGuard rg;	// patch 171
 	if(a->block == nil)
 		return;
 	if(numPending >= maxPending){
@@ -286,6 +288,7 @@ vramFree(VramAlloc *a)
 bool
 vramAlloc(VramAlloc *a, uint32 size, const char *what)
 {
+	ResGuard rg;	// patch 171
 	memset(a, 0, sizeof(*a));
 	if(poolBase == nil || size == 0)
 		return false;

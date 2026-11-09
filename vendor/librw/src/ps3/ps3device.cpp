@@ -1115,6 +1115,13 @@ struct LightSlot {
 static RW_TLS LightSlot lights[MAX_LIGHTS];
 static RW_TLS int32 numLights;
 static RW_TLS RGBAf ambLight;
+// patch 171: on the second thread the lights are the game thread's when it
+// started (the game changes the world's lights for the peds and cars as it
+// draws them): every setLights gives those back
+static RW_TLS bool lightsFrozen;
+static RW_TLS LightSlot frozenLights[MAX_LIGHTS];
+static RW_TLS int32 frozenNumLights;
+static RW_TLS RGBAf frozenAmb;
 
 static void
 matMul(float32 *out, const float32 *a, const float32 *b)
@@ -1160,6 +1167,13 @@ setWorldIdentity(void)
 int32
 setLights(WorldLights *lightData)
 {
+	if(lightsFrozen){
+		ambLight = frozenAmb;
+		numLights = frozenNumLights;
+		memcpy(lights, frozenLights, sizeof(lights));
+		lightsDirty = true;
+		return 0;
+	}
 	ambLight = lightData->ambient;
 	numLights = 0;
 	for(int32 i = 0; i < lightData->numDirectionals && numLights < MAX_LIGHTS; i++){
@@ -2955,6 +2969,59 @@ loadDrawContext(const void *src)
 	viewProjDirty = mvpDirty = lightsDirty = true;
 	vtxCacheDirty = true;
 	forgetHardwareState();
+	// patch 171: the vertex arrays the RSX has are the game thread's
+	extern void forgetBoundAttribs(void);
+	forgetBoundAttribs();
+	// patch 171: these lights for every atomic
+	frozenAmb = ambLight;
+	frozenNumLights = numLights;
+	memcpy(frozenLights, lights, sizeof(lights));
+	lightsFrozen = true;
+}
+
+// patch 171: the game thread's state after it put the slots in the ring:
+// what the RSX has there is the second thread's, unknown
+void forgetBoundAttribs(void);	// ps3pipe.cpp
+
+void
+forgetDrawState(void)
+{
+	forgetHardwareState();
+	forgetBoundAttribs();
+	vtxCacheDirty = true;
+}
+
+// patch 171: the world's lights for the buildings as they are now (the
+// ambient, the directionals turned on), into this thread's state, for
+// saveDrawContext
+void
+snapshotBuildingLights(void)
+{
+	World *w = (World*)engine->currentWorld;
+	if(w == nil)
+		return;
+	WorldLights ld;
+	Light *dirs[8];
+	ld.numAmbients = 0;
+	ld.ambient.red = ld.ambient.green = ld.ambient.blue = 0.0f;
+	ld.ambient.alpha = 1.0f;
+	ld.numDirectionals = 0;
+	ld.directionals = dirs;
+	ld.numLocals = 0;
+	ld.locals = nil;
+	FORLIST(lnk, w->globalLights){
+		Light *l = Light::fromWorld(lnk);
+		if((l->getFlags() & Light::LIGHTATOMICS) == 0)
+			continue;
+		if(l->getType() == Light::AMBIENT){
+			ld.ambient.red += l->color.red;
+			ld.ambient.green += l->color.green;
+			ld.ambient.blue += l->color.blue;
+			ld.numAmbients++;
+		}else if(l->getType() == Light::DIRECTIONAL && ld.numDirectionals < 8)
+			dirs[ld.numDirectionals++] = l;
+	}
+	setLights(&ld);
 }
 }
 }

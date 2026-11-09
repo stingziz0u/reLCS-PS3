@@ -501,7 +501,8 @@ CEntity::Render(void)
 				PS3_WatchDrawn(this);
 			}
 			bool ps3Decal = IsBuilding() && PS3_IsShadModel(GetModelIndex());
-			PS3_NearInventory(this);	// patch 94 (logs only)
+			if(!rw::ps3::onSplitWorker)
+				PS3_NearInventory(this);	// patch 94 (logs only; patch 171: not on the second thread)
 			if(ps3Decal){
 				rw::ps3::decalCur = true;
 				gPS3ShadRendered++;

@@ -369,6 +369,7 @@ leedsAlphaToFull(Geometry *geo)
 static void
 instance(rw::ObjPipeline *rwpipe, Atomic *atomic)
 {
+	ResGuard rg;	// patch 171
 	ObjPipeline *pipe = (ObjPipeline*)rwpipe;
 	Geometry *geo = atomic->geometry;
 	// don't try to (re)instance native data
@@ -597,6 +598,13 @@ skinInstanceCB(Geometry *geo, InstanceDataHeader *header, bool32 reinstance)
 // Binds the geometry's attributes; the ones the programs read and the
 // geometry doesn't have get constant values (GL's defaults).
 static RW_TLS uint32 boundAttribMask;
+// patch 171: after the other thread's commands the RSX's vertex arrays are
+// unknown: all taken as on, so the next bind turns off what it doesn't use
+void
+forgetBoundAttribs(void)
+{
+	boundAttribMask = (1u << NUM_ATTRS) - 1;
+}
 
 static void
 bindAttribs(InstanceDataHeader *header)
@@ -934,6 +942,11 @@ lightingCB(Atomic *atomic)
 	lightData.locals = locals;
 	lightData.numLocals = 8;
 
+	if(onSplitWorker){
+		// patch 171: the game thread's lights (setLights gives them back)
+		memset(&lightData, 0, sizeof(lightData));
+		return setLights(&lightData);
+	}
 	if(atomic->geometry->flags & rw::Geometry::LIGHT){
 		((World*)engine->currentWorld)->enumerateLights(atomic, &lightData);
 		if((atomic->geometry->flags & rw::Geometry::NORMALS) == 0){

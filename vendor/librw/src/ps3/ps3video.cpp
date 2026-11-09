@@ -139,6 +139,13 @@ rsxFinishAll(void)
 	// written into the sub-buffer would wait for commands not yet called
 	if(mainRsxCtx == nil)
 		return;
+	// patch 171: not while the second thread records: the RSX stops at the
+	// labels of its chunks still to come, and waiting for it here could wait
+	// for a thread that waits for this one (the resource lock)
+	if(splitBusy){
+		splitStats.finishSkipped++;
+		return;
+	}
 	if(++ref == 0 || ref == 0xFFFFFFFF)
 		ref = 0x1000;
 	rsxFinish(mainRsxCtx, ref);
@@ -184,6 +191,168 @@ subZeroAhead(gcmContextData *s)
 }
 bool splitBuildings;
 SplitStats splitStats;
+
+// ---- patch 171 (render split, part 4): the second thread -------------------
+}
+}
+#include <lv2/mutex.h>
+namespace rw {
+namespace ps3 {
+bool splitThread;
+volatile bool splitBusy;
+RW_TLS bool onSplitWorker;
+static sys_lwmutex_t resMutex;
+static bool resMutexMade;
+
+void
+resLock(void)
+{
+	if(resMutexMade)
+		sysLwMutexLock(&resMutex, 0);
+}
+
+void
+resUnlock(void)
+{
+	if(resMutexMade)
+		sysLwMutexUnlock(&resMutex);
+}
+
+// The ring gets, where the buildings go, SPLIT_CHUNKS slots: "wait for label
+// n to be this frame's number, then CALL chunk n". The second thread records
+// the buildings into the chunks (48 KB each, in the frame's sub-buffer),
+// ends each with a RETURN and writes its label; the chunks it doesn't need
+// it ends empty. The RSX draws them as they come; the game thread goes on.
+#define SPLIT_CHUNKS 20
+#define SPLIT_CHUNK_SIZE (48*1024)	// 20 x 48 KB: 960 KB of the 1 MB
+#define SPLIT_LABEL0 80
+static gcmContextData workerCtx;
+static int32 workerSub = -1, workerChunk;
+static uint32 workerSeq;
+static volatile u32 *splitLabel[SPLIT_CHUNKS];
+
+static bool
+splitMakeLock(void)
+{
+	if(resMutexMade)
+		return true;
+	sys_lwmutex_attr_t la;
+	memset(&la, 0, sizeof(la));
+	la.attr_protocol = SYS_LWMUTEX_PROTOCOL_PRIO;
+	la.attr_recursive = SYS_LWMUTEX_ATTR_RECURSIVE;
+	strncpy(la.name, "rwres", sizeof(la.name)-1);
+	if(sysLwMutexCreate(&resMutex, &la) != 0)
+		return false;
+	for(int32 i = 0; i < SPLIT_CHUNKS; i++){
+		splitLabel[i] = (volatile u32*)gcmGetLabelAddress(SPLIT_LABEL0 + i);
+		*splitLabel[i] = 0;
+	}
+	resMutexMade = true;
+	return true;
+}
+
+// game thread: the slots into the ring. The sub-buffer to use (-1: none,
+// draw on this thread) and the value the labels must get
+int32
+splitEmitSlots(uint32 *seq)
+{
+	if(ioBuffer == nil || mainRsxCtx == nil || rsxCtx != mainRsxCtx || subCur >= 0 || !splitMakeLock())
+		return -1;
+	int32 k = frame % SUB_COUNT;
+	if(subUsed[k] && (int32)(completedFrame() - subFrame[k]) < 0){
+		uint64 t0 = sysGetSystemTime();
+		waitFrame(subFrame[k]);
+		splitStats.waitUs += (uint32)(sysGetSystemTime() - t0);
+	}
+	u32 *mem = (u32*)((uint8*)ioBuffer + SUB_BASE + k*SUB_SIZE);
+	if(subOffset[k] == 0 && rsxAddressToOffset(mem, &subOffset[k]) != 0){
+		subOffset[k] = 0;
+		return -1;
+	}
+	*seq = frame + 1;	// never 0: the labels start at 0
+	rsxFlushBuffer(mainRsxCtx);	// what came before: the RSX on it now
+	for(int32 i = 0; i < SPLIT_CHUNKS; i++){
+		rsxSetWaitLabel(mainRsxCtx, SPLIT_LABEL0 + i, *seq);
+		rsxSetCallCommand(mainRsxCtx, subOffset[k] + i*SPLIT_CHUNK_SIZE);
+	}
+	subUsed[k] = true;
+	subFrame[k] = frame;
+	splitStats.calls++;
+	return k;
+}
+
+static void
+workerOpenChunk(void)
+{
+	u32 *mem = (u32*)((uint8*)ioBuffer + SUB_BASE + workerSub*SUB_SIZE + workerChunk*SPLIT_CHUNK_SIZE);
+	workerCtx.begin = mem;
+	workerCtx.current = mem;
+	workerCtx.end = mem + SPLIT_CHUNK_SIZE/4 - 16;
+	workerCtx.callback = mainRsxCtx->callback;	// never reached: splitWorkerRoom() first
+	subZeroed = mem;
+	subZeroAhead(&workerCtx);
+}
+
+static void
+workerCloseChunk(void)
+{
+	rsxSetReturnCommand(&workerCtx);
+	splitStats.bytes += (uint32)(workerCtx.current - workerCtx.begin) * 4;
+	__asm__ volatile("sync" ::: "memory");	// the commands in memory before the label lets the RSX in
+	*splitLabel[workerChunk] = workerSeq;
+	splitStats.chunks++;
+}
+
+// second thread: start recording into sub-buffer k
+void
+splitWorkerBegin(int32 k, uint32 seq)
+{
+	onSplitWorker = true;
+	workerSub = k;
+	workerSeq = seq;
+	workerChunk = 0;
+	workerOpenChunk();
+	rsxCtx = &workerCtx;
+}
+
+// the room left in the chunk; when it's low the next chunk (false: none left)
+bool
+splitWorkerRoom(void)
+{
+	subZeroAhead(&workerCtx);
+	if((uint32)(workerCtx.end - workerCtx.current) * 4 >= 24*1024)	// a building takes up to ~15 KB
+		return true;
+	if(workerChunk + 1 >= SPLIT_CHUNKS)
+		return false;
+	workerCloseChunk();
+	workerChunk++;
+	workerOpenChunk();
+	return true;
+}
+
+// the current chunk ended and every chunk not used ended empty
+void
+splitWorkerEnd(void)
+{
+	workerCloseChunk();
+	for(int32 i = workerChunk + 1; i < SPLIT_CHUNKS; i++){
+		u32 *mem = (u32*)((uint8*)ioBuffer + SUB_BASE + workerSub*SUB_SIZE + i*SPLIT_CHUNK_SIZE);
+		gcmContextData c;
+		c.begin = c.current = mem;
+		c.end = mem + 16;
+		c.callback = mainRsxCtx->callback;
+		rsxSetReturnCommand(&c);
+	}
+	__asm__ volatile("sync" ::: "memory");
+	for(int32 i = workerChunk + 1; i < SPLIT_CHUNKS; i++)
+		*splitLabel[i] = workerSeq;
+	uint32 used = (uint32)(workerChunk + 1);
+	if(used > splitStats.peak)
+		splitStats.peak = used;
+	rsxCtx = nil;
+	workerSub = -1;
+	onSplitWorker = false;
+}
 
 bool
 subBufferBegin(void)
@@ -714,6 +883,15 @@ logStats(void)
 	       slowFrames, verySlowFrames, worstFrameUs/1000.0);
 	if(splitBuildings){
 		// patch 168
+		if(splitStats.threadFrames)
+			rsxLog("[split] the buildings on the second thread: %u frames, %u KB a frame in %.1f chunks (peak %u of %d), "
+			       "%u buildings left over for the game thread; it recorded %.2f ms a frame and the game thread waited %.2f ms for it; "
+			       "%u RSX waits skipped; %.2f ms a frame waiting for a sub-buffer",
+			       splitStats.threadFrames, splitStats.bytes / 1024 / splitStats.threadFrames,
+			       (double)splitStats.chunks / splitStats.threadFrames, splitStats.peak, SPLIT_CHUNKS, splitStats.leftover,
+			       splitStats.workUs / 1000.0 / splitStats.threadFrames, splitStats.joinUs / 1000.0 / splitStats.threadFrames,
+			       splitStats.finishSkipped, splitStats.waitUs / 1000.0 / n);
+		else
 		rsxLog("[split] the buildings in a sub-buffer: %u frames, %u KB a frame (peak %u KB of %u) in %.1f calls a frame, %u stopped full, "
 		       "%.2f ms a frame waiting for one to be free",
 		       splitStats.calls, splitStats.calls ? splitStats.bytes / 1024 / splitStats.calls : 0, splitStats.peak / 1024,

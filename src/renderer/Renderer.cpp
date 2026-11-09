@@ -272,8 +272,12 @@ PS3_NoteDrawn(CEntity *ent)
 		ps3DrawnFrame[k] = ps3VisFrame;
 		ps3NumDrawn[k] = 0;
 	}
-	if(ps3NumDrawn[k] < 1024)
-		ps3DrawnCentre[k][ps3NumDrawn[k]++] = ent->GetBoundCentre();
+	// patch 171: the second thread notes its buildings too
+	int32 n = __sync_fetch_and_add(&ps3NumDrawn[k], 1);
+	if(n < 1024)
+		ps3DrawnCentre[k][n] = ent->GetBoundCentre();
+	else
+		ps3NumDrawn[k] = 1024;
 }
 
 // patch 127: noted where the detailed buildings are really drawn
@@ -2184,7 +2188,7 @@ CRenderer::RenderOneNonRoad(CEntity *e)
 		PS3_CRUMB("render vehicle: the vehicle", e->GetModelIndex());
 	}
 #ifdef __PS3__
-	if(PS3_logsOn && e->IsBuilding())
+	if(PS3_logsOn && e->IsBuilding() && !rw::ps3::onSplitWorker)	// patch 171: not on the second thread
 		PS3_NoteBuildingDrawn(e);	// patch 78: "[dark]"
 #endif
 	e->Render();
@@ -2253,6 +2257,133 @@ inline bool PutIntoSortedVehicleList(CVehicle *veh)
 	}else
 		return veh->bTouchingWater;		
 }
+
+#ifdef __PS3__
+// ---- patch 171 (render split, part 4): the buildings on a second thread ----
+// With rsplit.txt and rsplitthread.txt the game thread puts the chunks'
+// waits and calls in the ring and goes on (fading, boats, water, peds and
+// cars, effects) while this thread, on the PPU's other hardware thread,
+// records the buildings into the chunks from a copy of the game thread's
+// draw state and lights. Waited for after RenderEffects (PS3_SplitJoin).
+// Priority 1001, just under the game thread's: it never takes its place.
+#include <sys/thread.h>
+#include <sys/mutex.h>
+#include <sys/cond.h>
+#include <malloc.h>
+static bool ps3SpInit, ps3SpOn;
+static volatile int ps3SpState;	// 0 idle, 1 asked, 2 done
+static sys_mutex_t ps3SpMutex;
+static sys_cond_t ps3SpWork, ps3SpDone;
+static sys_ppu_thread_t ps3SpThread;
+static CEntity *ps3SpList[NUMVISIBLEENTITIES];
+static int ps3SpCount, ps3SpLeft;
+static int32 ps3SpSub;
+static uint32 ps3SpSeq;
+static uint8 *ps3SpCtx;
+static unsigned long long ps3SpT0;
+
+static void
+PS3_SplitWorkerMain(void *)
+{
+	for(;;){
+		sysMutexLock(ps3SpMutex, 0);
+		while(ps3SpState != 1)
+			sysCondWait(ps3SpWork, 0);
+		sysMutexUnlock(ps3SpMutex);
+		unsigned long long t0 = PS3_Ticks();
+		rw::ps3::loadDrawContext(ps3SpCtx);
+		rw::ps3::splitWorkerBegin(ps3SpSub, ps3SpSeq);
+		int i;
+		for(i = 0; i < ps3SpCount; i++){
+			if(!rw::ps3::splitWorkerRoom())
+				break;	// no chunk left: the game thread draws the rest
+			CRenderer::RenderOneNonRoad(ps3SpList[i]);
+		}
+		ps3SpLeft = i;
+		rw::ps3::splitWorkerEnd();
+		rw::ps3::splitStats.workUs += (uint32)((PS3_Ticks() - t0) / 79.8);
+		sysMutexLock(ps3SpMutex, 0);
+		ps3SpState = 2;
+		sysCondSignal(ps3SpDone);
+		sysMutexUnlock(ps3SpMutex);
+	}
+}
+
+static bool
+PS3_SplitInit(void)
+{
+	ps3SpInit = true;
+	ps3SpCtx = (uint8*)memalign(16, rw::ps3::drawContextSize());
+	sys_mutex_attr_t ma;
+	memset(&ma, 0, sizeof(ma));
+	ma.attr_protocol = SYS_MUTEX_PROTOCOL_PRIO;
+	ma.attr_recursive = SYS_MUTEX_ATTR_NOT_RECURSIVE;
+	ma.attr_pshared = SYS_MUTEX_ATTR_NOT_PSHARED;
+	ma.attr_adaptive = SYS_MUTEX_ATTR_NOT_ADAPTIVE;
+	strncpy(ma.name, "rsplit", sizeof(ma.name)-1);
+	sys_cond_attr_t ca;
+	sysCondAttrInitialize(ca);
+	if(ps3SpCtx == nil || sysMutexCreate(&ps3SpMutex, &ma) != 0 || sysCondCreate(&ps3SpWork, ps3SpMutex, &ca) != 0 ||
+	   sysCondCreate(&ps3SpDone, ps3SpMutex, &ca) != 0 ||
+	   sysThreadCreate(&ps3SpThread, PS3_SplitWorkerMain, NULL, 1001, 512*1024, 0, (char*)"rsplitwk") != 0){
+		PS3_Logf("[split] the second thread not made: the buildings on the game thread");
+		return false;
+	}
+	ps3SpOn = true;
+	PS3_Logf("[split] the buildings recorded on a second thread (rsplitthread.txt)");
+	return true;
+}
+
+// game thread, where the buildings go: false if not now (draw them here)
+static bool
+PS3_SplitStart(CEntity **list, int n)
+{
+	if(!ps3SpInit)
+		PS3_SplitInit();
+	if(!ps3SpOn || n == 0 || ps3SpState != 0)
+		return false;
+	rw::Frame::syncDirty();	// the buildings' frames clean: the other thread only reads them
+	rw::ps3::snapshotBuildingLights();
+	rw::ps3::saveDrawContext(ps3SpCtx);
+	ps3SpSub = rw::ps3::splitEmitSlots(&ps3SpSeq);
+	if(ps3SpSub < 0)
+		return false;
+	rw::ps3::forgetDrawState();	// after the slots the RSX has the other thread's state
+	memcpy(ps3SpList, list, n * sizeof(CEntity*));
+	ps3SpCount = n;
+	ps3SpLeft = n;
+	ps3SpT0 = PS3_Ticks();
+	sysMutexLock(ps3SpMutex, 0);
+	rw::ps3::splitBusy = true;
+	ps3SpState = 1;
+	sysCondSignal(ps3SpWork);
+	sysMutexUnlock(ps3SpMutex);
+	return true;
+}
+
+// after RenderEffects (and at the start of a frame, in case): the second
+// thread done; what it had no room for drawn here
+void
+PS3_SplitJoin(void)
+{
+	if(!ps3SpOn || ps3SpState == 0)
+		return;
+	unsigned long long t0 = PS3_Ticks();
+	sysMutexLock(ps3SpMutex, 0);
+	while(ps3SpState == 1)
+		sysCondWait(ps3SpDone, 0);
+	ps3SpState = 0;
+	rw::ps3::splitBusy = false;
+	sysMutexUnlock(ps3SpMutex);
+	rw::ps3::splitStats.joinUs += (uint32)((PS3_Ticks() - t0) / 79.8);
+	rw::ps3::splitStats.threadFrames++;
+	if(ps3SpLeft < ps3SpCount){
+		rw::ps3::splitStats.leftover += ps3SpCount - ps3SpLeft;
+		for(int i = ps3SpLeft; i < ps3SpCount; i++)
+			CRenderer::RenderOneNonRoad(ps3SpList[i]);
+	}
+}
+#endif
 
 // this only renders objects in LCS
 
@@ -2333,7 +2464,19 @@ CRenderer::RenderEverythingBarRoads(void)
 		}
 	}
 #ifdef __PS3__
-	if(ps3Split){
+	bool ps3Threaded = false;
+	if(ps3Split && rw::ps3::splitThread){
+		// patch 171: to the second thread
+		static CEntity *ps3l[NUMVISIBLEENTITIES];
+		int ps3c = 0;
+		for(i = 0; i < ms_nNoOfVisibleEntities; i++){
+			e = ms_aVisibleEntityPtrs[i];
+			if(!IsRoad(e) && e->IsBuilding())
+				ps3l[ps3c++] = e;
+		}
+		ps3Threaded = PS3_SplitStart(ps3l, ps3c);
+	}
+	if(ps3Split && !ps3Threaded){
 		bool sub = rw::ps3::subBufferBegin();
 		unsigned long long ps3t0 = PS3_Ticks();
 		int ps3n = 0;
@@ -2772,8 +2915,11 @@ PS3_InspVis(CEntity *ent, int32 v, int line)
 void
 PS3_InspDrawn(CEntity *e)	// CEntity::Render
 {
-	if(ps3InspState == 2 && ps3InspNDrawn < (int)ARRAY_SIZE(ps3InspDrawn))
-		ps3InspDrawn[ps3InspNDrawn++] = e;
+	if(ps3InspState == 2 && ps3InspNDrawn < (int)ARRAY_SIZE(ps3InspDrawn)){
+		int n = __sync_fetch_and_add(&ps3InspNDrawn, 1);	// patch 171: two threads
+		if(n < (int)ARRAY_SIZE(ps3InspDrawn))
+			ps3InspDrawn[n] = e;
+	}
 }
 
 static const char*

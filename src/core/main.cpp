@@ -110,6 +110,7 @@
 #include <sys/mutex.h>
 #include <sys/cond.h>
 volatile bool gPS3AudioOnWorker;
+void PS3_SplitJoin(void);	// patch 171 (Renderer.cpp)
 // patch 160: true from the worker's start to its end (common.h's guard)
 volatile bool gPS3AudioBusy;
 #include <lv2/mutex.h>
@@ -2240,6 +2241,7 @@ Idle(void *arg)
 {
 #ifdef __PS3__
 	PS3_AudioFinish();	// patch 158: a frame that didn't get to RenderScene
+	PS3_SplitJoin();	// patch 171: likewise
 #endif
 #ifdef _3DS
 	rw::c3d::ProfileLogicFrameScope profileLogicFrame;
@@ -2430,6 +2432,7 @@ Idle(void *arg)
 			gPS3REffectsTb += PS3_Ticks() - ps3re0;
 		}
 		PS3_AudioFinish();	// patch 158: before the HUD and the menus (they play sounds)
+		PS3_SplitJoin();	// patch 171: the buildings' second thread done
 #else
 		RenderEffects();
 #endif
