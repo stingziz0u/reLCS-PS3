@@ -249,6 +249,7 @@ CWorld::ProcessLineOfSight(const CVector &point1, const CVector &point2, CColPoi
                            bool checkBuildings, bool checkVehicles, bool checkPeds, bool checkObjects,
                            bool checkDummies, bool ignoreSeeThrough, bool ignoreSomeObjects, bool ignoreShootThrough)
 {
+	PS3_WORLD_QUERY_GUARD();	// patch 160
 	int x, xstart, xend;
 	int y, ystart, yend;
 	int y1, y2;
@@ -482,6 +483,7 @@ CWorld::ProcessVerticalLine(const CVector &point1, float z2, CColPoint &point, C
                             bool checkVehicles, bool checkPeds, bool checkObjects, bool checkDummies,
                             bool ignoreSeeThrough, CStoredCollPoly *poly)
 {
+	PS3_WORLD_QUERY_GUARD();	// patch 160
 	AdvanceCurrentScanCode();
 	CVector point2(point1.x, point1.y, z2);
 	int secX = GetSectorIndexX(point1.x);
@@ -571,6 +573,7 @@ CWorld::GetIsLineOfSightClear(const CVector &point1, const CVector &point2, bool
                               bool checkPeds, bool checkObjects, bool checkDummies, bool ignoreSeeThrough,
                               bool ignoreSomeObjects)
 {
+	PS3_WORLD_QUERY_GUARD();	// patch 160
 	int x, xstart, xend;
 	int y, ystart, yend;
 	int y1, y2;
@@ -2796,6 +2799,14 @@ PS3_ColReport(unsigned int frames)
 		         (double)PS3_colSkipped / frames, gPS3VmxColCheck ? "" : "");
 		if (gPS3VmxColCheck)
 			PS3_Logf("[col]  check against the old loop: %u calls, %u different", PS3_colCheckCalls, PS3_colCheckMismatches);
+		// patch 160
+		extern unsigned long long PS3_colLineTicks;
+		extern uint32 PS3_colLineCalls, PS3_colLineTris, PS3_colLineTested;
+		PS3_Logf("[col]  lines of sight and vertical lines vs triangles: %.2f ms (x%.0f col models), %.0f triangles in them, %.0f tested (their box touches the line's)",
+		         PS3_colLineTicks * msPerTick / frames, (double)PS3_colLineCalls / frames, (double)PS3_colLineTris / frames,
+		         (double)PS3_colLineTested / frames);
+		PS3_colLineTicks = 0;
+		PS3_colLineCalls = PS3_colLineTris = PS3_colLineTested = 0;
 		PS3_colBroadTicks = PS3_colSphTriTicks = PS3_colLineTriTicks = 0;
 		PS3_colBroadTris = PS3_colBroadCands = PS3_colBroadKept = PS3_colSkipped = 0;
 		PS3_colCheckCalls = PS3_colCheckMismatches = 0;

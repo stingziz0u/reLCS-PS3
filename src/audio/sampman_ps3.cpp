@@ -2779,8 +2779,14 @@ int32
 cSampleManager::GetStreamedFilePosition(uint8 nStream)
 {
 	PS3_AUDIO_SLOW("cSampleManager::GetStreamedFilePosition");
-	if(nStream < MAX_STREAMS && StreamPending(nStream))
-		return streamReqs[nStream].file >= 0 ? streamReqs[nStream].pos : 0;	// patch 69: as asked for
+	if(nStream < MAX_STREAMS && StreamPending(nStream)){
+		// patch 69: as asked for; patch 160: the MP3 player's too (it said
+		// 0, and the music manager started the song again 5 times)
+		const StreamReq &r = streamReqs[nStream];
+		if(r.file == -2)
+			return r.pos + (r.mp3 >= 0 && (uint32)r.mp3 < nNumMP3s ? mp3List[r.mp3].streamPos : 0);
+		return r.file >= 0 ? r.pos : 0;
+	}
 	MixLock lock;
 	Stream *s = nStream < MAX_STREAMS ? streams[nStream] : nil;
 	if(s == nil || s->rate == 0)
@@ -2830,7 +2836,7 @@ bool8
 cSampleManager::IsStreamPlaying(uint8 nStream)
 {
 	if(nStream < MAX_STREAMS && StreamPending(nStream))
-		return streamReqs[nStream].file >= 0 && streamReqs[nStream].playing;	// patch 69: as asked for
+		return (streamReqs[nStream].file >= 0 || streamReqs[nStream].file == -2) && streamReqs[nStream].playing;	// patch 69: as asked for (160: the MP3 player's too)
 	MixLock lock;
 	Stream *s = nStream < MAX_STREAMS ? streams[nStream] : nil;
 	if(s == nil || !s->playing)

@@ -110,6 +110,12 @@
 #include <sys/mutex.h>
 #include <sys/cond.h>
 volatile bool gPS3AudioOnWorker;
+// patch 160: true from the worker's start to its end (common.h's guard)
+volatile bool gPS3AudioBusy;
+#include <lv2/mutex.h>
+static sys_lwmutex_t ps3WorldQueryMutex;
+void PS3_WorldQueryLock(void) { sysLwMutexLock(&ps3WorldQueryMutex, 0); }
+void PS3_WorldQueryUnlock(void) { sysLwMutexUnlock(&ps3WorldQueryMutex); }
 static bool ps3AwOn, ps3AwInit, ps3AwDeferred;
 static volatile int ps3AwState;	// 0 idle, 1 asked, 2 done
 static sys_mutex_t ps3AwMutex;
@@ -163,6 +169,17 @@ PS3_AudioWorkerInit(void)
 		PS3_Logf("[audio] the sound service thread not made: on the game thread");
 		return;
 	}
+	{
+		sys_lwmutex_attr_t la;
+		memset(&la, 0, sizeof(la));
+		la.attr_protocol = SYS_LWMUTEX_PROTOCOL_PRIO;
+		la.attr_recursive = SYS_LWMUTEX_ATTR_RECURSIVE;
+		strncpy(la.name, "worldq", sizeof(la.name)-1);
+		if(sysLwMutexCreate(&ps3WorldQueryMutex, &la) != 0){
+			PS3_Logf("[audio] the world lock not made: the sound service on the game thread");
+			return;
+		}
+	}
 	ps3AwOn = true;
 	PS3_Logf("[audio] the sound service on its own thread during RenderScene (noaudiothread.txt turns it off)");
 }
@@ -186,6 +203,7 @@ PS3_AudioStart(void)
 		return;
 	ps3AwDeferred = false;
 	sysMutexLock(ps3AwMutex, 0);
+	gPS3AudioBusy = true;	// patch 160: before it can run
 	ps3AwState = 1;
 	sysCondSignal(ps3AwWork);
 	sysMutexUnlock(ps3AwMutex);
@@ -209,6 +227,7 @@ PS3_AudioFinish(void)
 	while(ps3AwState == 1)
 		sysCondWait(ps3AwDone, 0);
 	ps3AwState = 0;
+	gPS3AudioBusy = false;
 	sysMutexUnlock(ps3AwMutex);
 	ps3AwWaitTicks += PS3_Ticks() - t0;
 	ps3AwRuns++;

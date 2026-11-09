@@ -25,12 +25,11 @@ splat4(float f)
 // 16-byte aligned, n4 = numTriangles rounded up to 4 (the padding empty).
 // out: the indices of the triangles whose box touches the sphere's box
 // (grown by eps). Returns how many.
+// patch 160: the same against a box lo..hi (a line's, already grown)
 int
-PS3_ColBoxCandidates(const float *boxes, int numTriangles, float cx, float cy, float cz, float r, float eps, int *out)
+PS3_ColBoxCandidatesBox(const float *boxes, int numTriangles, const float *lo, const float *hi, int *out)
 {
 	int n4 = (numTriangles + 3) & ~3;
-	float lo[3] = { cx - r - eps, cy - r - eps, cz - r - eps };
-	float hi[3] = { cx + r + eps, cy + r + eps, cz + r + eps };
 	int n = 0;
 #if defined(__PS3__) && defined(__ALTIVEC__)
 	const float *mnx = boxes, *mny = boxes + n4, *mnz = boxes + 2 * n4;
@@ -59,4 +58,12 @@ PS3_ColBoxCandidates(const float *boxes, int numTriangles, float cx, float cy, f
 			out[n++] = i;
 #endif
 	return n;
+}
+
+int
+PS3_ColBoxCandidates(const float *boxes, int numTriangles, float cx, float cy, float cz, float r, float eps, int *out)
+{
+	float lo[3] = { cx - r - eps, cy - r - eps, cz - r - eps };
+	float hi[3] = { cx + r + eps, cy + r + eps, cz + r + eps };
+	return PS3_ColBoxCandidatesBox(boxes, numTriangles, lo, hi, out);
 }

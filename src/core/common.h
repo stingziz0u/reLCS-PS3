@@ -142,7 +142,22 @@ static inline float PS3_GammaValue(int i) { return 0.8f + 0.1f * i; }
 class CEntity;
 extern CEntity *PS3_renderEntity;
 #define PS3_FX_STEP(tag) do { PS3_Crumb(tag, 0); PS3_ProfStep(PS3_PROF_SCENE, tag); } while (0)
+// patch 160: while the sound service runs on its own thread (main.cpp, during
+// RenderScene and RenderEffects) both it and the drawing test lines against
+// the world (the audio's reflections and ped comments; the water, coronas,
+// light fog and shadows), and those share the triangle planes' cache, the
+// scan code and some statics: one at a time then. Nothing locked otherwise.
+extern volatile bool gPS3AudioBusy;
+void PS3_WorldQueryLock(void);
+void PS3_WorldQueryUnlock(void);
+struct PS3WorldQueryGuard {
+	bool on;
+	PS3WorldQueryGuard() : on(gPS3AudioBusy) { if(on) PS3_WorldQueryLock(); }
+	~PS3WorldQueryGuard() { if(on) PS3_WorldQueryUnlock(); }
+};
+#define PS3_WORLD_QUERY_GUARD() PS3WorldQueryGuard PS3_PROF_CAT(ps3wq_, __LINE__)
 #else
+#define PS3_WORLD_QUERY_GUARD()
 #define PS3_CRUMB(tag, val)
 #define PS3_CRUMB_CALLER(tag, val)
 #define PS3_ANGLE_OK(a) true

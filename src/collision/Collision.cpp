@@ -131,6 +131,31 @@ PS3_ColVmxInit(void)
 	         gPS3VmxColCheck ? ", checked against the old loop (vmxcolcheck.txt)" : "");
 }
 
+// patch 160: the lines of sight and the vertical lines (cars on rails put on
+// the road, the camera, peds' ground, the water...) tested every triangle of
+// the col model, thousands in Staunton's: only those whose box touches the
+// line's now. The same answers: a hit point is inside its triangle and on
+// the line, so in both boxes.
+int PS3_ColBoxCandidatesBox(const float *boxes, int numTriangles, const float *lo, const float *hi, int *out);
+unsigned long long PS3_colLineTicks;
+uint32 PS3_colLineCalls, PS3_colLineTris, PS3_colLineTested;
+static int ps3LineCands[32768];	// under the world lock when two threads test (patch 160)
+
+// the candidates for the line (model space), or -1: the whole loop
+static int
+PS3_LineCandidates(const CColModel &model, const CColLine &l)
+{
+	if(!gPS3VmxCol || model.trianglePlanes == nil || model.numTriangles <= 0 || model.numTriangles > 32768)
+		return -1;
+	float lo[3] = { Min(l.p0.x, l.p1.x) - PS3_COL_EPS, Min(l.p0.y, l.p1.y) - PS3_COL_EPS, Min(l.p0.z, l.p1.z) - PS3_COL_EPS };
+	float hi[3] = { Max(l.p0.x, l.p1.x) + PS3_COL_EPS, Max(l.p0.y, l.p1.y) + PS3_COL_EPS, Max(l.p0.z, l.p1.z) + PS3_COL_EPS };
+	int n = PS3_ColBoxCandidatesBox(PS3_TriBoxes(&model), model.numTriangles, lo, hi, ps3LineCands);
+	PS3_colLineCalls++;
+	PS3_colLineTris += model.numTriangles;
+	PS3_colLineTested += n;
+	return n;
+}
+
 // does triangle k's box touch the box min..max (grown by eps)?
 static inline bool
 PS3_TriBoxTouches(const float *b, int n4, int k, float x0, float y0, float z0, float x1, float y1, float z1)
@@ -1518,6 +1543,21 @@ CCollision::ProcessLineOfSight(const CColLine &line,
 	}
 
 	CalculateTrianglePlanes(&model);
+#ifdef __PS3__
+	int ps3n;
+	{
+		PS3ColTimer ps3t(&PS3_colLineTicks);
+		PS3_ColVmxInit();
+		ps3n = PS3_LineCandidates(model, newline);
+		for(int c = 0; c < ps3n; c++){
+			i = ps3LineCands[c];
+			if(ignoreSeeThrough && IsSeeThrough(model.triangles[i].surface)) continue;
+			if(ignoreShootThrough && IsShootThrough(model.triangles[i].surface)) continue;
+			ProcessLineTriangle(newline, model.vertices, model.triangles[i], model.trianglePlanes[i], point, coldist);
+		}
+	}
+	if(ps3n < 0)
+#endif
 	for(i = 0; i < model.numTriangles; i++){
 		if(ignoreSeeThrough && IsSeeThrough(model.triangles[i].surface)) continue;
 		if(ignoreShootThrough && IsShootThrough(model.triangles[i].surface)) continue;
@@ -1682,6 +1722,20 @@ CCollision::ProcessVerticalLine(const CColLine &line,
 
 	CalculateTrianglePlanes(&model);
 	TempStoredPoly.valid = false;
+#ifdef __PS3__
+	int ps3n;
+	{
+		PS3ColTimer ps3t(&PS3_colLineTicks);
+		PS3_ColVmxInit();
+		ps3n = PS3_LineCandidates(model, newline);
+		for(int c = 0; c < ps3n; c++){
+			i = ps3LineCands[c];
+			if(ignoreSeeThrough && IsSeeThroughVertical(model.triangles[i].surface)) continue;
+			ProcessLineTriangle(newline, model.vertices, model.triangles[i], model.trianglePlanes[i], point, coldist, &TempStoredPoly);
+		}
+	}
+	if(ps3n < 0)
+#endif
 	for(i = 0; i < model.numTriangles; i++){
 		if(ignoreSeeThrough && IsSeeThroughVertical(model.triangles[i].surface)) continue;
 		ProcessLineTriangle(newline, model.vertices, model.triangles[i], model.trianglePlanes[i], point, coldist, &TempStoredPoly);

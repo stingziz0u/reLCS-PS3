@@ -1224,6 +1224,7 @@ CShadows::SetRenderModeForShadowType(uint8 ShadowType)
 void
 CShadows::RenderStoredShadows(void)
 {
+	PS3_WORLD_QUERY_GUARD();	// patch 160: its sector scan and the cutscene shadows' planes
 #ifdef __PS3__
 	if ( rw::ps3::decalMode == 8 )
 		return;	// patch 109: test mode (R3 + Select), which shadow is the broken one
