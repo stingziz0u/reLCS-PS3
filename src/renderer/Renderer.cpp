@@ -2281,6 +2281,8 @@ static int32 ps3SpSub;
 static uint32 ps3SpSeq;
 static uint8 *ps3SpCtx;
 static unsigned long long ps3SpT0;
+static volatile int ps3SpIndex;	// patch 172: the building the second thread is at
+static volatile int ps3SpMainStep;	// patch 172: where the game thread is with it
 
 static void
 PS3_SplitWorkerMain(void *)
@@ -2295,10 +2297,12 @@ PS3_SplitWorkerMain(void *)
 		rw::ps3::splitWorkerBegin(ps3SpSub, ps3SpSeq);
 		int i;
 		for(i = 0; i < ps3SpCount; i++){
+			ps3SpIndex = i;
 			if(!rw::ps3::splitWorkerRoom())
 				break;	// no chunk left: the game thread draws the rest
 			CRenderer::RenderOneNonRoad(ps3SpList[i]);
 		}
+		ps3SpIndex = i;
 		ps3SpLeft = i;
 		rw::ps3::splitWorkerEnd();
 		rw::ps3::splitStats.workUs += (uint32)((PS3_Ticks() - t0) / 79.8);
@@ -2307,6 +2311,19 @@ PS3_SplitWorkerMain(void *)
 		sysCondSignal(ps3SpDone);
 		sysMutexUnlock(ps3SpMutex);
 	}
+}
+
+void PS3_SplitJoin(void);
+extern void (*PS3_hangDumpHook)(void);
+static void (*ps3SpPrevHang)(void);
+static void
+PS3_SplitHangDump(void)
+{
+	PS3_Logf("[hang] split: state %d, building %d of %d, the game thread at step %d (1 starting, 2 started, 3 joining, 4 joined)",
+	         ps3SpState, ps3SpIndex, ps3SpCount, ps3SpMainStep);
+	rw::ps3::splitHangReport();
+	if(ps3SpPrevHang)
+		ps3SpPrevHang();
 }
 
 static bool
@@ -2330,6 +2347,9 @@ PS3_SplitInit(void)
 		return false;
 	}
 	ps3SpOn = true;
+	rw::ps3::splitJoinHook = PS3_SplitJoin;	// patch 172: before every present too
+	ps3SpPrevHang = PS3_hangDumpHook;	// patch 172: the [hang] dump says where it is
+	PS3_hangDumpHook = PS3_SplitHangDump;
 	PS3_Logf("[split] the buildings recorded on a second thread (rsplitthread.txt)");
 	return true;
 }
@@ -2340,8 +2360,11 @@ PS3_SplitStart(CEntity **list, int n)
 {
 	if(!ps3SpInit)
 		PS3_SplitInit();
+	if(ps3SpOn && ps3SpState != 0)
+		PS3_SplitJoin();	// patch 172: a scene drawn twice before RenderEffects
 	if(!ps3SpOn || n == 0 || ps3SpState != 0)
 		return false;
+	ps3SpMainStep = 1;
 	rw::Frame::syncDirty();	// the buildings' frames clean: the other thread only reads them
 	rw::ps3::snapshotBuildingLights();
 	rw::ps3::saveDrawContext(ps3SpCtx);
@@ -2358,6 +2381,7 @@ PS3_SplitStart(CEntity **list, int n)
 	ps3SpState = 1;
 	sysCondSignal(ps3SpWork);
 	sysMutexUnlock(ps3SpMutex);
+	ps3SpMainStep = 2;
 	return true;
 }
 
@@ -2369,9 +2393,11 @@ PS3_SplitJoin(void)
 	if(!ps3SpOn || ps3SpState == 0)
 		return;
 	unsigned long long t0 = PS3_Ticks();
+	ps3SpMainStep = 3;
 	sysMutexLock(ps3SpMutex, 0);
 	while(ps3SpState == 1)
 		sysCondWait(ps3SpDone, 0);
+	ps3SpMainStep = 4;
 	ps3SpState = 0;
 	rw::ps3::splitBusy = false;
 	sysMutexUnlock(ps3SpMutex);

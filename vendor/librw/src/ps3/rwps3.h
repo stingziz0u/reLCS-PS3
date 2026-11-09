@@ -239,7 +239,7 @@ extern RW_TLS bool decalBuilding;
 // command buffer to it (false: not now, draw as usual), subBufferRoom says
 // the bytes left, subBufferEnd returns to the ring and calls it from there.
 struct SplitStats { uint32 calls, bytes, peak, full, waitUs, chunks;
-	uint32 threadFrames, leftover, workUs, joinUs, finishSkipped; };	// patch 171
+	uint32 threadFrames, leftover, workUs, joinUs, finishSkipped, sameFrame; };	// patch 171, 172
 extern SplitStats splitStats;
 extern bool splitBuildings;	// USRDIR/rsplit.txt
 bool subBufferBegin(void);
@@ -259,7 +259,9 @@ void splitWorkerEnd(void);
 void snapshotBuildingLights(void);
 void forgetDrawState(void);
 extern RW_TLS bool onSplitWorker;	// patch 171: this thread records the buildings
-extern volatile bool splitBusy;	// patch 170: the part recorded so far called from the ring now, the ring kicked
+extern volatile bool splitBusy;
+extern void (*splitJoinHook)(void);
+void splitHangReport(void);	// patch 172: [hang] lines	// patch 172: called before a frame is presented	// patch 170: the part recorded so far called from the ring now, the ring kicked
 extern bool leedsFullAlpha;	// patch 167: buildings' materials at alpha 255 (USRDIR/glassalpha.txt: their own)
 extern uint32 leedsFullAlphaCount;
 // patch 163 (render split): the draw state is one per thread; a second

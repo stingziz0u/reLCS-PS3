@@ -200,6 +200,7 @@ namespace rw {
 namespace ps3 {
 bool splitThread;
 volatile bool splitBusy;
+void (*splitJoinHook)(void);	// patch 172: Renderer.cpp's PS3_SplitJoin
 RW_TLS bool onSplitWorker;
 static sys_lwmutex_t resMutex;
 static bool resMutexMade;
@@ -259,6 +260,10 @@ splitEmitSlots(uint32 *seq)
 	if(ioBuffer == nil || mainRsxCtx == nil || rsxCtx != mainRsxCtx || subCur >= 0 || !splitMakeLock())
 		return -1;
 	int32 k = frame % SUB_COUNT;
+	if(subUsed[k] && subFrame[k] == frame){	// patch 172: once a frame (see subBufferBegin)
+		splitStats.sameFrame++;
+		return -1;
+	}
 	if(subUsed[k] && (int32)(completedFrame() - subFrame[k]) < 0){
 		uint64 t0 = sysGetSystemTime();
 		waitFrame(subFrame[k]);
@@ -330,6 +335,27 @@ splitWorkerRoom(void)
 	return true;
 }
 
+// patch 172: for the [hang] dump: where the second thread and the RSX are
+void
+splitHangReport(void)
+{
+	gcmControlRegister *cr = gcmGetControlRegister();
+	u32 mainOff = 0;
+	if(mainRsxCtx)
+		rsxAddressToOffset(mainRsxCtx->current, &mainOff);
+	rsxLog("[hang] split: busy %d, the second thread on sub-buffer %d chunk %d (label value %u), frame %u done %u; "
+	       "RSX get 0x%08x put 0x%08x, the ring's current 0x%08x, sub-buffers at 0x%08x 0x%08x 0x%08x",
+	       (int)splitBusy, (int)workerSub, (int)workerChunk, workerSeq, frame, completedFrame(),
+	       cr ? cr->get : 0, cr ? cr->put : 0, mainOff, subOffset[0], subOffset[1], subOffset[2]);
+	if(resMutexMade){
+		char buf[300];
+		int len = 0;
+		for(int32 i = 0; i < SPLIT_CHUNKS && len < 280; i++)
+			len += snprintf(buf + len, sizeof(buf) - len, " %u", *splitLabel[i]);
+		rsxLog("[hang] split: chunk labels:%s", buf);
+	}
+}
+
 // the current chunk ended and every chunk not used ended empty
 void
 splitWorkerEnd(void)
@@ -360,6 +386,14 @@ subBufferBegin(void)
 	if(subCur >= 0 || ioBuffer == nil || mainRsxCtx == nil || rsxCtx != mainRsxCtx)
 		return false;
 	int32 k = frame % SUB_COUNT;
+	// patch 172: once a frame. A second time in the same frame (the loading
+	// screen draws the scene twice before it presents) waited for this very
+	// frame to be done, which it can't be before it is presented: the freeze
+	// at "Loading game" with rsplitthread.txt. The ring then.
+	if(subUsed[k] && subFrame[k] == frame){
+		splitStats.sameFrame++;
+		return false;
+	}
 	if(subUsed[k] && (int32)(completedFrame() - subFrame[k]) < 0){
 		uint64 t0 = sysGetSystemTime();
 		waitFrame(subFrame[k]);
@@ -886,11 +920,11 @@ logStats(void)
 		if(splitStats.threadFrames)
 			rsxLog("[split] the buildings on the second thread: %u frames, %u KB a frame in %.1f chunks (peak %u of %d), "
 			       "%u buildings left over for the game thread; it recorded %.2f ms a frame and the game thread waited %.2f ms for it; "
-			       "%u RSX waits skipped; %.2f ms a frame waiting for a sub-buffer",
+			       "%u RSX waits skipped; %.2f ms a frame waiting for a sub-buffer; %u times a second one in a frame (drawn in the ring)",
 			       splitStats.threadFrames, splitStats.bytes / 1024 / splitStats.threadFrames,
 			       (double)splitStats.chunks / splitStats.threadFrames, splitStats.peak, SPLIT_CHUNKS, splitStats.leftover,
 			       splitStats.workUs / 1000.0 / splitStats.threadFrames, splitStats.joinUs / 1000.0 / splitStats.threadFrames,
-			       splitStats.finishSkipped, splitStats.waitUs / 1000.0 / n);
+			       splitStats.finishSkipped, splitStats.waitUs / 1000.0 / n, splitStats.sameFrame);
 		else
 		rsxLog("[split] the buildings in a sub-buffer: %u frames, %u KB a frame (peak %u KB of %u) in %.1f calls a frame, %u stopped full, "
 		       "%.2f ms a frame waiting for one to be free",
@@ -1005,6 +1039,11 @@ videoPresent(Raster *raster, bool vsync)
 
 	if(!ready)
 		return;
+	// patch 172: the buildings' second thread done before the frame goes
+	// (a frame drawn outside the game's Idle, the loading screens: patch 171
+	// only waited after RenderEffects)
+	if(splitJoinHook)
+		splitJoinHook();
 
 	u64 t0 = sysGetSystemTime();
 	if(frameStartUs)
