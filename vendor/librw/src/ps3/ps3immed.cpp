@@ -45,7 +45,6 @@ static Im2DVertex tmpprimbuf[3];
 void
 im2DRenderLine(void *vertices, int32 numVertices, int32 vert1, int32 vert2)
 {
-	leedsBatchFlush();	// patch 155
 	Im2DVertex *verts = (Im2DVertex*)vertices;
 	tmpprimbuf[0] = verts[vert1];
 	tmpprimbuf[1] = verts[vert2];
@@ -55,7 +54,6 @@ im2DRenderLine(void *vertices, int32 numVertices, int32 vert1, int32 vert2)
 void
 im2DRenderTriangle(void *vertices, int32 numVertices, int32 vert1, int32 vert2, int32 vert3)
 {
-	leedsBatchFlush();	// patch 155
 	Im2DVertex *verts = (Im2DVertex*)vertices;
 	tmpprimbuf[0] = verts[vert1];
 	tmpprimbuf[1] = verts[vert2];
@@ -82,7 +80,6 @@ im2DSetup(void *vertices, int32 numVertices)
 void
 im2DRenderPrimitive(PrimitiveType primType, void *vertices, int32 numVertices)
 {
-	leedsBatchFlush();	// patch 155
 	RW_CRUMB("rw: Im2D draw, vertices", numVertices);
 	if(!im2DSetup(vertices, numVertices))
 		return;
@@ -142,7 +139,6 @@ static bool im3DValid;
 void
 im3DTransform(void *vertices, int32 numVertices, Matrix *world, uint32 flags)
 {
-	leedsBatchFlush();	// patch 155
 	RW_CRUMB("rw: Im3D vertices", numVertices);
 	if(world == nil)
 		setWorldIdentity();

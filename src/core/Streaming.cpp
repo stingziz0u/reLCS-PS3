@@ -15,6 +15,10 @@
 #include "RwHelper.h"
 #ifdef __PS3__
 #include "ps3_platform.h"
+#ifdef __PS3__
+static void PS3_StreamLoaded(int32 id);	// patch 156
+void PS3_StreamWaitLog(void);
+#endif
 #endif
 #if defined(__PS3__) && defined(RW_PS3_RSX)
 #include "src/ps3/rwps3.h"
@@ -630,6 +634,9 @@ CStreaming::Update(void)
 
 	// patch 59: CStreaming::Update by part ([prof] game)
 	PS3_PROF_CALL(PS3_PROF_GAME, "stream: big buildings", LoadBigBuildingsWhenNeeded());
+#ifdef __PS3__
+	PS3_StreamWaitLog();	// patch 156
+#endif
 	if(!ms_disableStreaming && TheCamera.GetPosition().z < 55.0f)
 		PS3_PROF_CALL(PS3_PROF_GAME, "stream: request around the camera", AddModelsToRequestList(TheCamera.GetPosition(), 0));
 
@@ -1056,6 +1063,9 @@ CStreaming::ConvertBufferToObject(int8 *buf, int32 streamId)
 
 	// Mark objects as loaded
 	if(ms_aInfoForModel[streamId].m_loadState != STREAMSTATE_STARTED){
+#ifdef __PS3__
+		PS3_StreamLoaded(streamId);	// patch 156
+#endif
 		ms_aInfoForModel[streamId].m_loadState = STREAMSTATE_LOADED;
 #ifndef USE_CUSTOM_ALLOCATOR
 		ms_memoryUsed += ms_aInfoForModel[streamId].GetCdSize() * CDSTREAM_SECTOR_SIZE;
@@ -1148,6 +1158,9 @@ CStreaming::FinishLoadingLargeFile(int8 *buf, int32 streamId)
 
 	RwStreamClose(stream, &mem);
 
+#ifdef __PS3__
+	PS3_StreamLoaded(streamId);	// patch 156
+#endif
 	ms_aInfoForModel[streamId].m_loadState = STREAMSTATE_LOADED;
 #ifndef USE_CUSTOM_ALLOCATOR
 	ms_memoryUsed += ms_aInfoForModel[streamId].GetCdSize() * CDSTREAM_SECTOR_SIZE;
@@ -1176,6 +1189,58 @@ CStreaming::FinishLoadingLargeFile(int8 *buf, int32 streamId)
 
 	return true;
 }
+
+#ifdef __PS3__
+// patch 156: how long a model waits between its request and being loaded
+// (Ren: the detailed models seem to come later). [stream] every 10 s: the
+// models loaded, their average and longest wait, the queue.
+static uint64 ps3ReqTicks[MODELINFOSIZE];
+static uint32 ps3WaitN, ps3WaitBigN;
+static uint64 ps3WaitSum, ps3WaitMax, ps3WaitBigSum;
+static int32 ps3WaitMaxId = -1;
+static uint32 ps3QueuePeak;
+static void
+PS3_StreamLoaded(int32 id)
+{
+	if(id < 0 || id >= MODELINFOSIZE || ps3ReqTicks[id] == 0)
+		return;
+	uint64 w = PS3_Ticks() - ps3ReqTicks[id];
+	ps3ReqTicks[id] = 0;
+	bool big = (CStreaming::ms_aInfoForModel[id].m_flags & STREAMFLAGS_DONT_REMOVE) != 0;
+	if(big){
+		ps3WaitBigN++;
+		ps3WaitBigSum += w;
+	}else{
+		ps3WaitN++;
+		ps3WaitSum += w;
+		if(w > ps3WaitMax){
+			ps3WaitMax = w;
+			ps3WaitMaxId = id;
+		}
+	}
+}
+void
+PS3_StreamWaitLog(void)
+{
+	static uint64 last;
+	uint64 now = PS3_Ticks();
+	if(CStreaming::ms_numModelsRequested > (int32)ps3QueuePeak)
+		ps3QueuePeak = CStreaming::ms_numModelsRequested;
+	if(!PS3_logsOn || now - last < 10ull * 79800000ull)
+		return;
+	last = now;
+	CBaseModelInfo *mi = ps3WaitMaxId >= 0 ? CModelInfo::GetModelInfo(ps3WaitMaxId) : nil;
+	PS3_Logf("[stream] 10 s: %u models loaded, waited %.0f ms on average, %.0f at most (%s); %u kept ones (LODs...) %.0f ms on average; "
+	         "queue now %d, peak %u",
+	         ps3WaitN, ps3WaitN ? ps3WaitSum / 79800.0 / ps3WaitN : 0.0, ps3WaitMax / 79800.0, mi ? mi->GetModelName() : "-",
+	         ps3WaitBigN, ps3WaitBigN ? ps3WaitBigSum / 79800.0 / ps3WaitBigN : 0.0,
+	         CStreaming::ms_numModelsRequested, ps3QueuePeak);
+	ps3WaitN = ps3WaitBigN = 0;
+	ps3WaitSum = ps3WaitMax = ps3WaitBigSum = 0;
+	ps3WaitMaxId = -1;
+	ps3QueuePeak = 0;
+}
+#endif
 
 void
 CStreaming::RequestModel(int32 id, int32 flags)
@@ -1232,6 +1297,10 @@ CStreaming::RequestModel(int32 id, int32 flags)
 			ms_numModelsRequested++;
 			if(flags & STREAMFLAGS_PRIORITY)
 				ms_numPriorityRequests++;
+#ifdef __PS3__
+			if(id < MODELINFOSIZE)
+				ps3ReqTicks[id] = PS3_Ticks();	// patch 156
+#endif
 		}
 
 		ms_aInfoForModel[id].m_loadState = STREAMSTATE_INQUEUE;

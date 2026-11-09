@@ -2257,19 +2257,12 @@ CRenderer::RenderEverythingBarRoads(void)
 
 #ifdef __PS3__
 	PS3_SortVisibleByTexture(ms_aVisibleEntityPtrs, ms_nNoOfVisibleEntities);	// patch 154
-	rw::ps3::leedsBatchBegin();	// patch 155
 #endif
 	for(i = 0; i < ms_nNoOfVisibleEntities; i++){
 		e = ms_aVisibleEntityPtrs[i];
 
 		if(IsRoad(e))
 			continue;
-#ifdef __PS3__
-		// patch 155: what isn't a building sets its own lights before it's
-		// drawn: the buildings kept wait no longer
-		if(!e->IsBuilding())
-			rw::ps3::leedsBatchFlush();
-#endif
 
 #ifdef EXTENDED_PIPELINES
 		if(CustomPipes::bRenderingEnvMap && (e->IsPed() || e->IsVehicle()))
@@ -2293,9 +2286,6 @@ CRenderer::RenderEverythingBarRoads(void)
 		}else
 			RenderOneNonRoad(e);
 	}
-#ifdef __PS3__
-	rw::ps3::leedsBatchEnd();	// patch 155
-#endif
 	POP_RENDERGROUP();
 }
 
@@ -2740,7 +2730,9 @@ struct PS3InspHit { CEntity *e; float t; };
 // them changes nothing on screen (the LODs are pushed behind, patch 147;
 // the overlays are meshes of one model, whose order is kept). The rest
 // (peds, anything without a simple model) keeps its order at the end.
-// USRDIR/notexsort.txt: the scan's order.
+// USRDIR/notexsort.txt: the scan's order. Patch 156: the scan's order unless
+// USRDIR/texsort.txt (the binds hardly went down: LCS's buildings are nearly
+// all models of their own, with textures of their own).
 struct PS3SortEnt { uint32 key; int32 i; CEntity *e; };
 static int
 PS3_SortEntCmp(const void *a, const void *b)
@@ -2754,10 +2746,10 @@ PS3_SortVisibleByTexture(CEntity **list, int32 n)
 {
 	static int off = -1;
 	if(off < 0){
-		FILE *f = fopen(PS3_USRDIR "/notexsort.txt", "rb");
-		off = f != nil;
+		FILE *f = fopen(PS3_USRDIR "/texsort.txt", "rb");
+		off = f == nil;
 		if(f) fclose(f);
-		PS3_Logf("[5] opaque entities drawn in texture order: %s", off ? "OFF (notexsort.txt)" : "on (notexsort.txt turns it off)");
+		PS3_Logf("[5] opaque entities drawn in texture order: %s", off ? "off (texsort.txt turns it on)" : "ON (texsort.txt)");
 	}
 	if(off || n < 2)
 		return;

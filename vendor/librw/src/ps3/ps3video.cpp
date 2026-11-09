@@ -618,9 +618,6 @@ logStats(void)
 		rsxLog("[rscene]   textures: %u bound a frame, %u different ones (sorted by texture, about that many binds); "
 		       "%u sampler register writes left out (unchanged)",
 		       r.texBinds/ns, r.texDistinct/ns, r.sampRegsSkipped/ns);	// patch 151
-		rsxLog("[rscene]   buildings drawn together (patch 155): %u groups a frame, %u buildings in them, %u of them without their own setup",
-		       leedsBatchStats[0]/n, leedsBatchStats[1]/n, leedsBatchStats[2]/n);
-		leedsBatchStats[0] = leedsBatchStats[1] = leedsBatchStats[2] = 0;
 		memset(&rscene, 0, sizeof(rscene));
 		gPS3RSceneTb = gPS3REffectsTb = 0;
 	}

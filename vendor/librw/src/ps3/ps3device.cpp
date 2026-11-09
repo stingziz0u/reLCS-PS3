@@ -460,8 +460,6 @@ setTexture(int32 stage, Texture *tex)
 static void
 setRenderState(int32 state, void *pvalue)
 {
-	if(leedsBatchN)
-		leedsBatchFlush();	// patch 155: what was kept is drawn with the states it was given
 	uint32 value = (uint32)(uintptr)pvalue;
 	switch(state){
 	case TEXTURERASTER:
