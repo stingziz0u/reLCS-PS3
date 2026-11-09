@@ -234,6 +234,16 @@ extern bool leanFlushOn;	// patch 157: the lean flush for a Leeds atomic's later
 extern uint32 leanFlushStats[2];	// patch 149: this building may take the overlay steps (not draw last, additive, no z-write)
 extern RW_TLS bool decalLod;	// patch 146: a LOD (big building) is being drawn (test mode 22)
 extern RW_TLS bool decalBuilding;
+// patch 168 (render split, part 3): the buildings' draws into a command
+// sub-buffer called from the ring. subBufferBegin switches this thread's
+// command buffer to it (false: not now, draw as usual), subBufferRoom says
+// the bytes left, subBufferEnd returns to the ring and calls it from there.
+struct SplitStats { uint32 calls, bytes, peak, full, waitUs; };
+extern SplitStats splitStats;
+extern bool splitBuildings;	// USRDIR/rsplit.txt
+bool subBufferBegin(void);
+uint32 subBufferRoom(void);
+void subBufferEnd(void);
 extern bool leedsFullAlpha;	// patch 167: buildings' materials at alpha 255 (USRDIR/glassalpha.txt: their own)
 extern uint32 leedsFullAlphaCount;
 // patch 163 (render split): the draw state is one per thread; a second

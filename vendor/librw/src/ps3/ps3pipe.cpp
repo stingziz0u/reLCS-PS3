@@ -663,7 +663,8 @@ drawIndexed(uint32 prim, uint32 ibOffset, uint32 numIndices, uint32 numVertices)
 void
 countDraw(void)
 {
-	if((++drawStats.draws & 31) == 0)
+	// patch 168: only the ring is kicked; a sub-buffer runs when it is called
+	if((++drawStats.draws & 31) == 0 && rsxCtx == mainRsxCtx)
 		rsxFlushBuffer(rsxCtx);
 }
 

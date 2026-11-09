@@ -906,6 +906,13 @@ PS3_GameMain(void)
 		}
 		PS3_Logf("[5] true colour TXD textures: %s", rw::ps3::txdDirect ? "read straight (notxddirect.txt turns it off)" : "librw's way (notxddirect.txt)");
 	}
+	// patch 168: the buildings into a command sub-buffer (render split, part 3)
+	{
+		FILE *rs = fopen(PS3_USRDIR "/rsplit.txt", "rb");
+		if (rs) { fclose(rs); rw::ps3::splitBuildings = true; }
+		PS3_Logf("[5] buildings into a command sub-buffer: %s",
+		         rw::ps3::splitBuildings ? "ON (rsplit.txt, the test of the render split)" : "off (rsplit.txt turns it on)");
+	}
 	// patch 167: the buildings' materials at full alpha (glass2_64)
 	{
 		FILE *ga = fopen(PS3_USRDIR "/glassalpha.txt", "rb");

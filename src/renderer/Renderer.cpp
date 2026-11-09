@@ -2284,11 +2284,20 @@ CRenderer::RenderEverythingBarRoads(void)
 #ifdef __PS3__
 	PS3_SortVisibleByTexture(ms_aVisibleEntityPtrs, ms_nNoOfVisibleEntities);	// patch 154
 #endif
+#ifdef __PS3__
+	// patch 168: with rsplit.txt the buildings after the rest, into a command
+	// sub-buffer (render split, part 3)
+	bool ps3Split = rw::ps3::splitBuildings;
+#endif
 	for(i = 0; i < ms_nNoOfVisibleEntities; i++){
 		e = ms_aVisibleEntityPtrs[i];
 
 		if(IsRoad(e))
 			continue;
+#ifdef __PS3__
+		if(ps3Split && e->IsBuilding())
+			continue;
+#endif
 
 #ifdef EXTENDED_PIPELINES
 		if(CustomPipes::bRenderingEnvMap && (e->IsPed() || e->IsVehicle()))
@@ -2323,6 +2332,27 @@ CRenderer::RenderEverythingBarRoads(void)
 #endif
 		}
 	}
+#ifdef __PS3__
+	if(ps3Split){
+		bool sub = rw::ps3::subBufferBegin();
+		unsigned long long ps3t0 = PS3_Ticks();
+		for(i = 0; i < ms_nNoOfVisibleEntities; i++){
+			e = ms_aVisibleEntityPtrs[i];
+			if(IsRoad(e) || !e->IsBuilding())
+				continue;
+			if(sub && rw::ps3::subBufferRoom() < 64*1024){
+				// nearly full: the rest into the ring
+				rw::ps3::subBufferEnd();
+				rw::ps3::splitStats.full++;
+				sub = false;
+			}
+			RenderOneNonRoad(e);
+		}
+		if(sub)
+			rw::ps3::subBufferEnd();
+		PS3_ProfAdd(PS3_PROF_SCENE, "bar roads: buildings", PS3_Ticks() - ps3t0);
+	}
+#endif
 	POP_RENDERGROUP();
 }
 

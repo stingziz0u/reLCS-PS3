@@ -32,7 +32,8 @@ extern RW_TLS gcmContextData *rsxCtx;	// patch 163: one per thread (render split
 uint32 currentFrame(void);	// frame being built (from 1)
 uint32 completedFrame(void);	// last frame the RSX has finished
 void waitFrame(uint32 frame);	// CPU waits for the RSX to finish 'frame'
-void rsxFinishAll(void);	// waits until the RSX has executed everything
+void rsxFinishAll(void);
+extern gcmContextData *mainRsxCtx;	// patch 168: the ring the RSX runs	// waits until the RSX has executed everything
 
 // ---- VRAM -----------------------------------------------------------------
 

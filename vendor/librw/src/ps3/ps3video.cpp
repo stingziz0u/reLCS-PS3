@@ -50,7 +50,8 @@ namespace ps3 {
 #define RING_SEGMENTS	3
 #define RING_SEG_SIZE	(4 * 1024 * 1024)
 
-RW_TLS gcmContextData *rsxCtx;	// patch 163: one per thread (render split)
+RW_TLS gcmContextData *rsxCtx;
+gcmContextData *mainRsxCtx;	// patch 168: the ring the RSX runs (rsxCtx can be a sub-buffer)	// patch 163: one per thread (render split)
 DrawStats drawStats;
 
 static void *ioBuffer;
@@ -133,11 +134,85 @@ void
 rsxFinishAll(void)
 {
 	static u32 ref = 0x1000;
-	if(rsxCtx == nil)
+	// patch 168: always the ring the RSX runs, even while a sub-buffer is
+	// being recorded (a VRAM wait while a building is instanced): a finish
+	// written into the sub-buffer would wait for commands not yet called
+	if(mainRsxCtx == nil)
 		return;
 	if(++ref == 0 || ref == 0xFFFFFFFF)
 		ref = 0x1000;
-	rsxFinish(rsxCtx, ref);
+	rsxFinish(mainRsxCtx, ref);
+}
+
+// ---- patch 168 (render split, part 3): command sub-buffers ----------------
+// The buildings' draws recorded into a buffer of their own, in the IO mapped
+// memory after the ring (16 MB mapped, the ring takes 2), and called from the
+// ring with a CALL; the sub-buffer ends with a RETURN. Three of them, one per
+// frame in flight: a sub-buffer is reused once the RSX has finished the frame
+// that called it. Here the game thread records it itself (USRDIR/rsplit.txt
+// turns it on): the next part has a second thread do it.
+#define SUB_COUNT 3
+#define SUB_SIZE (1024*1024)
+#define SUB_BASE (4*1024*1024)
+static gcmContextData subCtx[SUB_COUNT];
+static u32 subOffset[SUB_COUNT];
+static uint32 subFrame[SUB_COUNT];
+static bool subUsed[SUB_COUNT];
+static int32 subCur = -1;
+bool splitBuildings;
+SplitStats splitStats;
+
+bool
+subBufferBegin(void)
+{
+	if(subCur >= 0 || ioBuffer == nil || mainRsxCtx == nil || rsxCtx != mainRsxCtx)
+		return false;
+	int32 k = frame % SUB_COUNT;
+	if(subUsed[k] && (int32)(completedFrame() - subFrame[k]) < 0){
+		uint64 t0 = sysGetSystemTime();
+		waitFrame(subFrame[k]);
+		splitStats.waitUs += (uint32)(sysGetSystemTime() - t0);
+	}
+	u32 *mem = (u32*)((uint8*)ioBuffer + SUB_BASE + k*SUB_SIZE);
+	if(subOffset[k] == 0 && rsxAddressToOffset(mem, &subOffset[k]) != 0){
+		subOffset[k] = 0;
+		return false;
+	}
+	subCtx[k].begin = mem;
+	subCtx[k].current = mem;
+	subCtx[k].end = mem + SUB_SIZE/4 - 16;
+	subCtx[k].callback = mainRsxCtx->callback;	// never reached: subBufferRoom() stops the recording first
+	subCur = k;
+	rsxCtx = &subCtx[k];
+	return true;
+}
+
+uint32
+subBufferRoom(void)
+{
+	if(subCur < 0)
+		return ~0u;
+	return (uint32)(subCtx[subCur].end - subCtx[subCur].current) * 4;
+}
+
+void
+subBufferEnd(void)
+{
+	if(subCur < 0)
+		return;
+	gcmContextData *s = &subCtx[subCur];
+	rsxSetReturnCommand(s);
+	uint32 bytes = (uint32)(s->current - s->begin) * 4;
+	splitStats.bytes += bytes;
+	if(bytes > splitStats.peak)
+		splitStats.peak = bytes;
+	splitStats.calls++;
+	rsxCtx = mainRsxCtx;
+	__asm__ volatile("sync" ::: "memory");	// the sub-buffer in memory before the RSX can reach the CALL
+	rsxSetCallCommand(mainRsxCtx, subOffset[subCur]);
+	subUsed[subCur] = true;
+	subFrame[subCur] = frame;
+	subCur = -1;
 }
 
 static void
@@ -304,6 +379,7 @@ videoInit(void)
 		rsxLog("[rsx] FATAL: rsxInit failed (%d)", (int)ret);
 		return false;
 	}
+	mainRsxCtx = rsxCtx;	// patch 168
 
 	// 720p if the TV takes it, otherwise whatever it is set to
 	if(!videoGetResolutionAvailability(VIDEO_PRIMARY, VIDEO_RESOLUTION_720, VIDEO_ASPECT_16_9, 0)){
@@ -583,6 +659,14 @@ logStats(void)
 	       vramEvictions, rasterStats.noVram, rasterStats.packedDXT);
 	rsxLog("[rsx]   frames over 20 ms: %u, over 50 ms: %u, worst %.1f ms",
 	       slowFrames, verySlowFrames, worstFrameUs/1000.0);
+	if(splitBuildings){
+		// patch 168
+		rsxLog("[split] the buildings in a sub-buffer: %u calls, %u KB a frame (peak %u KB of %u), %u stopped full, "
+		       "%.2f ms a frame waiting for one to be free",
+		       splitStats.calls, splitStats.calls ? splitStats.bytes / 1024 / splitStats.calls : 0, splitStats.peak / 1024,
+		       SUB_SIZE / 1024, splitStats.full, splitStats.waitUs / 1000.0 / n);
+		memset(&splitStats, 0, sizeof(splitStats));
+	}
 	{
 		// patch 132: RenderScene's breakdown
 		RSceneStats &r = rscene;
