@@ -789,9 +789,16 @@ cMusicManager::ServiceGameMode()
 				}
 			}
 		}
+		// patch 163: not while the radio retunes (getting on a vehicle, a
+		// station change): ServiceTrack stops the stream for the static every
+		// frame of it and this started the MP3 again, up to 8 times (the
+		// [mp3] lines of patch 161: line 1110 stopped, this one started)
 		if (!m_bAnnouncementInProgress
 			&& m_nAnnouncement == NO_TRACK
 			&& m_nPlayingTrack == STREAMED_SOUND_RADIO_MP3_PLAYER
+#ifdef __PS3__
+			&& gRetuneCounter == 0 && !m_bSetNextStation
+#endif
 			&& !SampleManager.IsStreamPlaying())
 		{
 			PS3_MUSIC_LINE(), SampleManager.StartStreamedFile(STREAMED_SOUND_RADIO_MP3_PLAYER, 0);

@@ -18,7 +18,7 @@
 namespace rw {
 namespace ps3 {
 
-extern gcmContextData *rsxCtx;
+extern __thread gcmContextData *rsxCtx;	// patch 163: one per thread (render split)
 
 // ---- frames ---------------------------------------------------------------
 

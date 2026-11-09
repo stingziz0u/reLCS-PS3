@@ -212,8 +212,8 @@ extern bool leedsWantSample;	// log the next one drawn
 // meshes after the first hidden, 7 LODs within 100 m hidden (the game). decalStats: what
 // they were drawn with since the last reset.
 extern int32 decalMode;
-extern bool decalCur;
-extern bool decalRoad;	// patch 95: the road overlays (meshes after the first, alpha texture)
+extern __thread bool decalCur;
+extern __thread bool decalRoad;	// patch 95: the road overlays (meshes after the first, alpha texture)
 extern Material *aimHideMaterial;
 extern bool forceNoCull;
 extern bool diffOn;	// patch 123: test mode 17, materials drawn without texture reported
@@ -222,11 +222,18 @@ extern int32 leedsDebug;	// patch 121: test mode 16, D-pad left: 0 as is, 1 the 
 void leedsDebugLights(void);	// res-PS3 patch 117: test mode 16, D-pad up: no backface culling at all	// res-PS3 patch 114: test mode 15, the mesh under the screen centre hidden
 extern bool overlayStep, lodBehind;	// patch 147: patch 146's modes 21 and 22 (patch 150: the steps off by default, the LOD push on)
 void addOverlayMaterial(const char *name);	// patch 151: a texture name whose meshes go a step in front of their wall
-extern bool decalStepOk;
+extern __thread bool decalStepOk;
 extern bool leanFlushOn;	// patch 157: the lean flush for a Leeds atomic's later meshes
 extern uint32 leanFlushStats[2];	// patch 149: this building may take the overlay steps (not draw last, additive, no z-write)
-extern bool decalLod;	// patch 146: a LOD (big building) is being drawn (test mode 22)
-extern bool decalBuilding;	// patch 96: a building is being drawn
+extern __thread bool decalLod;	// patch 146: a LOD (big building) is being drawn (test mode 22)
+extern __thread bool decalBuilding;
+// patch 163 (render split): the draw state is one per thread; a second
+// thread starts from a copy of the game thread's (a buffer of
+// drawContextSize() bytes, saveDrawContext on the game thread,
+// loadDrawContext on the other one)
+uint32 drawContextSize(void);
+void saveDrawContext(void *dst);
+void loadDrawContext(const void *src);	// patch 96: a building is being drawn
 struct DecalStats
 {
 	uint32 meshes, textured, texAlpha, vertexAlpha, blendOn, ztestOn, zwriteOn, fogOn, gsAlphaTest, cullNone;

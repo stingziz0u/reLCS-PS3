@@ -174,20 +174,27 @@ struct FragmentProgram
 
 static VertexProgram vps[NUM_VP];
 static FragmentProgram fps[NUM_FP];
-static int32 curVP = -1, curFP = -1;
-static int32 wantVP = VP_DEFAULT, wantFP = FP_SIMPLE;
-static int32 drawFP = FP_SIMPLE;	// wantFP, or its additive variant (flushCache)
+// patch 163 (render split, part 2): the draw state below marked __thread is
+// one per thread: what the RSX has been told and what is wanted (programs,
+// constants, render states, samplers, matrices, lights), the command buffer
+// (rsxCtx). A second thread recording the buildings into a command buffer
+// of its own starts from the game thread's (saveDrawContext /
+// loadDrawContext) and forgets what the RSX has. The programs, textures and
+// VRAM stay one for all. Patch 162 found __thread works (lv2.ld PT_TLS).
+static __thread int32 curVP = -1, curFP = -1;
+static __thread int32 wantVP = VP_DEFAULT, wantFP = FP_SIMPLE;
+static __thread int32 drawFP = FP_SIMPLE;	// wantFP, or its additive variant (flushCache)
 bool additiveKill = true;		// the autotest's rain test turns it off to compare
 bool zcullOn = true;			// the autotest's GPU test turns it off to compare
 int32 blendAlphaRef = 0;		// the autotest's GPU test tries it on the smoke
 static bool zcullStale;			// depth written without the test since the last clear
-static int32 zcullHave = -1;		// what the RSX was told (-1: nothing yet)
+static __thread int32 zcullHave = -1;		// what the RSX was told (-1: nothing yet)
 
 // constant registers: what the RSX has (shadow) and what we want
 #define NUM_CONSTS 32
-static float32 constWant[NUM_CONSTS][4];
-static float32 constHave[NUM_CONSTS][4];
-static uint32 constValid;	// bit n: constHave[n] is what the RSX has
+static __thread float32 constWant[NUM_CONSTS][4];
+static __thread float32 constHave[NUM_CONSTS][4];
+static __thread uint32 constValid;	// bit n: constHave[n] is what the RSX has
 
 enum {
 	C_MVP = 0,
@@ -305,7 +312,7 @@ struct RwStateCache {
 
 	RwRasterStateCache texstage[MAXNUMSTAGES];
 };
-static RwStateCache rwStateCache;
+static __thread RwStateCache rwStateCache;
 
 // what the RSX has
 struct HwState {
@@ -315,7 +322,7 @@ struct HwState {
 	int32 cull, cullFace;
 	int32 stencil, stFunc, stRef, stMask, stWriteMask, stFail, stZFail, stPass;
 };
-static HwState hw;
+static __thread HwState hw;
 
 struct HwSampler {
 	Raster *raster;
@@ -330,7 +337,7 @@ struct HwSampler {
 	// that change are written
 	uint32 ctlWord, filterWord, wrapWord;
 };
-static HwSampler hwSampler[MAXNUMSTAGES];
+static __thread HwSampler hwSampler[MAXNUMSTAGES];
 
 static uint32 blendMap[] = {
 	GCM_ZERO,	// actually invalid
@@ -372,8 +379,8 @@ static uint32 stencilFuncMap[] = {
 };
 
 // does the current camera draw anywhere
-static bool targetValid;
-static int32 targetW, targetH;	// the bound surface
+static __thread bool targetValid;
+static __thread int32 targetW, targetH;	// the bound surface
 
 void
 setAlphaBlend(bool32 enable)
@@ -1091,19 +1098,19 @@ applySamplers(int32 numSamplers)
 // ---- constants --------------------------------------------------------------------
 
 // GL style column-major 4x4: m[c*4+r]
-static float32 projMat[16], viewMat[16], viewProjMat[16];
-static RawMatrix worldMat;
-static bool viewProjDirty = true;
-static bool mvpDirty = true;
-static bool lightsDirty = true;
+static __thread float32 projMat[16], viewMat[16], viewProjMat[16];
+static __thread RawMatrix worldMat;
+static __thread bool viewProjDirty = true;
+static __thread bool mvpDirty = true;
+static __thread bool lightsDirty = true;
 
 struct LightSlot {
 	V3d dir;	// world space, as RW has it (the light's 'at')
 	RGBAf color;
 };
-static LightSlot lights[MAX_LIGHTS];
-static int32 numLights;
-static RGBAf ambLight;
+static __thread LightSlot lights[MAX_LIGHTS];
+static __thread int32 numLights;
+static __thread RGBAf ambLight;
 
 static void
 matMul(float32 *out, const float32 *a, const float32 *b)
@@ -1183,8 +1190,8 @@ static RawMatrix normal2texcoord = {
 	{ 0.5f,  0.5f, 0.0f }, 1.0f
 };
 
-static Frame *envFrame;
-static bool envDirty;
+static __thread Frame *envFrame;
+static __thread bool envDirty;
 
 // MatFX env map: as gl3, env uv = texMatrix * (world3x3 * normal), turned
 // into one 2x4 matrix on model space normals at flush time
@@ -1382,7 +1389,7 @@ applyProgramsAndConstants(void)
 // could fetch a stale vertex -- the stray triangles of the menus (a green
 // wedge from the selection bar, a yellow streak from a letter). The next draw
 // after such a write invalidates the cache first.
-static bool vtxCacheDirty = true;
+static __thread bool vtxCacheDirty = true;
 void vertexCacheTouched(void) { vtxCacheDirty = true; }
 
 // patch 46: the CPU time of the backend (perf.txt): timebase ticks
@@ -1878,7 +1885,7 @@ fxaaApply(Raster *pic)
 // ---- Leeds world pipeline and gamma (res-PS3 patch 27) -----------------------
 
 // the time cycle ambient of this frame (the game sets it before the scene)
-static float32 worldAmb[3] = { 1.0f, 1.0f, 1.0f };
+static __thread float32 worldAmb[3] = { 1.0f, 1.0f, 1.0f };
 bool leedsLighting = true;
 
 uint32 leedsDraws;
@@ -2865,3 +2872,75 @@ registerPlatformPlugins(void)
 
 }
 }
+
+#ifdef RW_PS3_RSX
+namespace rw {
+namespace ps3 {
+// patch 163: the game thread's draw state, for a second thread
+struct DrawContextData {
+	int32 wantVP, wantFP, drawFP;
+	float32 constWant[NUM_CONSTS][4];
+	RwStateCache rwStateCache;
+	bool targetValid;
+	int32 targetW, targetH;
+	float32 projMat[16], viewMat[16], viewProjMat[16];
+	RawMatrix worldMat;
+	LightSlot lights[MAX_LIGHTS];
+	int32 numLights;
+	RGBAf ambLight;
+	Frame *envFrame;
+	float32 worldAmb[3];
+};
+
+uint32
+drawContextSize(void)
+{
+	return sizeof(DrawContextData);
+}
+
+void
+saveDrawContext(void *dst)
+{
+	DrawContextData *d = (DrawContextData*)dst;
+	d->wantVP = wantVP; d->wantFP = wantFP; d->drawFP = drawFP;
+	memcpy(d->constWant, constWant, sizeof(constWant));
+	d->rwStateCache = rwStateCache;
+	d->targetValid = targetValid; d->targetW = targetW; d->targetH = targetH;
+	memcpy(d->projMat, projMat, sizeof(projMat));
+	memcpy(d->viewMat, viewMat, sizeof(viewMat));
+	memcpy(d->viewProjMat, viewProjMat, sizeof(viewProjMat));
+	d->worldMat = worldMat;
+	memcpy(d->lights, lights, sizeof(lights));
+	d->numLights = numLights;
+	d->ambLight = ambLight;
+	d->envFrame = envFrame;
+	memcpy(d->worldAmb, worldAmb, sizeof(worldAmb));
+}
+
+// on the other thread: the wanted state as the game thread's, nothing known
+// of what the RSX has (all of it sent again on the first draw)
+void
+loadDrawContext(const void *src)
+{
+	const DrawContextData *d = (const DrawContextData*)src;
+	wantVP = d->wantVP; wantFP = d->wantFP; drawFP = d->drawFP;
+	memcpy(constWant, d->constWant, sizeof(constWant));
+	rwStateCache = d->rwStateCache;
+	targetValid = d->targetValid; targetW = d->targetW; targetH = d->targetH;
+	memcpy(projMat, d->projMat, sizeof(projMat));
+	memcpy(viewMat, d->viewMat, sizeof(viewMat));
+	memcpy(viewProjMat, d->viewProjMat, sizeof(viewProjMat));
+	worldMat = d->worldMat;
+	memcpy(lights, d->lights, sizeof(lights));
+	numLights = d->numLights;
+	ambLight = d->ambLight;
+	envFrame = d->envFrame;
+	envDirty = true;
+	memcpy(worldAmb, d->worldAmb, sizeof(worldAmb));
+	viewProjDirty = mvpDirty = lightsDirty = true;
+	vtxCacheDirty = true;
+	forgetHardwareState();
+}
+}
+}
+#endif

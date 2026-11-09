@@ -564,7 +564,7 @@ skinInstanceCB(Geometry *geo, InstanceDataHeader *header, bool32 reinstance)
 
 // Binds the geometry's attributes; the ones the programs read and the
 // geometry doesn't have get constant values (GL's defaults).
-static uint32 boundAttribMask;
+static __thread uint32 boundAttribMask;
 
 static void
 bindAttribs(InstanceDataHeader *header)
@@ -635,7 +635,7 @@ countDraw(void)
 		rsxFlushBuffer(rsxCtx);
 }
 
-static bool leanFlush;	// patch 157: set by leedsRenderCB for a mesh after the atomic's first
+static __thread bool leanFlush;	// patch 157: set by leedsRenderCB for a mesh after the atomic's first
 static void
 drawInst_simple(InstanceDataHeader *header, InstanceData *inst)
 {
@@ -688,7 +688,7 @@ drawInstImpl(InstanceDataHeader *header, InstanceData *inst)
 
 // ---- patch 93: the road shadow decals, what they're drawn with and test modes ----
 int32 decalMode;
-bool decalCur;
+__thread bool decalCur;
 Material *aimHideMaterial;
 bool diffOn;
 void (*diffMatHook)(Material *m, int why);
@@ -716,8 +716,8 @@ diffCheckMaterial(Material *m)
 		diffMatHook(m, 2);
 }
 bool forceNoCull;
-bool decalLod;	// patch 146
-bool decalStepOk;	// patch 149
+__thread bool decalLod;	// patch 146
+__thread bool decalStepOk;	// patch 149
 // patch 151: the materials drawn a step in front of their wall, by texture
 // name: the overlay that fought with the rest of its building (Ren found
 // skyscrapenew's grn_window2_16 with the free camera). The steps for every
@@ -754,8 +754,8 @@ isOverlayMaterial(Material *m)
 	return yes;
 }
 bool overlayStep = false, lodBehind = true;	// patch 147; patch 150: the overlay steps off again (the ground decals and light cones slid)
-bool decalBuilding;	// patch 96: a building is being drawn (mode 6 hides its meshes after the first)
-bool decalRoad;	// patch 95: a road is being drawn: its meshes after the first with an alpha texture (dirt, shadows) are overlays
+__thread bool decalBuilding;	// patch 96: a building is being drawn (mode 6 hides its meshes after the first)
+__thread bool decalRoad;	// patch 95: a road is being drawn: its meshes after the first with an alpha texture (dirt, shadows) are overlays
 DecalStats decalStats;
 
 static void
@@ -917,7 +917,7 @@ lightingCB(Atomic *atomic)
 	}
 }
 
-static bool liftAmbient;	// patch 100: set by leedsRenderCB for a building without prelight
+static __thread bool liftAmbient;	// patch 100: set by leedsRenderCB for a building without prelight
 bool leedsEmissionFloor = true;	// patch 101 (USRDIR/noemissfloor.txt turns it off)
 
 static void
