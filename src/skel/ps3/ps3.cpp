@@ -906,6 +906,13 @@ PS3_GameMain(void)
 		}
 		PS3_Logf("[5] true colour TXD textures: %s", rw::ps3::txdDirect ? "read straight (notxddirect.txt turns it off)" : "librw's way (notxddirect.txt)");
 	}
+	// patch 167: the buildings' materials at full alpha (glass2_64)
+	{
+		FILE *ga = fopen(PS3_USRDIR "/glassalpha.txt", "rb");
+		if (ga) { fclose(ga); rw::ps3::leedsFullAlpha = false; }
+		PS3_Logf("[5] buildings' see-through materials (glass2_64 at 128): %s",
+		         rw::ps3::leedsFullAlpha ? "at 255, as after a fade (glassalpha.txt: their own)" : "their own alpha (glassalpha.txt)");
+	}
 	// patch 157: the lean flush for the Leeds meshes after an atomic's first
 	{
 		FILE *fl = fopen(PS3_USRDIR "/noleanflush.txt", "rb");

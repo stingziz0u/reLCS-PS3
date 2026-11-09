@@ -234,6 +234,8 @@ extern bool leanFlushOn;	// patch 157: the lean flush for a Leeds atomic's later
 extern uint32 leanFlushStats[2];	// patch 149: this building may take the overlay steps (not draw last, additive, no z-write)
 extern RW_TLS bool decalLod;	// patch 146: a LOD (big building) is being drawn (test mode 22)
 extern RW_TLS bool decalBuilding;
+extern bool leedsFullAlpha;	// patch 167: buildings' materials at alpha 255 (USRDIR/glassalpha.txt: their own)
+extern uint32 leedsFullAlphaCount;
 // patch 163 (render split): the draw state is one per thread; a second
 // thread starts from a copy of the game thread's (a buffer of
 // drawContextSize() bytes, saveDrawContext on the game thread,

@@ -336,6 +336,36 @@ instanceMesh(rw::ObjPipeline *rwpipe, Geometry *geo)
 	return header;
 }
 
+static void leedsRenderCB(Atomic *atomic, InstanceDataHeader *header);
+
+// patch 167: a building's materials at full alpha. Some come with less:
+// glass2_64, the Flatiron's windows and others, at 128. The distance fade
+// (CVisibilityPlugins::RenderFadingAtomic) sets every material of the model
+// to the fade's alpha and back to 255 after, so a building that had faded in
+// once showed that glass solid, and one drawn without a fade (loaded near
+// it, a LOAD_SCENE, another LOD distance with the weather) at 128: blended,
+// and writing its depth (the GS test emulation lets 128 of 255 through), so
+// what stood behind it and was drawn later was cut and the windows showed
+// the sky or nothing (Ren: "invisible", the underworld through them, coming
+// and going). The way the game shows them nearly always, from the start.
+// USRDIR/glassalpha.txt: the models' own alpha, as before.
+bool leedsFullAlpha = true;
+uint32 leedsFullAlphaCount;
+
+static void
+leedsAlphaToFull(Geometry *geo)
+{
+	for(int32 i = 0; i < geo->matList.numMaterials; i++){
+		Material *m = geo->matList.materials[i];
+		if(m == nil || m->color.alpha == 0xFF)
+			continue;
+		if(leedsFullAlphaCount++ < 8)
+			rsxLog("[glass] a building's material at alpha %d set to 255: %s", m->color.alpha,
+			       m->texture ? m->texture->name : "(no texture)");
+		m->color.alpha = 0xFF;
+	}
+}
+
 static void
 instance(rw::ObjPipeline *rwpipe, Atomic *atomic)
 {
@@ -359,6 +389,8 @@ instance(rw::ObjPipeline *rwpipe, Atomic *atomic)
 		uint64 t0 = texProfNow();
 		geo->instData = instanceMesh(rwpipe, geo);
 		pipe->instanceCB(geo, (InstanceDataHeader*)geo->instData, 0);
+		if(leedsFullAlpha && pipe->renderCB == leedsRenderCB)
+			leedsAlphaToFull(geo);	// patch 167
 		uint64 dt = texProfNow() - t0;
 		texProfile.instUs += dt;
 		texProfile.instCount++;
