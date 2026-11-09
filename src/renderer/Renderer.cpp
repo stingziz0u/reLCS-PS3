@@ -2257,12 +2257,19 @@ CRenderer::RenderEverythingBarRoads(void)
 
 #ifdef __PS3__
 	PS3_SortVisibleByTexture(ms_aVisibleEntityPtrs, ms_nNoOfVisibleEntities);	// patch 154
+	rw::ps3::leedsBatchBegin();	// patch 155
 #endif
 	for(i = 0; i < ms_nNoOfVisibleEntities; i++){
 		e = ms_aVisibleEntityPtrs[i];
 
 		if(IsRoad(e))
 			continue;
+#ifdef __PS3__
+		// patch 155: what isn't a building sets its own lights before it's
+		// drawn: the buildings kept wait no longer
+		if(!e->IsBuilding())
+			rw::ps3::leedsBatchFlush();
+#endif
 
 #ifdef EXTENDED_PIPELINES
 		if(CustomPipes::bRenderingEnvMap && (e->IsPed() || e->IsVehicle()))
@@ -2286,6 +2293,9 @@ CRenderer::RenderEverythingBarRoads(void)
 		}else
 			RenderOneNonRoad(e);
 	}
+#ifdef __PS3__
+	rw::ps3::leedsBatchEnd();	// patch 155
+#endif
 	POP_RENDERGROUP();
 }
 

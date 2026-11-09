@@ -906,6 +906,13 @@ PS3_GameMain(void)
 		}
 		PS3_Logf("[5] true colour TXD textures: %s", rw::ps3::txdDirect ? "read straight (notxddirect.txt turns it off)" : "librw's way (notxddirect.txt)");
 	}
+	// patch 155: the buildings of one geometry drawn together
+	{
+		FILE *fb = fopen(PS3_USRDIR "/nobatch.txt", "rb");
+		if (fb) { fclose(fb); rw::ps3::leedsBatchEnabled = false; }
+		PS3_Logf("[5] buildings of one geometry drawn together: %s",
+		         rw::ps3::leedsBatchEnabled ? "on (nobatch.txt turns it off)" : "OFF (nobatch.txt)");
+	}
 	// patch 151: the overlay materials named in USRDIR/overlaymats.txt
 	{
 		FILE *om = fopen(PS3_USRDIR "/overlaymats.txt", "rb");

@@ -922,6 +922,7 @@ bool leedsEmissionFloor = true;	// patch 101 (USRDIR/noemissfloor.txt turns it o
 static void
 defaultRenderCB(Atomic *atomic, InstanceDataHeader *header)
 {
+	leedsBatchFlush();	// patch 155
 	Material *m;
 
 	uint32 flags = atomic->geometry->flags;
@@ -978,9 +979,123 @@ float leedsBiasUnits = -48.0f;
 // half brightness and without the time of day: night roofs went black.
 // Models without prelight are lit by the lights, as before.
 
+// patch 155: the buildings of one geometry drawn together. RenderEverythingBarRoads
+// lists them by TXD and model (patch 154), so the instances of a model come one
+// after the other; each went through the whole atomic (vertex arrays,
+// program, lights) and bound every mesh's texture again, ~2 binds per mesh
+// for half as many textures. Between leedsBatchBegin and leedsBatchEnd the
+// Leeds atomics of one geometry are kept (their matrix and the entity's
+// flags) and drawn when the next one isn't of it: the arrays and lights
+// once, then mesh by mesh (its material and texture once) every instance.
+// A model's meshes keep their order (the overlays over their wall); between
+// two instances the order doesn't matter (opaque, depth tested). Anything
+// else drawn, or a render state set, draws what is kept first.
+struct LeedsBatchInst {
+	Matrix ltm;
+	bool decalBuilding, decalLod, decalStepOk;
+};
+#define LEEDS_BATCH_MAX 48
+static LeedsBatchInst leedsBatch[LEEDS_BATCH_MAX];
+int32 leedsBatchN;	// rwps3.h: anything else drawn first draws the batch
+static InstanceDataHeader *leedsBatchHeader;
+static Atomic *leedsBatchAtomic;
+static bool leedsBatchOn, leedsBatchFlushing;
+bool leedsBatchEnabled = true;	// USRDIR/nobatch.txt (the game turns it off)
+uint32 leedsBatchStats[3];	// batches drawn, instances in them, of them past the first
+
+static void leedsAtomicSetup(Atomic *atomic, InstanceDataHeader *header);
+
+void
+leedsBatchFlush(void)
+{
+	if(leedsBatchN == 0 || leedsBatchFlushing)
+		return;
+	leedsBatchFlushing = true;
+	InstanceDataHeader *header = leedsBatchHeader;
+	leedsAtomicSetup(leedsBatchAtomic, header);
+	bool saveB = decalBuilding, saveL = decalLod, saveS = decalStepOk;
+	RS_T(rst);
+	InstanceData *inst = header->inst;
+	for(int32 k = 0; k < header->numMeshes; k++, inst++){
+		Material *m = inst->material;
+		setLeedsMaterial(m->color.alpha, m->surfaceProps);
+		setFragmentProgram(m->texture ? FP_LEEDS : FP_SIMPLE);
+		setTexture(0, m->texture);
+		rw::SetRenderState(VERTEXALPHA, inst->vertexAlpha || m->color.alpha != 0xFF);
+		RS_ADD(RS_MATERIAL, rst);
+		for(int32 i = 0; i < leedsBatchN; i++){
+			LeedsBatchInst &b = leedsBatch[i];
+			setWorldMatrix(&b.ltm);
+			decalBuilding = b.decalBuilding;
+			decalLod = b.decalLod;
+			decalStepOk = b.decalStepOk;
+			drawInst(header, inst);
+		}
+		RS_ADD(RS_DRAW, rst);
+	}
+	decalBuilding = saveB;
+	decalLod = saveL;
+	decalStepOk = saveS;
+	if(rsceneOn){
+		rscene.atomics[RSP_LEEDS] += leedsBatchN;
+		rscene.meshes[RSP_LEEDS] += leedsBatchN * header->numMeshes;
+	}
+	leedsDraws += leedsBatchN;
+	leedsBatchStats[0]++;
+	leedsBatchStats[1] += leedsBatchN;
+	leedsBatchStats[2] += leedsBatchN - 1;
+	leedsBatchN = 0;
+	leedsBatchHeader = nil;
+	leedsBatchFlushing = false;
+}
+
+void
+leedsBatchBegin(void)
+{
+	leedsBatchFlush();
+	leedsBatchOn = leedsBatchEnabled;
+}
+
+void
+leedsBatchEnd(void)
+{
+	leedsBatchFlush();
+	leedsBatchOn = false;
+}
+
+// can this atomic wait in the batch: nothing that draws it any other way
+static bool
+leedsBatchable(InstanceDataHeader *header)
+{
+	if(!leedsBatchOn || leedsDebug || leedsWantSample || decalMode != 0 || diffOn || aimHideMaterial || decalCur ||
+	   leedsBiasOn || header->numMeshes <= 0)
+		return false;
+	InstanceData *inst = header->inst;
+	for(int32 k = 0; k < header->numMeshes; k++)
+		if(inst[k].decal)
+			return false;
+	return true;
+}
+
 static void
 leedsRenderCB(Atomic *atomic, InstanceDataHeader *header)
 {
+	if(leedsLighting && (atomic->geometry->flags & Geometry::PRELIT) && leedsBatchable(header)){
+		// patch 155: kept for the batch
+		if(leedsBatchN && (header != leedsBatchHeader || leedsBatchN == LEEDS_BATCH_MAX))
+			leedsBatchFlush();
+		if(leedsBatchN == 0){
+			leedsBatchHeader = header;
+			leedsBatchAtomic = atomic;
+		}
+		LeedsBatchInst &b = leedsBatch[leedsBatchN++];
+		b.ltm = *atomic->getFrame()->getLTM();
+		b.decalBuilding = decalBuilding;
+		b.decalLod = decalLod;
+		b.decalStepOk = decalStepOk;
+		return;
+	}
+	leedsBatchFlush();
 	if(!leedsLighting || !(atomic->geometry->flags & Geometry::PRELIT)){
 		liftAmbient = leedsLighting && leedsUnlitLift;
 		defaultRenderCB(atomic, header);
@@ -994,22 +1109,7 @@ leedsRenderCB(Atomic *atomic, InstanceDataHeader *header)
 	RS_ADD(RS_LTM, rst);
 	setWorldMatrix(ltm);
 	RS_ADD(RS_WORLDMAT, rst);
-	lightingCB(atomic);	// the ambient light: the emissive part
-	// patch 101: the emission has a floor of 0.2 x the time cycle ambient.
-	// TIMECYC's emission at night is 34,31,40 clear and 2,3,5 in the rain:
-	// with the rain the faces of low prelight (the upper floors, the road)
-	// lost the ~13% lift they have clear and came out pitch black (Ren,
-	// Staunton). 0.2 x ambient is about the clear night's emission; by day
-	// the emission is higher and stays as it is.
-	if(leedsEmissionFloor)
-		liftAmbientToWorld(0.2f);
-	if(leedsDebug)
-		leedsDebugLights();	// patch 121
-	RS_ADD(RS_LIGHTS, rst);
-
-	bindAttribs(header);
-	RS_ADD(RS_ATTRIBS, rst);
-	setVertexProgram(VP_LEEDS);
+	leedsAtomicSetup(atomic, header);
 	RS_ADD(RS_PROGRAMS, rst);
 
 	InstanceData *inst = header->inst;
@@ -1058,6 +1158,26 @@ leedsRenderCB(Atomic *atomic, InstanceDataHeader *header)
 	}
 	if(biased)
 		rsxSetPolygonOffsetFillEnable(rsxCtx, GCM_FALSE);
+}
+
+// patch 155: the per atomic part of leedsRenderCB (the batch's too): the
+// ambient (the emissive part), the vertex arrays, the program
+static void
+leedsAtomicSetup(Atomic *atomic, InstanceDataHeader *header)
+{
+	lightingCB(atomic);
+	// patch 101: the emission has a floor of 0.2 x the time cycle ambient.
+	// TIMECYC's emission at night is 34,31,40 clear and 2,3,5 in the rain:
+	// with the rain the faces of low prelight (the upper floors, the road)
+	// lost the ~13% lift they have clear and came out pitch black (Ren,
+	// Staunton). 0.2 x ambient is about the clear night's emission; by day
+	// the emission is higher and stays as it is.
+	if(leedsEmissionFloor)
+		liftAmbientToWorld(0.2f);
+	if(leedsDebug)
+		leedsDebugLights();	// patch 121
+	bindAttribs(header);
+	setVertexProgram(VP_LEEDS);
 }
 
 rw::ObjPipeline*
@@ -1119,6 +1239,7 @@ uploadSkinMatrices(Atomic *a)
 static void
 skinRenderCB(Atomic *atomic, InstanceDataHeader *header)
 {
+	leedsBatchFlush();	// patch 155
 	Material *m;
 
 	uint32 flags = atomic->geometry->flags;
@@ -1231,6 +1352,7 @@ matfxEnvRender(InstanceDataHeader *header, InstanceData *inst, uint32 flags, Mat
 static void
 matfxRenderCB(Atomic *atomic, InstanceDataHeader *header)
 {
+	leedsBatchFlush();	// patch 155
 	uint32 flags = atomic->geometry->flags;
 	RS_T(rst);
 	Matrix *ltm = atomic->getFrame()->getLTM();
