@@ -906,6 +906,13 @@ PS3_GameMain(void)
 		}
 		PS3_Logf("[5] true colour TXD textures: %s", rw::ps3::txdDirect ? "read straight (notxddirect.txt turns it off)" : "librw's way (notxddirect.txt)");
 	}
+	// patch 157: the lean flush for the Leeds meshes after an atomic's first
+	{
+		FILE *fl = fopen(PS3_USRDIR "/noleanflush.txt", "rb");
+		if (fl) { fclose(fl); rw::ps3::leanFlushOn = false; }
+		PS3_Logf("[5] lean flush for a building's later meshes: %s",
+		         rw::ps3::leanFlushOn ? "on (noleanflush.txt turns it off)" : "OFF (noleanflush.txt)");
+	}
 	// patch 151: the overlay materials named in USRDIR/overlaymats.txt
 	{
 		FILE *om = fopen(PS3_USRDIR "/overlaymats.txt", "rb");

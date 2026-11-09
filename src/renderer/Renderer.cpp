@@ -44,6 +44,32 @@
 #include <stdlib.h>	// qsort, bsearch (patch 28)
 #ifdef __PS3__
 void PS3_SortVisibleByTexture(CEntity **list, int32 n);	// patch 154
+// patch 157: the sector scan's answers counted ([scan] every 10 s): what a
+// cheaper scan would have to skip
+static uint32 ps3ScanCounts[5], ps3ScanFrames;
+static void
+PS3_ScanCount(int vis)
+{
+	if(vis >= 0 && vis < 4)
+		ps3ScanCounts[vis]++;
+	ps3ScanCounts[4]++;
+}
+void
+PS3_ScanLog(void)
+{
+	static unsigned long long last;
+	ps3ScanFrames++;
+	unsigned long long now = PS3_Ticks();
+	if(!PS3_logsOn || now - last < 10ull * 79800000ull)
+		return;
+	last = now;
+	uint32 n = ps3ScanFrames ? ps3ScanFrames : 1;
+	PS3_Logf("[scan] per frame: %u entities looked at in the sector scan: %u visible, %u invisible, %u off screen, %u to stream",
+	         ps3ScanCounts[4]/n, ps3ScanCounts[1]/n, ps3ScanCounts[0]/n, ps3ScanCounts[2]/n,
+	         ps3ScanCounts[3]/n);	// the order of enum Visbility below
+	memset(ps3ScanCounts, 0, sizeof(ps3ScanCounts));
+	ps3ScanFrames = 0;
+}
 #endif
 #include "Timecycle.h"
 #ifdef __PS3__
@@ -3076,9 +3102,17 @@ CRenderer::SetupEntityVisibility(CEntity *ent)
 	// "a == nil", 49 m inside its bounding sphere). For a model placed outside
 	// its own bounding sphere (and more than 50 m from its centre) the
 	// distance is taken to that centre; towers and the rest are left alone.
-	{
+	// patch 157: whether the model is placed outside its geometry is the
+	// model's: once per model, not a square and a comparison per entity
+	static uint8 ps3FarGeo[MODELINFOSIZE];	// 0 not known, 1 no, 2 yes
+	int ps3Mid = ent->GetModelIndex();
+	if(ps3Mid >= 0 && ps3Mid < MODELINFOSIZE && ps3FarGeo[ps3Mid] == 0){
+		CColModel *c0 = mi->GetColModel();
+		ps3FarGeo[ps3Mid] = c0 && CVector(c0->boundingSphere.center).MagnitudeSqr() > sq(Max(50.0f, c0->boundingSphere.radius + 20.0f)) ? 2 : 1;
+	}
+	if(ps3Mid >= 0 && ps3Mid < MODELINFOSIZE && ps3FarGeo[ps3Mid] == 2){
 		CColModel *col = mi->GetColModel();
-		if(col && CVector(col->boundingSphere.center).MagnitudeSqr() > sq(Max(50.0f, col->boundingSphere.radius + 20.0f))){
+		if(col){
 			float gdist = (ent->GetBoundCentre() - ms_vecCameraPosition).Magnitude();
 			static uint8 ps3Told[(MODELINFOSIZE + 7) / 8];
 			int id = ent->GetModelIndex();
@@ -3511,6 +3545,7 @@ CRenderer::ConstructRenderList(void)
 {
 #ifdef __PS3__
 	PS3_InspFrame();	// patch 143
+	PS3_ScanLog();	// patch 157
 	// patch 151: CnstrRenderList by part ("[prof] scene")
 	PS3_PROF_CALL(PS3_PROF_SCENE, "cnstr: occluders (ProcessBeforeRendering)", COcclusion::ProcessBeforeRendering());
 #else
@@ -4144,6 +4179,8 @@ CRenderer::ScanSectorList(CPtrList *lists)
 			int vis = SetupEntityVisibility(ent);
 #ifdef __PS3__
 			PS3_ShadNoteVis(ent, vis);	// patch 91
+			if(PS3_logsOn)
+				PS3_ScanCount(vis);	// patch 157
 #endif
 			if(ent->bMakeVisible){
 				ent->bMakeVisible = false;
@@ -4205,6 +4242,8 @@ CRenderer::ScanSectorList_Priority(CPtrList *lists)
 			int vis = SetupEntityVisibility(ent);
 #ifdef __PS3__
 			PS3_ShadNoteVis(ent, vis);	// patch 91
+			if(PS3_logsOn)
+				PS3_ScanCount(vis);	// patch 157
 #endif
 			if(ent->bMakeVisible){
 				ent->bMakeVisible = false;

@@ -564,9 +564,9 @@ CAutomobile::ProcessControl(void)
 		break;
 
 	case STATUS_SIMPLE:
-		CCarAI::UpdateCarAI(this);
+		PS3_PROF_CALL(PS3_PROF_VEHICLES, "car ai: UpdateCarAI (simple)", CCarAI::UpdateCarAI(this));	// patch 157
 		CPhysical::ProcessControl();
-		CCarCtrl::UpdateCarOnRails(this);
+		PS3_PROF_CALL(PS3_PROF_VEHICLES, "car ai: UpdateCarOnRails (simple)", CCarCtrl::UpdateCarOnRails(this));	// patch 157
 
 		m_nWheelsOnGround = 4;
 		m_nDriveWheelsOnGroundPrev = m_nDriveWheelsOnGround;
@@ -586,8 +586,8 @@ CAutomobile::ProcessControl(void)
 		return;
 
 	case STATUS_PHYSICS:
-		CCarAI::UpdateCarAI(this);
-		CCarCtrl::SteerAICarWithPhysics(this);
+		PS3_PROF_CALL(PS3_PROF_VEHICLES, "car ai: UpdateCarAI (physics)", CCarAI::UpdateCarAI(this));	// patch 157
+		PS3_PROF_CALL(PS3_PROF_VEHICLES, "car ai: SteerAICarWithPhysics", CCarCtrl::SteerAICarWithPhysics(this));
 		PlayHornIfNecessary();
 
 		if(bIsBeingCarJacked){

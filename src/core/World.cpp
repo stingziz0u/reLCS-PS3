@@ -37,7 +37,21 @@ static const char *ps3AnimNames[] = { "anims peds", "anims vehicles", "anims obj
 static const char *ps3ControlNames[] = { "control peds", "control vehicles", "control objects", "control other" };
 static inline int PS3_EntKind(CEntity *e) { return e->IsPed() ? 0 : e->IsVehicle() ? 1 : e->IsObject() ? 2 : 3; }
 #define PS3_ENT_T0() unsigned long long ps3t0 = PS3_Ticks()
-#define PS3_ENT_ADD(names, e) PS3_ProfAdd(PS3_PROF_WORLD, names[PS3_EntKind(e)], PS3_Ticks() - ps3t0)
+// patch 157: "control vehicles" by kind too ([prof] vehicles: the cars and
+// bikes were half of it, the rest was unnamed)
+static inline void
+PS3_VehKindAdd(CEntity *e, unsigned long long dt)
+{
+	if(!e->IsVehicle())
+		return;
+	CVehicle *v = (CVehicle*)e;
+	static const char *names[] = { "kind: car", "kind: boat", "kind: train", "kind: heli", "kind: plane", "kind: bike", "kind: other" };
+	int k = v->IsCar() ? 0 : v->IsBoat() ? 1 : v->IsTrain() ? 2 : v->IsHeli() ? 3 : v->IsPlane() ? 4 : v->IsBike() ? 5 : 6;
+	PS3_ProfAdd(PS3_PROF_VEHICLES, names[k], dt);
+}
+#define PS3_ENT_ADD(names, e) do { unsigned long long ps3dt_ = PS3_Ticks() - ps3t0; \
+	PS3_ProfAdd(PS3_PROF_WORLD, names[PS3_EntKind(e)], ps3dt_); \
+	if(names == ps3ControlNames) PS3_VehKindAdd(e, ps3dt_); } while(0)
 #define PS3_WORLD_STEP(name) PS3_ProfStep(PS3_PROF_WORLD, name)
 // patch 44: ProcessCollision in its passes (the first one, up to four more
 // for what isn't in a safe position yet, the stuck pass) and the models that

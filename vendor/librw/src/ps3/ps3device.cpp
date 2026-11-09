@@ -1392,6 +1392,72 @@ bool optLeedsNoDirLights = true;
 
 static bool flushCacheImpl(void);
 
+// patch 157: the next mesh of the same Leeds atomic. Between two meshes of
+// one atomic only the material (alpha), the texture, the fragment program
+// and the blend change: the matrices, lights and fog stay, and flushCache
+// worked them out and compared their registers again for every mesh
+// (~0.25 us of the ~1 us it takes, ~1500 meshes a frame). This one does the
+// states, the samplers, the fragment program and the material registers;
+// whenever anything else may have changed (a new matrix, another vertex
+// program, the MVP registers not valid) it is the whole flushCache.
+bool leanFlushOn = true;	// USRDIR/noleanflush.txt (the game turns it off)
+uint32 leanFlushStats[2];	// lean ones, whole ones asked for lean
+static bool
+flushCacheLeanImpl(void)
+{
+	uint32 mvpMask = ((1u << 4) - 1) << C_MVP;
+	if(!leanFlushOn || !targetValid || mvpDirty || viewProjDirty || curVP != VP_LEEDS || wantVP != VP_LEEDS ||
+	   (constValid & mvpMask) != mvpMask){
+		leanFlushStats[1]++;
+		return flushCacheImpl();
+	}
+	leanFlushStats[0]++;
+	RS_T(rst);
+	if(rsceneOn)
+		rscene.flushes++;
+	if(vtxCacheDirty){
+		__asm__ volatile("sync" ::: "memory");
+		rsxInvalidateVertexCache(rsxCtx);
+		vtxCacheDirty = false;
+		if(rsceneOn)
+			rscene.invalidates++;
+	}
+	RS_ADD(RS_F_INVALIDATE, rst);
+	applyStates();
+	RS_ADD(RS_F_STATES, rst);
+	drawFP = wantFP;
+	if(additiveKill && wantFP == FP_SIMPLE && rwStateCache.blendEnable && rwStateCache.destblend == BLENDONE){
+		if(rwStateCache.srcblend == BLENDONE)
+			drawFP = FP_ADD;
+		else if(rwStateCache.srcblend == BLENDSRCALPHA)
+			drawFP = FP_ADDALPHA;
+	}
+	applySamplers(fps[drawFP].numSamplers);
+	RS_ADD(RS_F_SAMPLERS, rst);
+	if(curFP != drawFP){
+		FragmentProgram *p = &fps[drawFP];
+		rsxLoadFragmentProgramLocation(rsxCtx, p->fp, p->offset, GCM_LOCATION_RSX);
+		curFP = drawFP;
+		drawStats.fpSwitches++;
+	}
+	RS_ADD(RS_F_PROGRAMS, rst);
+	uploadConsts(C_MATCOLOR, 3);	// matColor, surfProps, ambient
+	RS_ADD(RS_F_UPLOAD, rst);
+	return true;
+}
+
+bool
+flushCacheLean(void)
+{
+	uint64 t0 = tbNow();
+	bool r = flushCacheLeanImpl();
+	uint64 dt = tbNow() - t0;
+	perfCounters.flushTb += dt;
+	if(rsceneOn)
+		rscene.flushTb += dt;
+	return r;
+}
+
 bool
 flushCache(void)
 {

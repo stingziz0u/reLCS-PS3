@@ -635,10 +635,11 @@ countDraw(void)
 		rsxFlushBuffer(rsxCtx);
 }
 
+static bool leanFlush;	// patch 157: set by leedsRenderCB for a mesh after the atomic's first
 static void
 drawInst_simple(InstanceDataHeader *header, InstanceData *inst)
 {
-	if(inst->numIndex == 0 || !flushCache())
+	if(inst->numIndex == 0 || !(leanFlush ? flushCacheLean() : flushCache()))
 		return;
 	drawIndexed(header->primType, header->ib.offset + inst->offset, inst->numIndex, inst->numVertices);
 }
@@ -1052,7 +1053,9 @@ leedsRenderCB(Atomic *atomic, InstanceDataHeader *header)
 		RS_ADD(RS_TEXTURE, rst);
 		rw::SetRenderState(VERTEXALPHA, inst->vertexAlpha || m->color.alpha != 0xFF);
 		RS_ADD(RS_STATES, rst);
+		leanFlush = k > 0;	// patch 157
 		drawInst(header, inst);
+		leanFlush = false;
 		RS_ADD(RS_DRAW, rst);
 		inst++;
 	}

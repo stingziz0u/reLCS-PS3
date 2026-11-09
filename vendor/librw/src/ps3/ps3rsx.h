@@ -130,6 +130,7 @@ bool32 getAlphaBlend(void);
 
 // everything above to the RSX; false = nothing may be drawn (no target)
 bool flushCache(void);
+bool flushCacheLean(void);	// patch 157
 
 // draw statistics (for the performance line in the log)
 struct DrawStats

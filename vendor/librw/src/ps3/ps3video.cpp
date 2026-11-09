@@ -618,6 +618,9 @@ logStats(void)
 		rsxLog("[rscene]   textures: %u bound a frame, %u different ones (sorted by texture, about that many binds); "
 		       "%u sampler register writes left out (unchanged)",
 		       r.texBinds/ns, r.texDistinct/ns, r.sampRegsSkipped/ns);	// patch 151
+		rsxLog("[rscene]   lean flushes (patch 157): %u a frame, %u of them had to be whole",
+		       (leanFlushStats[0] + leanFlushStats[1])/n, leanFlushStats[1]/n);
+		leanFlushStats[0] = leanFlushStats[1] = 0;
 		memset(&rscene, 0, sizeof(rscene));
 		gPS3RSceneTb = gPS3REffectsTb = 0;
 	}
