@@ -913,11 +913,12 @@ PS3_GameMain(void)
 		PS3_Logf("[5] buildings into a command sub-buffer: %s",
 		         rw::ps3::splitBuildings ? "ON (rsplit.txt, the test of the render split)" : "off (rsplit.txt turns it on)");
 		// patch 171: and recorded by a second thread
+		// patch 179: the experimental mode, with this file alone (rsplit.txt
+		// alone is still the single-thread sub-buffer test)
 		FILE *rt = fopen(PS3_USRDIR "/rsplitthread.txt", "rb");
-		if (rt) { fclose(rt); rw::ps3::splitThread = true; }
+		if (rt) { fclose(rt); rw::ps3::splitThread = true; rw::ps3::splitBuildings = true; }
 		PS3_Logf("[5] the buildings recorded by a second thread: %s",
-		         rw::ps3::splitThread ? (rw::ps3::splitBuildings ? "ON (rsplitthread.txt)" : "asked (rsplitthread.txt) but needs rsplit.txt too") :
-		         "off (rsplitthread.txt with rsplit.txt turns it on)");
+		         rw::ps3::splitThread ? "ON, EXPERIMENTAL (rsplitthread.txt)" : "off (rsplitthread.txt turns it on: experimental)");
 	}
 	// patch 167: the buildings' materials at full alpha (glass2_64)
 	{
