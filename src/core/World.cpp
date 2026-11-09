@@ -406,6 +406,74 @@ CWorld::ProcessLineOfSightSector(CSector &sector, const CColLine &line, CColPoin
 		return false;
 }
 
+#ifdef __PS3__
+// patch 180: each building's collision box in the world, kept (they don't
+// move): the line tests first transformed the line into every building's
+// space of the sector and tested it against its box (DragCarToPoint: 0.76 ms
+// for 20 cars). Now the line's box against the building's world box first:
+// a line missing it misses the model box too (the world box holds it), so
+// the answers are the same. Kept by the building pool's slot, checked
+// against the building's model and position (a slot can be reused).
+struct PS3StaticBox { float px, py, pz; float mn[3], mx[3]; int32 model; };
+static PS3StaticBox ps3StaticBoxes[NUMBUILDINGS];
+uint32 PS3_staticBoxSkips, PS3_staticBoxTests;
+
+static bool
+PS3_StaticBoxOf(CEntity *e, const float *&mn, const float *&mx)
+{
+	if(!e->IsBuilding())
+		return false;
+	CBuildingPool *pool = CPools::GetBuildingPool();
+	CBuilding *b = (CBuilding*)e;
+	int32 i = pool->GetJustIndex_NoFreeAssert(b);	// other pools' buildings: out of range
+	if(i < 0 || i >= NUMBUILDINGS || i >= pool->GetSize())
+		return false;
+	PS3StaticBox &s = ps3StaticBoxes[i];
+	const CVector &p = e->GetPosition();
+	if(s.model != e->GetModelIndex() || s.px != p.x || s.py != p.y || s.pz != p.z){
+		CColModel *cm = CModelInfo::GetColModel(e->GetModelIndex());
+		if(cm == nil)
+			return false;
+		const CMatrix &m = e->GetMatrix();
+		CVector c = (cm->boundingBox.min + cm->boundingBox.max) * 0.5f;
+		CVector h = (cm->boundingBox.max - cm->boundingBox.min) * 0.5f;
+		CVector wc = m * c;
+		const CVector &r = m.GetRight(), &f = m.GetForward(), &u = m.GetUp();
+		float ex = Abs(r.x)*h.x + Abs(f.x)*h.y + Abs(u.x)*h.z + 0.1f;
+		float ey = Abs(r.y)*h.x + Abs(f.y)*h.y + Abs(u.y)*h.z + 0.1f;
+		float ez = Abs(r.z)*h.x + Abs(f.z)*h.y + Abs(u.z)*h.z + 0.1f;
+		s.mn[0] = wc.x - ex; s.mn[1] = wc.y - ey; s.mn[2] = wc.z - ez;
+		s.mx[0] = wc.x + ex; s.mx[1] = wc.y + ey; s.mx[2] = wc.z + ez;
+		s.px = p.x; s.py = p.y; s.pz = p.z;
+		s.model = e->GetModelIndex();
+	}
+	mn = s.mn;
+	mx = s.mx;
+	return true;
+}
+
+// false: the line can't touch the building's collision (skip it)
+static inline bool
+PS3_LineMayHit(CEntity *e, const CColLine &l)
+{
+	extern bool gPS3ColGrid;
+	const float *mn, *mx;
+	if(!gPS3ColGrid || !PS3_StaticBoxOf(e, mn, mx))
+		return true;
+	PS3_staticBoxTests++;
+	if(Max(l.p0.x, l.p1.x) < mn[0] || Min(l.p0.x, l.p1.x) > mx[0] ||
+	   Max(l.p0.y, l.p1.y) < mn[1] || Min(l.p0.y, l.p1.y) > mx[1] ||
+	   Max(l.p0.z, l.p1.z) < mn[2] || Min(l.p0.z, l.p1.z) > mx[2]){
+		PS3_staticBoxSkips++;
+		return false;
+	}
+	return true;
+}
+#define PS3_LINE_MAY_HIT(e, l) PS3_LineMayHit(e, l)
+#else
+#define PS3_LINE_MAY_HIT(e, l) true
+#endif
+
 bool
 CWorld::ProcessLineOfSightSectorList(CPtrList &list, const CColLine &line, CColPoint &point, float &dist,
                                      CEntity *&entity, bool ignoreSeeThrough, bool ignoreSomeObjects, bool ignoreShootThrough)
@@ -450,7 +518,7 @@ CWorld::ProcessLineOfSightSectorList(CPtrList &list, const CColLine &line, CColP
 				} else
 					colmodel = nil;
 
-			} else if(e->bUsesCollision)
+			} else if(e->bUsesCollision && PS3_LINE_MAY_HIT(e, line))	// patch 180
 				colmodel = CModelInfo::GetColModel(e->GetModelIndex());
 
 			if(colmodel && CCollision::ProcessLineOfSight(line, e->GetMatrix(), *colmodel, point, mindist,
@@ -553,6 +621,8 @@ CWorld::ProcessVerticalLineSectorList(CPtrList &list, const CColLine &line, CCol
 		e = (CEntity *)node->item;
 		if(e->m_scanCode != GetCurrentScanCode() && e->bUsesCollision) {
 			e->m_scanCode = GetCurrentScanCode();
+			if(!PS3_LINE_MAY_HIT(e, line))	// patch 180
+				continue;
 
 			colmodel = CModelInfo::GetColModel(e->GetModelIndex());
 			if(CCollision::ProcessVerticalLine(line, e->GetMatrix(), *colmodel, point, mindist,
@@ -757,7 +827,7 @@ CWorld::GetIsLineOfSightSectorListClear(CPtrList &list, const CColLine &line, bo
 
 			e->m_scanCode = GetCurrentScanCode();
 
-			if(e != pIgnoreEntity && !(ignoreSomeObjects && CameraToIgnoreThisObject(e))) {
+			if(e != pIgnoreEntity && !(ignoreSomeObjects && CameraToIgnoreThisObject(e)) && PS3_LINE_MAY_HIT(e, line)) {	// patch 180
 
 				colmodel = CModelInfo::GetColModel(e->GetModelIndex());
 
@@ -2807,6 +2877,17 @@ PS3_ColReport(unsigned int frames)
 		         (double)PS3_colLineTested / frames);
 		PS3_colLineTicks = 0;
 		PS3_colLineCalls = PS3_colLineTris = PS3_colLineTested = 0;
+		{
+			// patch 180
+			extern uint32 PS3_colGridBytes, PS3_colGrids, PS3_colGridQueries, PS3_colGridTested;
+			extern uint32 PS3_staticBoxSkips, PS3_staticBoxTests;
+			PS3_Logf("[col]  grids: %u col models (%u KB), %.0f queries a frame looked at %.0f boxes; "
+			         "the buildings' boxes in the world: %.0f a frame, %.0f skipped before any transform",
+			         PS3_colGrids, PS3_colGridBytes / 1024, (double)PS3_colGridQueries / frames, (double)PS3_colGridTested / frames,
+			         (double)PS3_staticBoxTests / frames, (double)PS3_staticBoxSkips / frames);
+			PS3_colGridQueries = PS3_colGridTested = 0;
+			PS3_staticBoxSkips = PS3_staticBoxTests = 0;
+		}
 		PS3_colBroadTicks = PS3_colSphTriTicks = PS3_colLineTriTicks = 0;
 		PS3_colBroadTris = PS3_colBroadCands = PS3_colBroadKept = PS3_colSkipped = 0;
 		PS3_colCheckCalls = PS3_colCheckMismatches = 0;

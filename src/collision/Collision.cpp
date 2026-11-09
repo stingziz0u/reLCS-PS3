@@ -108,6 +108,7 @@ bool gPS3VmxColCheck;
 unsigned long long PS3_colBroadTicks, PS3_colSphTriTicks, PS3_colLineTriTicks;
 uint32 PS3_colBroadTris, PS3_colBroadCands, PS3_colBroadKept, PS3_colSkipped;
 uint32 PS3_colCheckCalls, PS3_colCheckMismatches;
+bool gPS3ColGrid = true;	// patch 180: USRDIR/nocolgrid.txt: no grids nor buildings' world boxes
 #define PS3_COL_EPS 0.01f
 
 static void
@@ -127,6 +128,13 @@ PS3_ColVmxInit(void)
 		fclose(f);
 		gPS3VmxColCheck = true;
 	}
+	f = fopen(PS3_USRDIR "/nocolgrid.txt", "rb");
+	if(f){
+		fclose(f);
+		gPS3ColGrid = false;
+	}
+	PS3_Logf("[col] grids in the col models and the buildings' boxes in the world: %s",
+	         gPS3ColGrid ? "on" : "off (nocolgrid.txt)");
 	PS3_Logf("[col] collision broadphase: %s%s", gPS3VmxCol ? "triangle boxes with AltiVec" : "the old loop (novmxcol.txt)",
 	         gPS3VmxColCheck ? ", checked against the old loop (vmxcolcheck.txt)" : "");
 }
@@ -149,7 +157,10 @@ PS3_LineCandidates(const CColModel &model, const CColLine &l)
 		return -1;
 	float lo[3] = { Min(l.p0.x, l.p1.x) - PS3_COL_EPS, Min(l.p0.y, l.p1.y) - PS3_COL_EPS, Min(l.p0.z, l.p1.z) - PS3_COL_EPS };
 	float hi[3] = { Max(l.p0.x, l.p1.x) + PS3_COL_EPS, Max(l.p0.y, l.p1.y) + PS3_COL_EPS, Max(l.p0.z, l.p1.z) + PS3_COL_EPS };
-	int n = PS3_ColBoxCandidatesBox(PS3_TriBoxes(&model), model.numTriangles, lo, hi, ps3LineCands);
+	extern int PS3_ColGridCandidates(const CColModel *m, const float *lo, const float *hi, int *out);	// patch 180
+	int n = PS3_ColGridCandidates(&model, lo, hi, ps3LineCands);
+	if(n < 0)
+		n = PS3_ColBoxCandidatesBox(PS3_TriBoxes(&model), model.numTriangles, lo, hi, ps3LineCands);
 	PS3_colLineCalls++;
 	PS3_colLineTris += model.numTriangles;
 	PS3_colLineTested += n;
@@ -2161,8 +2172,20 @@ CCollision::ProcessColModels(const CMatrix &matrixA, CColModel &modelA,
 			// the candidates apart: there can be more than MAXNUMTRIS of them
 			static int ps3Cands[32768];
 			ps3Boxes = PS3_TriBoxes(&modelB);
-			int cands = PS3_ColBoxCandidates(ps3Boxes, modelB.numTriangles, bsphereAB.center.x, bsphereAB.center.y,
-			                                 bsphereAB.center.z, bsphereAB.radius, PS3_COL_EPS, ps3Cands);
+			// patch 180: through the model's grid when it has one
+			extern int PS3_ColGridCandidates(const CColModel *m, const float *lo, const float *hi, int *out);
+			extern uint32 PS3_colGridTested;
+			float ps3lo[3] = { bsphereAB.center.x - bsphereAB.radius - PS3_COL_EPS, bsphereAB.center.y - bsphereAB.radius - PS3_COL_EPS,
+			                   bsphereAB.center.z - bsphereAB.radius - PS3_COL_EPS };
+			float ps3hi[3] = { bsphereAB.center.x + bsphereAB.radius + PS3_COL_EPS, bsphereAB.center.y + bsphereAB.radius + PS3_COL_EPS,
+			                   bsphereAB.center.z + bsphereAB.radius + PS3_COL_EPS };
+			uint32 ps3t0 = PS3_colGridTested;
+			int cands = PS3_ColGridCandidates(&modelB, ps3lo, ps3hi, ps3Cands);
+			if(cands >= 0)
+				PS3_colBroadTris -= modelB.numTriangles - (PS3_colGridTested - ps3t0);	// the boxes looked at
+			else
+				cands = PS3_ColBoxCandidates(ps3Boxes, modelB.numTriangles, bsphereAB.center.x, bsphereAB.center.y,
+				                             bsphereAB.center.z, bsphereAB.radius, PS3_COL_EPS, ps3Cands);
 			PS3_colBroadCands += cands;
 			for(i = 0; i < cands; i++){
 				int k = ps3Cands[i];

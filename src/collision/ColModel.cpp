@@ -19,7 +19,162 @@ PS3_PlaneBytes(int numTriangles)
 {
 	int n4 = (numTriangles + 3) & ~3;
 	size_t planes = (sizeof(CColTrianglePlane) * (numTriangles + 1) + sizeof(void*) + 15) & ~(size_t)15;
-	return planes + 6 * n4 * sizeof(float);
+	return planes + 6 * n4 * sizeof(float) + 16;	// patch 180: + the grid's pointer
+}
+
+const float *PS3_TriBoxes(const CColModel *m);
+
+// patch 180: a grid over the col model in x and y, each cell the list of the
+// triangles whose box touches it (in their order), for the models with many
+// triangles: the broadphase looked at every triangle's box (28000 a frame
+// for the 384 kept). Kept with the planes (built and freed with them).
+struct PS3TriGrid {
+	int32 gx, gy;
+	float x0, y0, ix, iy;	// the origin, cells per unit
+	uint32 *start;	// gx*gy + 1
+	uint16 *idx;
+	uint32 bytes;
+};
+uint32 PS3_colGridBytes, PS3_colGrids;
+
+static void**
+PS3_TriGridSlot(const CColModel *m)
+{
+	int n4 = (m->numTriangles + 3) & ~3;
+	return (void**)((uint8*)PS3_TriBoxes(m) + 6 * n4 * sizeof(float));
+}
+
+static inline int32
+PS3_GridCell(float v, float o, float inv, int32 g)
+{
+	int32 c = (int32)((v - o) * inv);
+	return c < 0 ? 0 : c >= g ? g - 1 : c;
+}
+
+static PS3TriGrid*
+PS3_BuildTriGrid(const float *b, int n)
+{
+	if(n < 96 || n > 32768)
+		return nil;
+	int n4 = (n + 3) & ~3;
+	const float *mnx = b, *mny = b + n4, *mxx = b + 3*n4, *mxy = b + 4*n4;
+	float x0 = mnx[0], y0 = mny[0], x1 = mxx[0], y1 = mxy[0];
+	for(int i = 1; i < n; i++){
+		x0 = Min(x0, mnx[i]); y0 = Min(y0, mny[i]);
+		x1 = Max(x1, mxx[i]); y1 = Max(y1, mxy[i]);
+	}
+	int32 g = (int32)sqrtf(n / 6.0f);
+	g = g < 2 ? 2 : g > 32 ? 32 : g;
+	int32 gx = x1 - x0 > 0.5f ? g : 1;
+	int32 gy = y1 - y0 > 0.5f ? g : 1;
+	float ix = gx / Max(x1 - x0, 0.001f), iy = gy / Max(y1 - y0, 0.001f);
+	uint32 total = 0;
+	for(int i = 0; i < n; i++){
+		int32 cx0 = PS3_GridCell(mnx[i], x0, ix, gx), cx1 = PS3_GridCell(mxx[i], x0, ix, gx);
+		int32 cy0 = PS3_GridCell(mny[i], y0, iy, gy), cy1 = PS3_GridCell(mxy[i], y0, iy, gy);
+		total += (cx1 - cx0 + 1) * (cy1 - cy0 + 1);
+	}
+	if(total > (uint32)n * 6)
+		return nil;	// mostly big triangles: the scan of every box is as good
+	uint32 cells = gx * gy;
+	uint32 bytes = sizeof(PS3TriGrid) + (cells + 1) * sizeof(uint32) + total * sizeof(uint16);
+	PS3TriGrid *gr = (PS3TriGrid*)malloc(bytes);
+	if(gr == nil)
+		return nil;
+	gr->gx = gx; gr->gy = gy; gr->x0 = x0; gr->y0 = y0; gr->ix = ix; gr->iy = iy;
+	gr->start = (uint32*)(gr + 1);
+	gr->idx = (uint16*)(gr->start + cells + 1);
+	gr->bytes = bytes;
+	memset(gr->start, 0, (cells + 1) * sizeof(uint32));
+	for(int i = 0; i < n; i++){
+		int32 cx0 = PS3_GridCell(mnx[i], x0, ix, gx), cx1 = PS3_GridCell(mxx[i], x0, ix, gx);
+		int32 cy0 = PS3_GridCell(mny[i], y0, iy, gy), cy1 = PS3_GridCell(mxy[i], y0, iy, gy);
+		for(int32 cy = cy0; cy <= cy1; cy++)
+			for(int32 cx = cx0; cx <= cx1; cx++)
+				gr->start[cy*gx + cx + 1]++;
+	}
+	for(uint32 c = 0; c < cells; c++)
+		gr->start[c + 1] += gr->start[c];
+	uint32 *fill = (uint32*)malloc(cells * sizeof(uint32));	// (any thread: no statics)
+	if(fill == nil){
+		free(gr);
+		return nil;
+	}
+	memcpy(fill, gr->start, cells * sizeof(uint32));
+	for(int i = 0; i < n; i++){
+		int32 cx0 = PS3_GridCell(mnx[i], x0, ix, gx), cx1 = PS3_GridCell(mxx[i], x0, ix, gx);
+		int32 cy0 = PS3_GridCell(mny[i], y0, iy, gy), cy1 = PS3_GridCell(mxy[i], y0, iy, gy);
+		for(int32 cy = cy0; cy <= cy1; cy++)
+			for(int32 cx = cx0; cx <= cx1; cx++)
+				gr->idx[fill[cy*gx + cx]++] = (uint16)i;	// in order: each cell's list ascending
+	}
+	free(fill);
+	PS3_colGridBytes += bytes;
+	PS3_colGrids++;
+	return gr;
+}
+
+// the candidates for the box lo..hi (already grown), in ascending order, as
+// PS3_ColBoxCandidatesBox gives them; -1: no grid (or too many cells), scan
+uint32 PS3_colGridQueries, PS3_colGridTested;
+
+int
+PS3_ColGridCandidates(const CColModel *m, const float *lo, const float *hi, int *out)
+{
+	extern bool gPS3ColGrid;
+	if(!gPS3ColGrid || m->trianglePlanes == nil)
+		return -1;
+	PS3TriGrid *gr = *(PS3TriGrid**)PS3_TriGridSlot(m);
+	if(gr == nil)
+		return -1;
+	int32 cx0 = PS3_GridCell(lo[0], gr->x0, gr->ix, gr->gx), cx1 = PS3_GridCell(hi[0], gr->x0, gr->ix, gr->gx);
+	int32 cy0 = PS3_GridCell(lo[1], gr->y0, gr->iy, gr->gy), cy1 = PS3_GridCell(hi[1], gr->y0, gr->iy, gr->gy);
+	if((cx1 - cx0 + 1) * (cy1 - cy0 + 1) > 16)
+		return -1;	// a big query: the scan
+	const float *b = PS3_TriBoxes(m);
+	int n4 = (m->numTriangles + 3) & ~3;
+	const float *mnx = b, *mny = b + n4, *mnz = b + 2*n4, *mxx = b + 3*n4, *mxy = b + 4*n4, *mxz = b + 5*n4;
+	int n = 0;
+	uint32 tested = 0;
+	bool one = cx0 == cx1 && cy0 == cy1;
+	uint32 raw = 0;
+	for(int32 cy = cy0; cy <= cy1; cy++)
+		raw += gr->start[cy*gr->gx + cx1 + 1] - gr->start[cy*gr->gx + cx0];
+	if(raw > 32768)
+		return -1;	// the out buffer holds 32768 (repeats included)
+	// no shared state (the lines also run on the audio worker): a triangle in
+	// several cells is kept once per cell, then sorted and the repeats dropped
+	for(int32 cy = cy0; cy <= cy1; cy++)
+		for(int32 cx = cx0; cx <= cx1; cx++){
+			uint32 c = cy*gr->gx + cx;
+			for(uint32 k = gr->start[c]; k < gr->start[c+1]; k++){
+				int i = gr->idx[k];
+				tested++;
+				// the same test as the scan's
+				if(mxx[i] >= lo[0] && mnx[i] <= hi[0] && mxy[i] >= lo[1] && mny[i] <= hi[1] &&
+				   mxz[i] >= lo[2] && mnz[i] <= hi[2])
+					out[n++] = i;
+			}
+		}
+	if(!one){
+		// in ascending order, as the scan (the first of equal hits wins)
+		for(int a = 1; a < n; a++){
+			int v = out[a], j = a - 1;
+			while(j >= 0 && out[j] > v){
+				out[j+1] = out[j];
+				j--;
+			}
+			out[j+1] = v;
+		}
+		int u = 0;
+		for(int a = 0; a < n; a++)
+			if(u == 0 || out[u-1] != out[a])
+				out[u++] = out[a];
+		n = u;
+	}
+	PS3_colGridQueries++;
+	PS3_colGridTested += tested;
+	return n;
 }
 
 const float*
@@ -141,6 +296,7 @@ CColModel::CalculateTrianglePlanes(void)
 				b[3*n4 + i] = b[4*n4 + i] = b[5*n4 + i] = -1.0e30f;
 			}
 		}
+		*PS3_TriGridSlot(this) = PS3_BuildTriGrid(b, numTriangles);	// patch 180
 	}
 #else
 	// HACK: allocate space for one more element to stuff the link pointer into
@@ -159,6 +315,14 @@ CColModel::RemoveTrianglePlanes(void)
 	if(trianglePlanes){
 #ifdef __PS3__
 		PS3_colPlaneBytes -= PS3_PlaneBytes(numTriangles);
+		{
+			PS3TriGrid *gr = *(PS3TriGrid**)PS3_TriGridSlot(this);	// patch 180
+			if(gr){
+				PS3_colGridBytes -= gr->bytes;
+				PS3_colGrids--;
+				free(gr);
+			}
+		}
 		free(trianglePlanes);	// patch 62: memalign'd
 #else
 		delete[] trianglePlanes;
