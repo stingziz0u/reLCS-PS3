@@ -2336,10 +2336,13 @@ CRenderer::RenderEverythingBarRoads(void)
 	if(ps3Split){
 		bool sub = rw::ps3::subBufferBegin();
 		unsigned long long ps3t0 = PS3_Ticks();
+		int ps3n = 0;
 		for(i = 0; i < ms_nNoOfVisibleEntities; i++){
 			e = ms_aVisibleEntityPtrs[i];
 			if(IsRoad(e) || !e->IsBuilding())
 				continue;
+			if(sub && (++ps3n & 15) == 0)
+				rw::ps3::subBufferChunk();	// patch 170: the RSX gets them every 16 buildings
 			if(sub && rw::ps3::subBufferRoom() < 64*1024){
 				// nearly full: the rest into the ring
 				rw::ps3::subBufferEnd();

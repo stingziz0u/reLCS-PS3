@@ -167,6 +167,7 @@ static int32 subCur = -1;
 // The ring's lines come round often enough to stay. dcbz takes a 128-byte
 // line into the cache as zeroes without reading it.
 static u32 *subZeroed;
+static u32 *subChunkStart;	// patch 170: where the part not yet called starts
 #define SUB_ZERO_AHEAD (32*1024)
 static inline void
 subZeroAhead(gcmContextData *s)
@@ -204,7 +205,9 @@ subBufferBegin(void)
 	subCtx[k].current = mem;
 	subCtx[k].end = mem + SUB_SIZE/4 - 16;
 	subCtx[k].callback = mainRsxCtx->callback;	// never reached: subBufferRoom() stops the recording first
+	rsxFlushBuffer(mainRsxCtx);	// patch 170: the RSX on what came before while the buildings are recorded
 	subCur = k;
+	subChunkStart = mem;
 	subZeroed = mem;	// 1 MB aligned: a whole number of lines
 	subZeroAhead(&subCtx[k]);
 	rsxCtx = &subCtx[k];
@@ -220,21 +223,46 @@ subBufferRoom(void)
 	return (uint32)(subCtx[subCur].end - subCtx[subCur].current) * 4;
 }
 
+// patch 170: what was recorded since the last call, called from the ring
+// now and the ring kicked, so the RSX draws the buildings as they come, as
+// it does with the ring's 32-draw kicks. Patch 168/169 called the whole
+// sub-buffer once at the end: the RSX sat idle while the buildings were
+// recorded and was 2+ ms behind after, and what waits for it (VRAM blocks
+// of the models instanced as they fade in) waited that much ("fading in"
+// 0.4-0.8 ms -> 2.5-3.4 with rsplit.txt).
+static void
+subCallChunk(gcmContextData *s)
+{
+	if(s->current == subChunkStart)
+		return;
+	rsxSetReturnCommand(s);
+	__asm__ volatile("sync" ::: "memory");	// the commands in memory before the RSX can reach the CALL
+	rsxSetCallCommand(mainRsxCtx, subOffset[subCur] + (uint32)((u8*)subChunkStart - (u8*)s->begin));
+	rsxFlushBuffer(mainRsxCtx);
+	subChunkStart = s->current;
+	splitStats.chunks++;
+}
+
+void
+subBufferChunk(void)
+{
+	if(subCur >= 0)
+		subCallChunk(&subCtx[subCur]);
+}
+
 void
 subBufferEnd(void)
 {
 	if(subCur < 0)
 		return;
 	gcmContextData *s = &subCtx[subCur];
-	rsxSetReturnCommand(s);
+	subCallChunk(s);
 	uint32 bytes = (uint32)(s->current - s->begin) * 4;
 	splitStats.bytes += bytes;
 	if(bytes > splitStats.peak)
 		splitStats.peak = bytes;
 	splitStats.calls++;
 	rsxCtx = mainRsxCtx;
-	__asm__ volatile("sync" ::: "memory");	// the sub-buffer in memory before the RSX can reach the CALL
-	rsxSetCallCommand(mainRsxCtx, subOffset[subCur]);
 	subUsed[subCur] = true;
 	subFrame[subCur] = frame;
 	subCur = -1;
@@ -686,10 +714,11 @@ logStats(void)
 	       slowFrames, verySlowFrames, worstFrameUs/1000.0);
 	if(splitBuildings){
 		// patch 168
-		rsxLog("[split] the buildings in a sub-buffer: %u calls, %u KB a frame (peak %u KB of %u), %u stopped full, "
+		rsxLog("[split] the buildings in a sub-buffer: %u frames, %u KB a frame (peak %u KB of %u) in %.1f calls a frame, %u stopped full, "
 		       "%.2f ms a frame waiting for one to be free",
 		       splitStats.calls, splitStats.calls ? splitStats.bytes / 1024 / splitStats.calls : 0, splitStats.peak / 1024,
-		       SUB_SIZE / 1024, splitStats.full, splitStats.waitUs / 1000.0 / n);
+		       SUB_SIZE / 1024, splitStats.calls ? (double)splitStats.chunks / splitStats.calls : 0.0, splitStats.full,
+		       splitStats.waitUs / 1000.0 / n);
 		memset(&splitStats, 0, sizeof(splitStats));
 	}
 	{

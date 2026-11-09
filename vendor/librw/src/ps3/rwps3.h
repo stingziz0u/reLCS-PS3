@@ -238,12 +238,13 @@ extern RW_TLS bool decalBuilding;
 // sub-buffer called from the ring. subBufferBegin switches this thread's
 // command buffer to it (false: not now, draw as usual), subBufferRoom says
 // the bytes left, subBufferEnd returns to the ring and calls it from there.
-struct SplitStats { uint32 calls, bytes, peak, full, waitUs; };
+struct SplitStats { uint32 calls, bytes, peak, full, waitUs, chunks; };
 extern SplitStats splitStats;
 extern bool splitBuildings;	// USRDIR/rsplit.txt
 bool subBufferBegin(void);
 uint32 subBufferRoom(void);
 void subBufferEnd(void);
+void subBufferChunk(void);	// patch 170: the part recorded so far called from the ring now, the ring kicked
 extern bool leedsFullAlpha;	// patch 167: buildings' materials at alpha 255 (USRDIR/glassalpha.txt: their own)
 extern uint32 leedsFullAlphaCount;
 // patch 163 (render split): the draw state is one per thread; a second
