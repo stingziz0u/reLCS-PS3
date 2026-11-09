@@ -159,6 +159,28 @@ static u32 subOffset[SUB_COUNT];
 static uint32 subFrame[SUB_COUNT];
 static bool subUsed[SUB_COUNT];
 static int32 subCur = -1;
+// patch 169: the sub-buffer's cache lines zeroed in the cache (dcbz) ahead of
+// the writes. With rsplit.txt every part of the drawing that writes commands
+// went 4-6 times slower (the draw command and its kick 0.17 -> 0.9-1.2 ms,
+// flushCache 1.4 -> 2.5-3): the sub-buffers are 3 MB of lines never in the
+// cache, and a store to a line not in the cache first reads it from memory.
+// The ring's lines come round often enough to stay. dcbz takes a 128-byte
+// line into the cache as zeroes without reading it.
+static u32 *subZeroed;
+#define SUB_ZERO_AHEAD (32*1024)
+static inline void
+subZeroAhead(gcmContextData *s)
+{
+	u8 *want = (u8*)s->current + SUB_ZERO_AHEAD;
+	if(want > (u8*)s->end)
+		want = (u8*)s->end;
+	u8 *z = (u8*)subZeroed;
+	while(z < want){
+		__asm__ volatile("dcbz 0,%0" :: "r"(z) : "memory");
+		z += 128;
+	}
+	subZeroed = (u32*)z;
+}
 bool splitBuildings;
 SplitStats splitStats;
 
@@ -183,6 +205,8 @@ subBufferBegin(void)
 	subCtx[k].end = mem + SUB_SIZE/4 - 16;
 	subCtx[k].callback = mainRsxCtx->callback;	// never reached: subBufferRoom() stops the recording first
 	subCur = k;
+	subZeroed = mem;	// 1 MB aligned: a whole number of lines
+	subZeroAhead(&subCtx[k]);
 	rsxCtx = &subCtx[k];
 	return true;
 }
@@ -192,6 +216,7 @@ subBufferRoom(void)
 {
 	if(subCur < 0)
 		return ~0u;
+	subZeroAhead(&subCtx[subCur]);	// patch 169: called before each building
 	return (uint32)(subCtx[subCur].end - subCtx[subCur].current) * 4;
 }
 
