@@ -261,7 +261,8 @@ void forgetDrawState(void);
 extern RW_TLS bool onSplitWorker;	// patch 171: this thread records the buildings
 extern volatile bool splitBusy;
 extern void (*splitJoinHook)(void);
-void splitHangReport(void);	// patch 172: [hang] lines	// patch 172: called before a frame is presented	// patch 170: the part recorded so far called from the ring now, the ring kicked
+void splitHangReport(void);
+extern bool splitDumpNext;	// patch 174	// patch 172: [hang] lines	// patch 172: called before a frame is presented	// patch 170: the part recorded so far called from the ring now, the ring kicked
 extern bool leedsFullAlpha;	// patch 167: buildings' materials at alpha 255 (USRDIR/glassalpha.txt: their own)
 extern uint32 leedsFullAlphaCount;
 // patch 163 (render split): the draw state is one per thread; a second

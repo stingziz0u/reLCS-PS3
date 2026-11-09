@@ -200,6 +200,7 @@ SplitStats splitStats;
 namespace rw {
 namespace ps3 {
 bool splitThread;
+bool splitDumpNext = true;	// patch 174: the first threaded frame dumped
 volatile bool splitBusy;
 void (*splitJoinHook)(void);	// patch 172: Renderer.cpp's PS3_SplitJoin
 RW_TLS bool onSplitWorker;
@@ -229,6 +230,9 @@ resUnlock(void)
 #define SPLIT_CHUNK_SIZE (48*1024)	// 20 x 48 KB: 960 KB of the 1 MB
 #define SPLIT_LABEL0 80
 static gcmContextData workerCtx;
+static gcmContextData *workerPrevCtx;	// patch 174: the thread's buffer before (the game thread's own in the self test)
+static uint32 chunkBytes[SPLIT_CHUNKS];	// patch 174: for the first frame's dump
+static u32 *slotsBegin, *slotsEnd;
 static int32 workerSub = -1, workerChunk;
 static uint32 workerSeq;
 static volatile u32 *splitLabel[SPLIT_CHUNKS];
@@ -277,10 +281,13 @@ splitEmitSlots(uint32 *seq)
 	}
 	*seq = frame + 1;	// never 0: the labels start at 0
 	rsxFlushBuffer(mainRsxCtx);	// what came before: the RSX on it now
+	slotsBegin = mainRsxCtx->current;
 	for(int32 i = 0; i < SPLIT_CHUNKS; i++){
 		rsxSetWaitLabel(mainRsxCtx, SPLIT_LABEL0 + i, *seq);
 		rsxSetCallCommand(mainRsxCtx, subOffset[k] + i*SPLIT_CHUNK_SIZE);
 	}
+	slotsEnd = mainRsxCtx->current;
+	memset(chunkBytes, 0, sizeof(chunkBytes));
 	subUsed[k] = true;
 	subFrame[k] = frame;
 	splitStats.calls++;
@@ -311,6 +318,7 @@ static void
 workerCloseChunk(void)
 {
 	rsxSetReturnCommand(&workerCtx);
+	chunkBytes[workerChunk] = (uint32)(workerCtx.current - workerCtx.begin) * 4;
 	splitStats.bytes += (uint32)(workerCtx.current - workerCtx.begin) * 4;
 	__asm__ volatile("sync" ::: "memory");	// the commands in memory before the label lets the RSX in
 	*splitLabel[workerChunk] = workerSeq;
@@ -332,6 +340,7 @@ workerChunkFull(gcmContextData *ctx, u32 count)
 	if(splitStats.midChunk++ < 4)
 		rsxLog("[split] a chunk filled in the middle of a building (%u words asked): on in the next one", count);
 	*workerCtx.current++ = 0x00020000;	// RETURN
+	chunkBytes[workerChunk] = (uint32)(workerCtx.current - workerCtx.begin) * 4;
 	splitStats.bytes += (uint32)(workerCtx.current - workerCtx.begin) * 4;
 	__asm__ volatile("sync" ::: "memory");
 	*splitLabel[workerChunk] = workerSeq;
@@ -350,7 +359,31 @@ splitWorkerBegin(int32 k, uint32 seq)
 	workerSeq = seq;
 	workerChunk = 0;
 	workerOpenChunk();
+	workerPrevCtx = rsxCtx;
 	rsxCtx = &workerCtx;
+}
+
+// patch 174: the first threaded frame's slots in the ring and its chunks as
+// written (the freeze: the RSX's GET at 0x01000000 with every label written)
+void
+splitDumpFrame(void)
+{
+	char buf[700];
+	int len = 0;
+	for(u32 *p = slotsBegin; p && p < slotsEnd && p < slotsBegin + 20 && len < 600; p++)
+		len += snprintf(buf + len, sizeof(buf) - len, " %08x", *p);
+	u32 so = 0;
+	if(slotsBegin)
+		rsxAddressToOffset(slotsBegin, &so);
+	rsxLog("[split] the slots at 0x%08x, %u words; the first 20:%s", so, (uint32)(slotsEnd - slotsBegin), buf);
+	len = 0;
+	for(int32 i = 0; i < SPLIT_CHUNKS && len < 600; i++){
+		u32 *mem = (u32*)((uint8*)ioBuffer + SUB_BASE + workerSub*SUB_SIZE + i*SPLIT_CHUNK_SIZE);
+		uint32 n = chunkBytes[i] / 4;
+		len += snprintf(buf + len, sizeof(buf) - len, " %d:%uB first %08x last %08x |", i, chunkBytes[i], mem[0],
+		                n ? mem[n-1] : mem[0]);
+	}
+	rsxLog("[split] the chunks:%s", buf);
 }
 
 // the room left in the chunk; when it's low the next chunk (false: none left)
@@ -408,7 +441,11 @@ splitWorkerEnd(void)
 	uint32 used = (uint32)(workerChunk + 1);
 	if(used > splitStats.peak)
 		splitStats.peak = used;
-	rsxCtx = nil;
+	rsxCtx = workerPrevCtx;	// patch 174: nil on the second thread, the ring in the self test
+	if(splitDumpNext){
+		splitDumpNext = false;
+		splitDumpFrame();
+	}
 	workerSub = -1;
 	onSplitWorker = false;
 }

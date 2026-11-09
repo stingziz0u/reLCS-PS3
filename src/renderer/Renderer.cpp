@@ -2284,6 +2284,34 @@ static unsigned long long ps3SpT0;
 static volatile int ps3SpIndex;	// patch 172: the building the second thread is at
 static volatile int ps3SpMainStep;	// patch 172: where the game thread is with it
 
+// patch 174: the test modes for the freeze. USRDIR/rsplitself.txt: the game
+// thread records the chunks itself (the labels, waits and calls as with the
+// second thread, no second thread); rsplitwait.txt: the second thread
+// records them and the game thread waits for it at once (no two at a time)
+static bool ps3SpSelf, ps3SpWaitNow;
+
+static void
+PS3_SplitRecord(bool onWorker)
+{
+	unsigned long long t0 = PS3_Ticks();
+	if(onWorker)
+		rw::ps3::loadDrawContext(ps3SpCtx);
+	rw::ps3::splitWorkerBegin(ps3SpSub, ps3SpSeq);
+	if(!onWorker)
+		rw::ps3::onSplitWorker = false;	// the game thread's own lights
+	int i;
+	for(i = 0; i < ps3SpCount; i++){
+		ps3SpIndex = i;
+		if(!rw::ps3::splitWorkerRoom())
+			break;	// no chunk left: the game thread draws the rest
+		CRenderer::RenderOneNonRoad(ps3SpList[i]);
+	}
+	ps3SpIndex = i;
+	ps3SpLeft = i;
+	rw::ps3::splitWorkerEnd();
+	rw::ps3::splitStats.workUs += (uint32)((PS3_Ticks() - t0) / 79.8);
+}
+
 static void
 PS3_SplitWorkerMain(void *)
 {
@@ -2292,20 +2320,7 @@ PS3_SplitWorkerMain(void *)
 		while(ps3SpState != 1)
 			sysCondWait(ps3SpWork, 0);
 		sysMutexUnlock(ps3SpMutex);
-		unsigned long long t0 = PS3_Ticks();
-		rw::ps3::loadDrawContext(ps3SpCtx);
-		rw::ps3::splitWorkerBegin(ps3SpSub, ps3SpSeq);
-		int i;
-		for(i = 0; i < ps3SpCount; i++){
-			ps3SpIndex = i;
-			if(!rw::ps3::splitWorkerRoom())
-				break;	// no chunk left: the game thread draws the rest
-			CRenderer::RenderOneNonRoad(ps3SpList[i]);
-		}
-		ps3SpIndex = i;
-		ps3SpLeft = i;
-		rw::ps3::splitWorkerEnd();
-		rw::ps3::splitStats.workUs += (uint32)((PS3_Ticks() - t0) / 79.8);
+		PS3_SplitRecord(true);
 		sysMutexLock(ps3SpMutex, 0);
 		ps3SpState = 2;
 		sysCondSignal(ps3SpDone);
@@ -2347,6 +2362,15 @@ PS3_SplitInit(void)
 		return false;
 	}
 	ps3SpOn = true;
+	{
+		FILE *f = fopen(PS3_USRDIR "/rsplitself.txt", "rb");
+		if(f){ fclose(f); ps3SpSelf = true; }
+		f = fopen(PS3_USRDIR "/rsplitwait.txt", "rb");
+		if(f){ fclose(f); ps3SpWaitNow = true; }
+		if(ps3SpSelf || ps3SpWaitNow)
+			PS3_Logf("[split] test mode: %s", ps3SpSelf ? "the game thread records the chunks itself (rsplitself.txt)" :
+			         "the game thread waits for the second thread at once (rsplitwait.txt)");
+	}
 	rw::ps3::splitJoinHook = PS3_SplitJoin;	// patch 172: before every present too
 	ps3SpPrevHang = PS3_hangDumpHook;	// patch 172: the [hang] dump says where it is
 	PS3_hangDumpHook = PS3_SplitHangDump;
@@ -2376,12 +2400,24 @@ PS3_SplitStart(CEntity **list, int n)
 	ps3SpCount = n;
 	ps3SpLeft = n;
 	ps3SpT0 = PS3_Ticks();
+	if(ps3SpSelf){
+		// patch 174: recorded here, no second thread (the RSX waits skipped
+		// as with it: it stops at the labels still to come)
+		rw::ps3::splitBusy = true;
+		PS3_SplitRecord(false);
+		rw::ps3::splitBusy = false;
+		rw::ps3::splitStats.threadFrames++;
+		rw::ps3::forgetDrawState();	// the game thread's commands go on in the ring after the slots
+		return true;
+	}
 	sysMutexLock(ps3SpMutex, 0);
 	rw::ps3::splitBusy = true;
 	ps3SpState = 1;
 	sysCondSignal(ps3SpWork);
 	sysMutexUnlock(ps3SpMutex);
 	ps3SpMainStep = 2;
+	if(ps3SpWaitNow)
+		PS3_SplitJoin();	// patch 174: test mode
 	return true;
 }
 
