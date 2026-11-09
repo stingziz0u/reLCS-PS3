@@ -420,6 +420,19 @@ splitHangReport(void)
 			len += snprintf(buf + len, sizeof(buf) - len, " %u", *splitLabel[i]);
 		rsxLog("[hang] split: chunk labels:%s", buf);
 	}
+	// patch 175: the commands where the RSX stopped (GET in the IO memory:
+	// the ring or a sub-buffer), 32 words before it and 8 after
+	if(cr && ioBuffer && cr->get < RSX_IO_SIZE){
+		u32 g = cr->get & ~3u;
+		u32 from = g >= 128 ? g - 128 : 0;
+		for(int part = 0; part < 2; part++){
+			char buf[400];
+			int len = 0;
+			for(u32 o = from + part*80; o < from + part*80 + 80 && o + 4 <= RSX_IO_SIZE; o += 4)
+				len += snprintf(buf + len, sizeof(buf) - len, "%s%08x", o == g ? " >" : " ", *(u32*)((u8*)ioBuffer + o));
+			rsxLog("[hang] split: the RSX at 0x%08x; from 0x%08x:%s", g, from + part*80, buf);
+		}
+	}
 }
 
 // the current chunk ended and every chunk not used ended empty
