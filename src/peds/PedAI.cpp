@@ -939,9 +939,17 @@ CPed::ProcessObjective(void)
 				break;
 			}
 			case OBJECTIVE_WAIT_IN_CAR:
-				SetPedState(PED_DRIVING);
-				break;
 			case OBJECTIVE_WAIT_IN_CAR_THEN_GET_OUT:
+#ifdef __PS3__
+				// patch 183: only in a vehicle. A ped taken out of one
+				// (WARP_CHAR_FROM_CAR_TO_COORD) keeps the objective, and on
+				// foot PED_DRIVING with no vehicle is a ped to destroy
+				// (ProcessControl): Calm before the Storm, the cutscene of
+				// the helicopter skipped, Massimo's man deleted the next frame
+				// and the mission failed ("he's dead")
+				if (!bInVehicle || m_pMyVehicle == nil)
+					break;
+#endif
 				SetPedState(PED_DRIVING);
 				break;
 			case OBJECTIVE_KILL_CHAR_ANY_MEANS:

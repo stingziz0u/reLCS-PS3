@@ -905,6 +905,11 @@ int8 CRunningScript::ProcessCommands800To899(int32 command)
 		pPed->m_pMyVehicle = nil;
 		pPed->SetPedState(PED_IDLE);
 		pPed->m_nLastPedState = PED_NONE;
+#ifdef __PS3__
+		// patch 183: out of the car, no more waiting in it
+		if (pPed->m_objective == OBJECTIVE_WAIT_IN_CAR || pPed->m_objective == OBJECTIVE_WAIT_IN_CAR_THEN_GET_OUT)
+			pPed->SetObjective(OBJECTIVE_NONE);
+#endif
 		pPed->bUsesCollision = true;
 		pPed->SetMoveSpeed(0.0f, 0.0f, 0.0f);
 		pPed->ReplaceWeaponWhenExitingVehicle();

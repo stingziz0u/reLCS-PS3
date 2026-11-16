@@ -3075,6 +3075,18 @@ CPed::ProcessControl(void)
 				{
 					if (!m_pMyVehicle) {
 						bInVehicle = false;
+#ifdef __PS3__
+						// patch 183: a mission ped is the script's, never
+						// thrown away here: on its feet again
+						if (CharCreatedBy == MISSION_CHAR) {
+							if (PS3_logsOn)
+								PS3_Logf("[death] mission ped %d driving with no vehicle (objective %d): set idle, not destroyed",
+								         (int)CPools::GetPedRef(this), (int)m_objective);
+							SetPedState(PED_IDLE);
+							SetMoveState(PEDMOVE_STILL);
+							return;
+						}
+#endif
 						FlagToDestroyWhenNextProcessed();
 						return;
 					}
