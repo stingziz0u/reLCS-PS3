@@ -4336,6 +4336,27 @@ int8 CRunningScript::ProcessCommands200To299(int32 command)
 	{
 		CollectParameters(&m_nIp, 1);
 		CPed* pPed = CPools::GetPedPool()->GetAt(GET_INTEGER_PARAM(0));
+#ifdef __PS3__
+		// patch 182: a mission script that sees a ped dead (once per handle): why
+		if (m_bIsMissionScript && PS3_logsOn && (!pPed || pPed->DyingOrDead() || pPed->m_objective == OBJECTIVE_LEAVE_CAR_AND_DIE)) {
+			static int32 seen[16];
+			static int nSeen;
+			bool was = false;
+			for (int i = 0; i < nSeen; i++)
+				was |= seen[i] == GET_INTEGER_PARAM(0);
+			if (!was) {
+				seen[nSeen++ % 16] = GET_INTEGER_PARAM(0);
+				if (nSeen > 16)
+					nSeen = 16;
+				if (!pPed)
+					PS3_Logf("[death] %.8s: IS_CHAR_DEAD %d at ip %u: no such ped (deleted or never made)", m_abScriptName, (int)GET_INTEGER_PARAM(0), m_nIp);
+				else
+					PS3_Logf("[death] %.8s: IS_CHAR_DEAD %d at ip %u: dying or dead %d, objective %d (leave the car and die %d), health %.0f, state %d",
+					         m_abScriptName, (int)GET_INTEGER_PARAM(0), m_nIp, (int)pPed->DyingOrDead(), (int)pPed->m_objective,
+					         (int)(pPed->m_objective == OBJECTIVE_LEAVE_CAR_AND_DIE), pPed->m_fHealth, (int)pPed->GetPedState());
+			}
+		}
+#endif
 		UpdateCompareFlag(!pPed || pPed->DyingOrDead() || pPed->m_objective == OBJECTIVE_LEAVE_CAR_AND_DIE);
 		return 0;
 	}

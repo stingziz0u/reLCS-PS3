@@ -391,8 +391,43 @@ CPed::CPed(uint32 pedType) : m_pedIK(this)
 	m_lastComment = UINT32_MAX;
 }
 
+#ifdef __PS3__
+// patch 182: a mission ped that dies or goes away (log on): how, and from
+// where (the two return addresses: ps3/tools/crashaddr.py ELF LOG names
+// them). Calm before the Storm: the pilot and Massimo's man both "dead" the
+// frame after the skipped cutscene.
+void
+PS3_LogMissionPedDeath(CPed *p, const char *what, void *from0, void *from1)
+{
+	if (!PS3_logsOn || p->CharCreatedBy != MISSION_CHAR)
+		return;
+	CEntity *d = p->m_lastDamEntity;
+	char who[64];
+	if (d == nil)
+		snprintf(who, sizeof(who), "nobody");
+	else if (d == FindPlayerPed())
+		snprintf(who, sizeof(who), "the player");
+	else if (FindPlayerVehicle() && d == FindPlayerVehicle())
+		snprintf(who, sizeof(who), "the player's vehicle");
+	else
+		snprintf(who, sizeof(who), "%s %s", d->IsPed() ? "ped" : d->IsVehicle() ? "vehicle" : d->IsObject() ? "object" : "entity",
+		         CModelInfo::GetModelInfo(d->GetModelIndex())->GetModelName());
+	PS3_Logf("[death] %u ms: mission ped %d %s %s: health %.0f, state %d, objective %d, in a vehicle %d (%s), "
+	         "damaged last by %s with weapon %d, at %.1f %.1f %.1f; from @%08x @%08x",
+	         CTimer::GetTimeInMilliseconds(), (int)CPools::GetPedRef(p), CModelInfo::GetModelInfo(p->GetModelIndex())->GetModelName(),
+	         what, p->m_fHealth, (int)p->GetPedState(), (int)p->m_objective, (int)p->bInVehicle,
+	         p->bInVehicle && p->m_pMyVehicle ? CModelInfo::GetModelInfo(p->m_pMyVehicle->GetModelIndex())->GetModelName() : "-",
+	         who, (int)p->m_lastWepDam, p->GetPosition().x, p->GetPosition().y, p->GetPosition().z,
+	         (unsigned)(uintptr)from0, (unsigned)(uintptr)from1);
+}
+#define PS3_PED_DEATH(p, what) PS3_LogMissionPedDeath(p, what, __builtin_return_address(0), __builtin_return_address(1))
+#else
+#define PS3_PED_DEATH(p, what)
+#endif
+
 CPed::~CPed(void)
 {
+	PS3_PED_DEATH(this, "removed");
 #ifdef USE_CUTSCENE_SHADOW_FOR_PED
 	if ( m_pRTShadow ) delete m_pRTShadow;
 #endif
@@ -7368,6 +7403,8 @@ void
 CPed::SetDie(AnimationId animId, float delta, float speed)
 {
 	PS3_CRUMB("CPed::SetDie model|state<<16", GetModelIndex() | m_nPedState<<16);
+	if (!DyingOrDead())
+		PS3_PED_DEATH(this, "dies (SetDie)");	// patch 182
 	if (m_attractor)
 		GetPedAttractorManager()->DeRegisterPed(this, m_attractor);
 	CPlayerPed *player = FindPlayerPed();

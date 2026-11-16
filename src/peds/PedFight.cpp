@@ -3208,6 +3208,10 @@ CPed::InflictDamage(CEntity *damagedBy, eWeaponType method, float damage, ePedPi
 						}
 					}
 					if (m_pMyVehicle->CanPedExitCar(true)) {
+#ifdef __PS3__
+						extern void PS3_LogMissionPedDeath(CPed *p, const char *what, void *from0, void *from1);	// patch 182
+						PS3_LogMissionPedDeath(this, "told to leave the car and die (InflictDamage)", __builtin_return_address(0), __builtin_return_address(1));
+#endif
 						SetObjective(OBJECTIVE_LEAVE_CAR_AND_DIE, m_pMyVehicle);
 					} else {
 						m_fHealth = 0.0f;

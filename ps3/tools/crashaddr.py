@@ -93,13 +93,14 @@ if events:
     print()
 
 for line in open(log, errors='replace'):
-    if not line.startswith('[crash]'):
+    if not (line.startswith('[crash]') or line.startswith('[death]')):
         continue
     line = line.rstrip('\n')
-    m = re.search(r'@([0-9a-f]{8})', line)
-    if m:
+    wheres = []
+    for m in re.finditer(r'@([0-9a-f]{8})', line):	# res patch 182: every address ([death] has two)
         a = int(m.group(1), 16)
         i = bisect.bisect_right(starts, a) - 1
-        where = '%s+0x%x' % (funcs[i][1], a - funcs[i][0]) if i >= 0 else '?'
-        line += '   <- ' + where
+        wheres.append('%s+0x%x' % (funcs[i][1], a - funcs[i][0]) if i >= 0 else '?')
+    if wheres:
+        line += '   <- ' + ' <- '.join(wheres)
     print(line)
