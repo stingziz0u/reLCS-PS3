@@ -944,6 +944,26 @@ switchDetectDone:
 	}
 }
 
+#ifdef __PS3__
+#include "ps3_platform.h"
+#define PS3_USRDIR_ PS3_USRDIR
+// patch 184: the AK-47 (RUGER) and the M4 lock on to a target with R1 like
+// the other guns, as on the PS2 and PSP (reLCS had the first person aim of
+// VC); USRDIR/rifle1stperson.txt brings the first person aim back
+static bool
+PS3_RifleLocksOn(eWeaponType weapon)
+{
+	static int firstPerson = -1;
+	if (firstPerson < 0) {
+		FILE *f = fopen(PS3_USRDIR_ "/rifle1stperson.txt", "rb");
+		firstPerson = f != nil;
+		if (f)
+			fclose(f);
+	}
+	return !firstPerson && (weapon == WEAPONTYPE_M4 || weapon == WEAPONTYPE_RUGER);
+}
+#endif
+
 #ifdef _3DS
 static bool
 Is3DSRifleWeapon(eWeaponType weapon)
@@ -1417,6 +1437,8 @@ CPlayerPed::ProcessPlayerWeapon(CPad *padUsed)
 			weapon == WEAPONTYPE_LASERSCOPE ||
 #ifdef _3DS
 			enterRifleFirstPerson ||
+#elif defined __PS3__
+			((weapon == WEAPONTYPE_M4 || weapon == WEAPONTYPE_RUGER) && !PS3_RifleLocksOn(weapon)) || weapon == WEAPONTYPE_M60 ||
 #else
 			weapon == WEAPONTYPE_M4 || weapon == WEAPONTYPE_RUGER || weapon == WEAPONTYPE_M60 ||
 #endif
@@ -1588,7 +1610,11 @@ CPlayerPed::ProcessPlayerWeapon(CPad *padUsed)
 #endif
 		;
 	if (padUsed->GetTarget() && m_nSelectedWepSlot == m_currentWeapon && m_nMoveState != PEDMOVE_SPRINT &&
-		!TheCamera.Using1stPersonWeaponMode() && (weaponInfo->IsFlagSet(WEAPONFLAG_CANAIM) || isMeleeLockOn)) {
+		!TheCamera.Using1stPersonWeaponMode() && (weaponInfo->IsFlagSet(WEAPONFLAG_CANAIM) || isMeleeLockOn
+#ifdef __PS3__
+		 || PS3_RifleLocksOn(GetWeapon()->m_eWeaponType)	// patch 184
+#endif
+		)) {
 		if (m_pPointGunAt) {
 			// what??
 			if (!m_pPointGunAt
