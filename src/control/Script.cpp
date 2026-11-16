@@ -721,6 +721,9 @@ static int scriptTraceHead;
 // patch 106: a mission fails (PRINT_BIG / PRINT_NOW "M_FAIL"): its last 48
 // commands with their compare flags, and the pad and the player then. Go Go
 // Faggio (Ren): holding X during the 3-2-1 failed it at once.
+static void PS3_LogMissionScript(CRunningScript *s, int count = 120);
+static void PS3_LogFailEntities(CRunningScript *s);
+
 static void
 PS3_LogMissionFail(CRunningScript *s, const char *how)
 {
@@ -755,6 +758,12 @@ PS3_LogMissionFail(CRunningScript *s, const char *how)
 	         p ? "here" : "none", v ? CModelInfo::GetModelInfo(v->GetModelIndex())->GetModelName() : "none",
 	         v ? v->GetMoveSpeed().Magnitude() : 0.0f,
 	         p ? p->GetPosition().x : 0.0f, p ? p->GetPosition().y : 0.0f, p ? p->GetPosition().z : 0.0f);
+	// patch 181: the shared ring holds less than a frame of all the scripts
+	// (Calm before the Storm: only the fail's clean-up was left); the
+	// mission's own last commands, and the peds and cars its death and
+	// damage checks looked at
+	PS3_LogMissionScript(s, 320);
+	PS3_LogFailEntities(s);
 }
 
 void PS3_ShopKeepModel(CRunningScript *s, int32 mi);	// patch 150
@@ -1000,8 +1009,78 @@ PS3_NoteScriptText(const char *key)
 // flags and first two parameters (a handle, a number): what a loop waits for
 // when a mission doesn't go on (The Sicilian Gambit, "Take out that Sicilian
 // wise guy!": the kill wasn't counted)
+static const char*
+PS3_DamagerName(CEntity *e, char *buf)
+{
+	if (e == nil)
+		return "nobody";
+	if (e == FindPlayerPed())
+		return "the player";
+	if (FindPlayerVehicle() && e == FindPlayerVehicle())
+		return "the player's vehicle";
+	const char *kind = e->IsPed() ? "ped" : e->IsVehicle() ? "vehicle" : e->IsObject() ? "object" : e->IsBuilding() ? "building" : "entity";
+	int32 h = e->IsPed() ? CPools::GetPedRef((CPed*)e) : e->IsVehicle() ? CPools::GetVehicleRef((CVehicle*)e) : -1;
+	snprintf(buf, 64, "%s %s (handle %d)", kind, CModelInfo::GetModelInfo(e->GetModelIndex())->GetModelName(), (int)h);
+	return buf;
+}
+
+// patch 181: at a mission's fail, each ped and car its last IS_CHAR_DEAD,
+// IS_CAR_DEAD and HAS_..._BEEN_DAMAGED_BY_CHAR looked at: whether it is
+// there, dying or dead, its health and who damaged it last
 static void
-PS3_LogMissionScript(CRunningScript *s)
+PS3_LogFailEntities(CRunningScript *s)
+{
+	int slot = PS3_MissionTraceSlot(s, false);
+	if (slot < 0)
+		return;
+	int32 peds[24], cars[24];
+	int np = 0, nc = 0;
+	for (int k = 1; k <= 320; k++) {
+		MissionTrace &t = missionTraces[slot][(missionTraceHeads[slot] + MISSION_TRACE - k) % MISSION_TRACE];
+		int op = t.op & 0x7FFF;
+		bool ped = op == COMMAND_IS_CHAR_DEAD || op == COMMAND_HAS_CHAR_BEEN_DAMAGED_BY_CHAR;
+		bool car = op == COMMAND_IS_CAR_DEAD || op == COMMAND_HAS_CAR_BEEN_DAMAGED_BY_CHAR;
+		if (!ped && !car)
+			continue;
+		int32 *list = ped ? peds : cars;
+		int &n = ped ? np : nc;
+		bool seen = false;
+		for (int i = 0; i < n; i++)
+			seen |= list[i] == t.a0;
+		if (!seen && n < 24)
+			list[n++] = t.a0;
+	}
+	char b[64];
+	for (int i = 0; i < np; i++) {
+		CPed *p = CPools::GetPedPool()->GetAt(peds[i]);
+		if (p == nil) {
+			PS3_Logf("[fail]   ped %d: not there (IS_CHAR_DEAD says dead)", (int)peds[i]);
+			continue;
+		}
+		PS3_Logf("[fail]   ped %d %s: health %.0f, state %d, dying or dead %d, objective %d, in a vehicle %d (%s), "
+		         "damaged last by %s, at %.1f %.1f %.1f",
+		         (int)peds[i], CModelInfo::GetModelInfo(p->GetModelIndex())->GetModelName(), p->m_fHealth,
+		         (int)p->GetPedState(), (int)p->DyingOrDead(), (int)p->m_objective, (int)p->bInVehicle,
+		         p->bInVehicle && p->m_pMyVehicle ? CModelInfo::GetModelInfo(p->m_pMyVehicle->GetModelIndex())->GetModelName() : "-",
+		         PS3_DamagerName(p->m_lastDamEntity, b),
+		         p->GetPosition().x, p->GetPosition().y, p->GetPosition().z);
+	}
+	for (int i = 0; i < nc; i++) {
+		CVehicle *v = CPools::GetVehiclePool()->GetAt(cars[i]);
+		if (v == nil) {
+			PS3_Logf("[fail]   car %d: not there (IS_CAR_DEAD says dead)", (int)cars[i]);
+			continue;
+		}
+		PS3_Logf("[fail]   car %d %s: status %d (wrecked %d), drowning %d, health %.0f, damaged last by %s, at %.1f %.1f %.1f, speed %.3f",
+		         (int)cars[i], CModelInfo::GetModelInfo(v->GetModelIndex())->GetModelName(), (int)v->GetStatus(),
+		         (int)(v->GetStatus() == STATUS_WRECKED), (int)v->bIsDrowning, v->m_fHealth,
+		         PS3_DamagerName(v->m_pLastDamageEntity, b),
+		         v->GetPosition().x, v->GetPosition().y, v->GetPosition().z, v->GetMoveSpeed().Magnitude());
+	}
+}
+
+static void
+PS3_LogMissionScript(CRunningScript *s, int count)
 {
 	char name[9];
 	memcpy(name, s->m_abScriptName, 8);
@@ -1013,11 +1092,14 @@ PS3_LogMissionScript(CRunningScript *s)
 	if (slot < 0)
 		return;
 	// patch 135: its own last 120 commands; a variable read as g<index>
-	// (global) or l<index> (local) =its value then
+	// (global) or l<index> (local) =its value then (patch 181: count, 320
+	// at a fail)
 	char buf[512];
 	int len = 0;
 	buf[0] = '\0';
-	for (int k = 120; k > 0; k--) {
+	if (count > MISSION_TRACE)
+		count = MISSION_TRACE;
+	for (int k = count; k > 0; k--) {
 		MissionTrace &t = missionTraces[slot][(missionTraceHeads[slot] + MISSION_TRACE - k) % MISSION_TRACE];
 		if (t.op == 0 && t.ip == 0)
 			continue;
