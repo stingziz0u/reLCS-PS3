@@ -13,7 +13,7 @@ converted from your own copy. It is the sibling of
 [reVC-PS3](https://github.com/stingziz0u/reVC-PS3) (GTA Vice City), and
 shares their PS3 layer.
 
-> **Status: 1.4 alpha.** The game can be **finished at 100%** on a real
+> **Status: 1.5 alpha.** The game can be **finished at 100%** on a real
 > PS3: every mission and side activity, 100% in the game's stats. reLCS
 > itself is still a work in progress, and this is still an alpha of the
 > port: **expect some bugs and odd things**, and please report them with
@@ -38,6 +38,18 @@ Liberty City Stories for PS2, converted with the
 (see [Installation](#installation)). The PKG only has the program, its icon
 and two res-PS3 files (the PlayStation button icons and the controller
 picture of the settings page).
+
+## What's new in 1.5
+
+- **Calm Before the Storm** no longer fails by itself if you skip the
+  helicopter cutscene.
+- The **AK-47 and the M4 lock on** like the other guns (a `rifle1stperson.txt`
+  in `USRDIR` brings the first-person aim back).
+- Faster collision in the busiest streets (steadier 60 fps) and more
+  diagnostics in the log.
+
+The full list is in the
+[release notes](https://github.com/stingziz0u/reLCS-PS3/releases/tag/1.5alpha).
 
 ## Features
 
