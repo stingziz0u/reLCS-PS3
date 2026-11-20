@@ -126,7 +126,7 @@ else plays as the original):
 1. Convert your copy of GTA Liberty City Stories for PS2 with the
    [reLCS Asset Converter](https://github.com/knackers4/res/releases/download/relcs/reLCSAssetConverter.exe)
    (on a PC).
-2. Install `res-ps3-1.1-alpha.pkg` on a PS3 with homebrew support (CFW or
+2. Install `res-ps3-1.5-alpha.pkg` on a PS3 with homebrew support (CFW or
    HEN), e.g. copy it by FTP and install it with the package manager. It
    appears in the XMB as **reLCS**.
 3. The PKG creates `/dev_hdd0/game/RESPS3000/USRDIR` with these empty
