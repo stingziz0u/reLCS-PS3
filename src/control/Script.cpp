@@ -1963,12 +1963,21 @@ void CTheScripts::Process()
 		// main part); stuntj and bikef, the main script's helpers launched as
 		// missions, run in the main part. 8 s at 1 with none there (no rampage,
 		// cutscene or stadium event either): back to 0.
+		// patch 188: a mission inside a CALL to the main part runs too (its
+		// return addresses on the stack are in the mission space): the races'
+		// code is all in the main part, so the flag went back to 0 8 s into
+		// Red Light Racing, Avenging Angels started meanwhile, and the racers
+		// were cleaned up as no longer needed: gone, the race failed
 		static uint32 ps3FlagSince;
 		int32 *flag = OnAMissionFlag ? (int32*)&ScriptSpace[OnAMissionFlag] : nil;
 		bool missionRuns = false;
-		for (CRunningScript *r = pActiveScripts; r && !missionRuns; r = r->GetNext())
+		for (CRunningScript *r = pActiveScripts; r && !missionRuns; r = r->GetNext()) {
 			if (r->m_nIp >= MainScriptSize)
 				missionRuns = true;
+			for (int i = 0; i < r->m_nStackPointer && !missionRuns; i++)
+				if (r->m_anStack[i] >= MainScriptSize)
+					missionRuns = true;
+		}
 		uint32 now = CTimer::GetTimeInMilliseconds();
 		if (flag && *flag == 1 && !missionRuns && !CCutsceneMgr::IsRunning() && !CDarkel::FrenzyOnGoing() &&
 		    !bPlayerIsInTheStatium) {
