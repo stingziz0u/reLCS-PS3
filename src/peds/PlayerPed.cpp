@@ -962,6 +962,15 @@ PS3_RifleLocksOn(eWeaponType weapon)
 	}
 	return !firstPerson && (weapon == WEAPONTYPE_M4 || weapon == WEAPONTYPE_RUGER);
 }
+
+// patch 187: the minigun locks on with R1 too, as on the PS2 and PSP (without
+// CANAIM in weapon.dat it had no lock-on, like the rifles: it only fired
+// straight ahead). The M60 keeps VC's first person aim.
+static bool
+PS3_HeavyLocksOn(eWeaponType weapon)
+{
+	return weapon == WEAPONTYPE_MINIGUN;
+}
 #endif
 
 #ifdef _3DS
@@ -1613,6 +1622,7 @@ CPlayerPed::ProcessPlayerWeapon(CPad *padUsed)
 		!TheCamera.Using1stPersonWeaponMode() && (weaponInfo->IsFlagSet(WEAPONFLAG_CANAIM) || isMeleeLockOn
 #ifdef __PS3__
 		 || PS3_RifleLocksOn(GetWeapon()->m_eWeaponType)	// patch 184
+		 || PS3_HeavyLocksOn(GetWeapon()->m_eWeaponType)	// patch 187
 #endif
 		)) {
 		if (m_pPointGunAt) {
