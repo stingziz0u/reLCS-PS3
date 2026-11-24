@@ -4,6 +4,9 @@
 #include "Sprite2d.h"
 #include "TxdStore.h"
 #include "Font.h"
+#ifdef PS3_EXTRA_LANGUAGES
+#include "Frontend.h"
+#endif
 #ifdef BUTTON_ICONS
 #include "FileMgr.h"
 #endif
@@ -130,6 +133,56 @@ static char LoadedButtonsPath[64];
 #endif // BUTTON_ICONS
 
 //--TODO(LCS): volatile memory
+#ifdef PS3_EXTRA_LANGUAGES
+// PS3: Polish and Russian take MODELS\FONTS_P.TXD / FONTS_R.TXD when they're
+// there (the translation's letters in the same font textures), else
+// FONTS.TXD (translations that replace that one). Same glyph layout and
+// widths as the EFIGS font: there's no separate renderer like III's.
+static const char *ps3FontsTxd = "MODELS/FONTS.TXD";
+
+static const char *
+PS3FontsTxdFor(int32 lang)
+{
+	const char *txd = nil;
+	if (lang == CMenuManager::LANGUAGE_POLISH)
+		txd = "MODELS/FONTS_P.TXD";
+	else if (lang == CMenuManager::LANGUAGE_RUSSIAN)
+		txd = "MODELS/FONTS_R.TXD";
+	if (txd) {
+		int f = CFileMgr::OpenFile(txd, "rb");
+		if (f > 0) {
+			CFileMgr::CloseFile(f);
+			return txd;
+		}
+	}
+	return "MODELS/FONTS.TXD";
+}
+
+void
+CFont::PS3SetLanguageFonts(int32 lang)
+{
+	const char *txd = PS3FontsTxdFor(lang);
+	if (strcmp(txd, ps3FontsTxd) == 0)
+		return;
+	printf("CFont: %s (language %d)\n", txd, (int)lang);
+	ps3FontsTxd = txd;
+	int slot = CTxdStore::FindTxdSlot("fonts");
+	if (slot == -1)
+		return;	// CFont::Initialise loads it
+	Sprite[0].Delete();
+	Sprite[1].Delete();
+	Sprite[2].Delete();
+	CTxdStore::RemoveTxd(slot);
+	CTxdStore::LoadTxd(slot, txd);
+	CTxdStore::PushCurrentTxd();
+	CTxdStore::SetCurrentTxd(slot);
+	Sprite[0].SetTexture("font2", "font2m");
+	Sprite[1].SetTexture("font1", "font1m");
+	Sprite[2].SetTexture("font3", "font3m");
+	CTxdStore::PopCurrentTxd();
+}
+#endif
+
 void
 CFont::Initialise(void)
 {
@@ -138,7 +191,11 @@ CFont::Initialise(void)
 	if (gMakeResources)
 	{
 		slot = CTxdStore::AddTxdSlot("fonts");
+#ifdef PS3_EXTRA_LANGUAGES
+		CTxdStore::LoadTxd(slot, ps3FontsTxd);
+#else
 		CTxdStore::LoadTxd(slot, "MODELS/FONTS.TXD");
+#endif
 		CTxdStore::AddRef(slot);
 		CTxdStore::PushCurrentTxd();
 		CTxdStore::SetCurrentTxd(slot);

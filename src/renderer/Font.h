@@ -213,6 +213,9 @@ public:
 
 	static int16 FindNewCharacter(int16 c);
 	static void FilterOutTokensFromString(wchar*);
+#ifdef PS3_EXTRA_LANGUAGES
+	static void PS3SetLanguageFonts(int32 lang);
+#endif
 	static bool16 CheckNewLine(wchar *s);
 #ifdef MORE_LANGUAGES
 	static void ReloadFonts(uint8 set);

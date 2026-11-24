@@ -594,4 +594,5 @@ static_assert(false, "SUPPORT_XBOX_SCRIPT and SUPPORT_MOBILE_SCRIPT are mutually
 // in the CPU's own structures, as it does: the PC compatibility layout still
 // has VC's block sizes (50 phones instead of LCS's 60) and broke what follows
 #undef COMPATIBLE_SAVES
+#define PS3_EXTRA_LANGUAGES	// Polish and Russian when TEXT\POLISH.GXT / RUSSIAN.GXT are there (Text.cpp, Font.cpp)
 #endif
