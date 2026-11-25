@@ -139,6 +139,7 @@ static char LoadedButtonsPath[64];
 // FONTS.TXD (translations that replace that one). Same glyph layout and
 // widths as the EFIGS font: there's no separate renderer like III's.
 static const char *ps3FontsTxd = "MODELS/FONTS.TXD";
+static bool ps3FontsLoaded = false;	// CFont::Initialise already ran
 
 static const char *
 PS3FontsTxdFor(int32 lang)
@@ -166,6 +167,11 @@ CFont::PS3SetLanguageFonts(int32 lang)
 		return;
 	printf("CFont: %s (language %d)\n", txd, (int)lang);
 	ps3FontsTxd = txd;
+	// At start-up (an ini with that language) this comes before the txd store
+	// exists: CFont::Initialise loads ps3FontsTxd later. Without this check
+	// FindTxdSlot read a null pool and the game didn't start (as in reVC).
+	if (!ps3FontsLoaded)
+		return;
 	int slot = CTxdStore::FindTxdSlot("fonts");
 	if (slot == -1)
 		return;	// CFont::Initialise loads it
@@ -206,6 +212,9 @@ CFont::Initialise(void)
 	}
 	else
 		slot = CTxdStore::FindTxdSlot("fonts");
+#ifdef PS3_EXTRA_LANGUAGES
+	ps3FontsLoaded = true;
+#endif
 	SetScale(1.0f, 1.0f);
 	SetSlantRefPoint(SCREEN_WIDTH, 0.0f);
 	SetSlant(0.0f);
