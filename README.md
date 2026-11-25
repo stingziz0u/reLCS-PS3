@@ -13,7 +13,7 @@ converted from your own copy. It is the sibling of
 [reVC-PS3](https://github.com/stingziz0u/reVC-PS3) (GTA Vice City), and
 shares their PS3 layer.
 
-> **Status: 1.5 alpha.** The game can be **finished at 100%** on a real
+> **Status: 1.5.1 alpha.** The game can be **finished at 100%** on a real
 > PS3: every mission and side activity, 100% in the game's stats. reLCS
 > itself is still a work in progress, and this is still an alpha of the
 > port: **expect some bugs and odd things**, and please report them with
@@ -22,6 +22,9 @@ shares their PS3 layer.
 >
 >
 > **Known issues:**
+> - **Polish and Russian** (new in 1.5.1) haven't been tried with a real LCS
+>   translation yet: each one needs the translation's `.gxt` and its font.
+>   See [Languages](#languages) to try one.
 > - Some LOD buildings can still pop in at a distance.
 > - Thin dark lines on some buildings flicker as the camera moves (two
 >   surfaces at the same depth).
@@ -38,6 +41,19 @@ Liberty City Stories for PS2, converted with the
 (see [Installation](#installation)). The PKG only has the program, its icon
 and two res-PS3 files (the PlayStation button icons and the controller
 picture of the settings page).
+
+## What's new in 1.5.1
+
+- **The races no longer fail on their own** (*Red Light Racing* and the
+  others): since 1.4 the game could think no mission was running in the
+  middle of one, and another activity's cleanup took the racers away.
+- The **minigun locks on** with R1, as on the PS2 and PSP.
+- **Polish and Russian** in Options → Language when their `.gxt` is in
+  `text` (see [Languages](#languages); not tried with a real translation
+  yet).
+
+The full list is in the
+[release notes](https://github.com/stingziz0u/reLCS-PS3/releases/tag/1.5.1alpha).
 
 ## What's new in 1.5
 
@@ -126,7 +142,7 @@ else plays as the original):
 1. Convert your copy of GTA Liberty City Stories for PS2 with the
    [reLCS Asset Converter](https://github.com/knackers4/res/releases/download/relcs/reLCSAssetConverter.exe)
    (on a PC).
-2. Install `res-ps3-1.5-alpha.pkg` on a PS3 with homebrew support (CFW or
+2. Install `res-ps3-1.5.1-alpha.pkg` on a PS3 with homebrew support (CFW or
    HEN), e.g. copy it by FTP and install it with the package manager. It
    appears in the XMB as **reLCS**.
 3. The PKG creates `/dev_hdd0/game/RESPS3000/USRDIR` with these empty
@@ -165,12 +181,23 @@ and unconverted assets from other games or platforms don't.
 
 ### Languages
 
-Polish and Russian appear in **Options → Language** when `text/polish.gxt`
-or `text/russian.gxt` is there. Their fonts are `models/fonts_p.txd` and
-`models/fonts_r.txd`, or `fonts.txd` when those aren't there (translations
-that replace that file). Japanese isn't supported yet: the game has no
-renderer for its letters (the log says when a `japanese.gxt` is found). If
-the saved language's file is gone, the game goes back to English.
+Polish and Russian can be added (since 1.5.1), but they haven't been tried
+with a real translation yet (see the known issues). To try one:
+
+1. Copy the translation's text to `text`: `polish.gxt` or `russian.gxt`.
+   It must be made for LCS: a GTA III `.gxt` isn't offered (the log says
+   so), and one from another game shows "missing" texts.
+2. Copy the translation's font to `models`, renamed `fonts_p.txd` (Polish)
+   or `fonts_r.txd` (Russian). Translations draw their letters in their own
+   font: without it the game's `fonts.txd` is used and the text comes out in
+   Latin letters (Russian looks like accented Latin).
+3. Choose it in **Options → Language**.
+
+Japanese isn't supported: the game has no renderer for its letters (the log
+says when a `japanese.gxt` is found).
+
+If the saved language's file is gone, the game goes back to English. If a
+translation looks wrong, please send the log and its files.
 
 ## Troubleshooting
 
