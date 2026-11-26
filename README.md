@@ -13,7 +13,7 @@ converted from your own copy. It is the sibling of
 [reVC-PS3](https://github.com/stingziz0u/reVC-PS3) (GTA Vice City), and
 shares their PS3 layer.
 
-> **Status: 1.5.1 alpha.** The game can be **finished at 100%** on a real
+> **Status: 1.5.2 alpha.** The game can be **finished at 100%** on a real
 > PS3: every mission and side activity, 100% in the game's stats. reLCS
 > itself is still a work in progress, and this is still an alpha of the
 > port: **expect some bugs and odd things**, and please report them with
@@ -41,6 +41,10 @@ Liberty City Stories for PS2, converted with the
 (see [Installation](#installation)). The PKG only has the program, its icon
 and two res-PS3 files (the PlayStation button icons and the controller
 picture of the settings page).
+
+## What's new in 1.5.2
+
+- Starting the game with **Polish or Russian** saved no longer crashes.
 
 ## What's new in 1.5.1
 
@@ -142,7 +146,7 @@ else plays as the original):
 1. Convert your copy of GTA Liberty City Stories for PS2 with the
    [reLCS Asset Converter](https://github.com/knackers4/res/releases/download/relcs/reLCSAssetConverter.exe)
    (on a PC).
-2. Install `res-ps3-1.5.1-alpha.pkg` on a PS3 with homebrew support (CFW or
+2. Install `res-ps3-1.5.2-alpha.pkg` on a PS3 with homebrew support (CFW or
    HEN), e.g. copy it by FTP and install it with the package manager. It
    appears in the XMB as **reLCS**.
 3. The PKG creates `/dev_hdd0/game/RESPS3000/USRDIR` with these empty
